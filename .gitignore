@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-server/
+data/
+uploads/
+uploads-clean/
+uploads-e2e-*/
+uploads-restorecheck*/
+backups/
+backups-clean/
+.env
+.env.*.local
+playwright-report/
+test-results/
+test-output/
+coverage/
+*.log
