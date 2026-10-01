@@ -1,0 +1,6 @@
+[build]
+command = "npm run build && node scripts/write-netlify-redirects.mjs"
+publish = "dist"
+
+[build.environment]
+VITE_PUBLIC_DEMO = "true"

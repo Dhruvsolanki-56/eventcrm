@@ -1,0 +1,3 @@
+AI_MODE=demo sample brochure
+Visible items: Sample cartons; Recyclable mailers
+QR payload: https://acme.co

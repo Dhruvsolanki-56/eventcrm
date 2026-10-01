@@ -1,0 +1,2 @@
+AI_MODE=demo sample card
+Fixed test result: Demo Contact · Packaging Buyer · Acme Packaging · demo.contact@sample.invalid · +1 415 555 0199 · https://acme.co

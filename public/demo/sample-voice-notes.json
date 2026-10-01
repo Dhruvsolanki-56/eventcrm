@@ -1,0 +1,32 @@
+[
+  {
+    "id": "a1000000-0000-4000-8000-000000000001",
+    "workspaceId": "demo-northstar",
+    "contactId": "demo-ns-contact-1",
+    "encounterId": "demo-encounter-1",
+    "file": "sample-voice-note-tessa.wav",
+    "transcript": "Interested in a small sample run after the event.",
+    "durationSeconds": 3,
+    "mimeType": "audio/wav"
+  },
+  {
+    "id": "a1000000-0000-4000-8000-000000000002",
+    "workspaceId": "demo-sam-space",
+    "contactId": "demo-sam-contact-1",
+    "encounterId": "demo-encounter-sam-private",
+    "file": "sample-voice-note-sam.wav",
+    "transcript": "Supplier minimum order is 250 units. They promised a printed sample by Tuesday.",
+    "durationSeconds": 7,
+    "mimeType": "audio/wav"
+  },
+  {
+    "id": "a1000000-0000-4000-8000-000000000003",
+    "workspaceId": "demo-riley-space",
+    "contactId": "demo-riley-contact-1",
+    "encounterId": "demo-encounter-riley-private",
+    "file": "sample-voice-note-riley.wav",
+    "transcript": "Met at the partner booth. Follow up about the next supplier introduction.",
+    "durationSeconds": 5,
+    "mimeType": "audio/wav"
+  }
+]

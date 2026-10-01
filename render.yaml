@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: gather-crm-demo-api
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: GATHER_DEMO_MODE
+        value: "true"
+      - key: DATABASE_PATH
+        value: /tmp/gather.sqlite
+      - key: UPLOADS_PATH
+        value: /tmp/gather-demo-uploads
+      - key: AI_MODE
+        value: "off"
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "false"
+      - key: DEMO_PASSWORD
+        value: Gather-Demo-2026!
