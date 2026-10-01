@@ -1,0 +1,9 @@
+# Replace with a DNS name whose A/AAAA records point at this VM.
+gather.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3001 {
+		health_uri /api/health
+		health_interval 30s
+		health_timeout 5s
+	}
+}

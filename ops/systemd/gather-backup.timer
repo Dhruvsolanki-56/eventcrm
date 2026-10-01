@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Gather off-VM backup
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+RandomizedDelaySec=5m
+Persistent=true
+Unit=gather-backup.service
+
+[Install]
+WantedBy=timers.target

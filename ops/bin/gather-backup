@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR=/opt/gather/current
+DATA_DIR=/var/lib/gather
+LOCK_FILE=/run/lock/gather-backup.lock
+
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "A Gather backup is already running." >&2; exit 1; }
+
+was_active=0
+if systemctl is-active --quiet gather.service; then
+  was_active=1
+  systemctl stop gather.service
+fi
+
+restart_service() {
+  local status=$?
+  trap - EXIT
+  if [[ "$was_active" -eq 1 ]]; then
+    systemctl start gather.service || status=1
+  fi
+  exit "$status"
+}
+trap restart_service EXIT
+
+cd "$APP_DIR"
+snapshot_output="$(runuser -u gather -- env \
+  HOME=/var/lib/gather \
+  NODE_ENV=production \
+  DATABASE_PATH="$DATA_DIR/database/gather.sqlite" \
+  UPLOADS_PATH="$DATA_DIR/uploads" \
+  BACKUPS_PATH="$DATA_DIR/backups" \
+  RCLONE_CONFIG=/var/lib/gather/.config/rclone/rclone.conf \
+  BACKUP_REMOTE="$BACKUP_REMOTE" \
+  KEEP_LOCAL_BACKUPS="${KEEP_LOCAL_BACKUPS:-14}" \
+  /usr/bin/node "$APP_DIR/scripts/backup-offsite.mjs" --create-local)"
+printf '%s\n' "$snapshot_output"
+bundle_path="$(printf '%s\n' "$snapshot_output" | sed -n 's/^Gather local backup bundle: //p' | tail -n 1)"
+if [[ -z "$bundle_path" ]]; then
+  echo "The local backup command did not return a bundle path." >&2
+  exit 1
+fi
+
+# Restore write availability before transferring and downloading a verification
+# copy of the bundle; only the local DB+media snapshot incurs planned downtime.
+if [[ "$was_active" -eq 1 ]]; then
+  systemctl start gather.service
+  was_active=0
+fi
+
+runuser -u gather -- env \
+  HOME=/var/lib/gather \
+  BACKUPS_PATH="$DATA_DIR/backups" \
+  RCLONE_CONFIG=/var/lib/gather/.config/rclone/rclone.conf \
+  BACKUP_REMOTE="$BACKUP_REMOTE" \
+  KEEP_LOCAL_BACKUPS="${KEEP_LOCAL_BACKUPS:-14}" \
+  /usr/bin/node "$APP_DIR/scripts/backup-offsite.mjs" --replicate "$bundle_path"

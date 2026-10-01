@@ -1,0 +1,19 @@
+[Unit]
+Description=Consistent Gather SQLite and media backup, with off-VM verification
+After=local-fs.target
+RequiresMountsFor=/var/lib/gather
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/gather/gather.env
+EnvironmentFile=/etc/gather/backup.env
+ExecStart=/usr/local/sbin/gather-backup
+TimeoutStartSec=30min
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/lock /var/lib/gather

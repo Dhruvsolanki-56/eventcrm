@@ -1,0 +1,1 @@
+ALTER TABLE notes ADD COLUMN audio_bytes INTEGER NOT NULL DEFAULT 0 CHECK(audio_bytes >= 0);

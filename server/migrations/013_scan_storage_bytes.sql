@@ -1,0 +1,1 @@
+ALTER TABLE scans ADD COLUMN image_bytes INTEGER NOT NULL DEFAULT 0 CHECK(image_bytes >= 0);
