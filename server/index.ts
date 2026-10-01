@@ -137,7 +137,7 @@ app.disable('x-powered-by');
 if (isProduction) app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-site' },
-  contentSecurityPolicy: isProduction ? undefined : false,
+  contentSecurityPolicy: isProduction ? { directives: { scriptSrc: ["'self'", "'wasm-unsafe-eval'"], workerSrc: ["'self'"] } } : false,
 }));
 app.use(express.json({ limit: '2mb', strict: true }));
 await startWorker();
@@ -277,7 +277,7 @@ async function issueSession(res: Response, userId: string) {
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 app.get('/api/capabilities', (_req, res) => res.json({
-  cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : isAIProviderEnabled() ? 'provider' : 'manual',
+  cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : isAIProviderEnabled() ? 'provider' : 'browser',
   emailDrafts: isAIProviderEnabled(),
   followUpSuggestions: isAIProviderEnabled(),
   emailSending: Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM_ADDRESS),
@@ -1344,6 +1344,18 @@ app.post('/api/scans/:scanId/qr', scanLimiter, requireContext, async (req, res) 
     if (!applied) return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     res.json({ applied: true });
   } catch (error) { res.status(403).json({ code: 'qr_not_added', message: error instanceof Error ? error.message : 'This QR code could not be added.' }); }
+});
+
+app.post('/api/scans/:scanId/ocr', scanLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const scanId = z.string().uuid().safeParse(req.params.scanId);
+  const fields = CardReadOutputSchema.safeParse(req.body);
+  if (!scanId.success || !fields.success) return res.status(400).json({ code: 'invalid_ocr', message: 'Those card details could not be added. Check them or type the details yourself.' });
+  try {
+    const applied = await (applyQrToScan(actor.id, workspace.id, scanId.data, fields.data, fields.data.uncertain));
+    if (!applied) return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    res.json({ applied: true });
+  } catch (error) { res.status(403).json({ code: 'ocr_not_added', message: error instanceof Error ? error.message : 'Those details could not be added.' }); }
 });
 
 app.post('/api/scans/:scanId/save', requireContext, async (req, res) => {

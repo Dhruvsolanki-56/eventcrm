@@ -66,19 +66,24 @@ try {
   child.stderr.setEncoding('utf8').on('data', (chunk) => { output += chunk; });
   await waitForHealth(url, 15_000);
 
-  const [home, scan, capabilities, demoAccounts] = await Promise.all([
+  const [home, scan, capabilities, demoAccounts, ocrWorker, ocrModel] = await Promise.all([
     fetch(`${url}/`), fetch(`${url}/scan`), fetch(`${url}/api/capabilities`), fetch(`${url}/api/dev/demo-accounts`),
+    fetch(`${url}/ocr/worker.min.js`), fetch(`${url}/ocr/eng.traineddata.gz`),
   ]);
   assert.equal(home.status, 200, 'production root should serve the built app');
   assert.match(await home.text(), /<title>Gather CRM<\/title>/);
   assert.equal(scan.status, 200, 'production routes should serve the built app');
+  assert.equal(ocrWorker.status, 200, 'production should serve the local OCR worker');
+  assert.equal(ocrModel.status, 200, 'production should serve the local English OCR model');
+  assert.match(ocrWorker.headers.get('content-security-policy') ?? '', /worker-src 'self'/);
+  assert.match(ocrWorker.headers.get('content-security-policy') ?? '', /wasm-unsafe-eval/);
   assert.equal(capabilities.status, 200);
   assert.deepEqual(await capabilities.json(), {
-    cardReading: 'manual', emailDrafts: false, followUpSuggestions: false,
+    cardReading: 'browser', emailDrafts: false, followUpSuggestions: false,
     emailSending: false, voiceTranscription: false,
   });
   assert.equal(demoAccounts.status, 404, 'development sample-login endpoint must not exist in production');
-  console.log('Production smoke passed: built app and /scan return 200; health is ok; no-provider features report honest fallbacks; development demo login returns 404.');
+  console.log('Production smoke passed: built app and /scan return 200; local OCR assets and CSP are ready; health is ok; no-provider fallbacks report accurately; development demo login returns 404.');
   console.log('This local smoke does not test HTTPS, real provider credentials, external mail delivery, VM installation, or operational monitoring.');
 } finally {
   if (child && child.exitCode === null) {

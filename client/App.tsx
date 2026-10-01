@@ -4,6 +4,7 @@ import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Chec
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
+import { readCardInBrowser } from './card-ocr.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
 const ReportChart = lazy(() => import('./ReportChart.js'));
@@ -1149,7 +1150,7 @@ function ScanPage() {
   const emailNowContactId = searchParams.get('emailNow') ?? '';
   const [scans, setScans] = useState<ScanView[]>([]);
   const [cameraError, setCameraError] = useState('');
-  const [readingMode, setReadingMode] = useState<'demo' | 'provider' | 'manual' | null>(null);
+  const [readingMode, setReadingMode] = useState<'demo' | 'provider' | 'browser' | 'manual' | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [trayError, setTrayError] = useState('');
@@ -1157,18 +1158,23 @@ function ScanPage() {
   const inputId = 'capture-gallery';
   const cameraInputId = 'capture-camera';
   const qrCreatedAt = useRef(new Map<string, number>());
+  const ocrQueue = useRef<Promise<void>>(Promise.resolve());
+  const ocrPendingIds = useRef(new Set<string>());
   const reloadScans = useCallback(async () => {
     const response = await request<{ scans: Array<Record<string, unknown>> }>('/api/scans', {}, { workspaceId: session.workspace.id });
     const serverScans = response.scans.map(scanFromApi);
     setScans((current) => {
       const byClientId = new Map(serverScans.map((item) => [item.clientScanId, item]));
       const presentIds = new Set(current.map((item) => item.clientScanId));
-      const refreshed = current.map((item) => byClientId.get(item.clientScanId) ? { ...byClientId.get(item.clientScanId)!, file: item.file } : item);
+      const refreshed = current.map((item) => {
+        const serverItem = byClientId.get(item.clientScanId);
+        return serverItem ? { ...serverItem, file: item.file, ...(ocrPendingIds.current.has(item.id) ? { status: 'reading' as const } : {}) } : item;
+      });
       const newlyVisible = serverScans.filter((item) => !presentIds.has(item.clientScanId));
       return [...newlyVisible, ...refreshed];
     });
   }, [session.workspace.id]);
-  useEffect(() => { void request<{ cardReading: 'demo' | 'provider' | 'manual' }>('/api/capabilities').then((data) => setReadingMode(data.cardReading)).catch(() => setReadingMode('manual')); }, []);
+  useEffect(() => { void request<{ cardReading: 'demo' | 'provider' | 'browser' | 'manual' }>('/api/capabilities').then((data) => setReadingMode(data.cardReading)).catch(() => setReadingMode('browser')); }, []);
   useEffect(() => { void reloadScans().catch((error) => setTrayError((error as Error).message)); }, [reloadScans]);
   const pending = scans.some((item) => item.status === 'uploading' || item.status === 'queued' || item.status === 'reading');
   useEffect(() => {
@@ -1193,7 +1199,7 @@ function ScanPage() {
     } catch (error) { setTrayError((error as Error).message); }
   }, [csrfToken, notify, session.workspace.id]);
 
-  const uploadFile = useCallback(async (file: File, source: 'camera' | 'gallery', localScan?: ScanView) => {
+  const uploadFile = useCallback(async (file: File, source: 'camera' | 'gallery', localScan?: ScanView, openReview = false) => {
     const clientScanId = localScan?.clientScanId ?? crypto.randomUUID();
     const localId = localScan?.id ?? `local-${clientScanId}`;
     if (!localScan) setScans((items) => [{ id: localId, clientScanId, source, status: 'uploading', extracted: null, uncertain: [], error: null, file }, ...items]);
@@ -1208,6 +1214,25 @@ function ScanPage() {
       }, { csrfToken, workspaceId: session.workspace.id });
       const uploaded = scanFromApi(result.scan);
       setScans((items) => items.map((item) => item.id === localId ? { ...uploaded, file } : item));
+      if (openReview && !result.duplicate) navigate(`/review/${uploaded.id}?dialog=1`, { state: { ocrFile: photo } });
+      if (!openReview && !result.duplicate) {
+        ocrPendingIds.current.add(uploaded.id);
+        const readTask = ocrQueue.current.then(async () => {
+          setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'reading', error: null } : item));
+          try {
+            const read = await readCardInBrowser(photo, () => undefined);
+            if (read.confidence < 20 || !Object.values(read.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details during review.');
+            await request(`/api/scans/${uploaded.id}/ocr`, { method: 'POST', body: JSON.stringify(read.fields) }, { csrfToken, workspaceId: session.workspace.id });
+            setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'ready', extracted: read.fields, uncertain: read.fields.uncertain, error: null } : item));
+          } catch (issue) {
+            setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'failed', error: (issue as Error).message } : item));
+          } finally {
+            ocrPendingIds.current.delete(uploaded.id);
+          }
+        });
+        ocrQueue.current = readTask.then(() => undefined, () => undefined);
+        await readTask;
+      }
       if (!result.duplicate) {
         const raw = await qrPromise;
         if (raw) {
@@ -1222,7 +1247,7 @@ function ScanPage() {
       setScans((items) => items.map((item) => item.id === localId ? { ...item, status: 'failed', error: `Upload failed. ${message}` } : item));
       setTrayError(message);
     }
-  }, [csrfToken, session.workspace.id]);
+  }, [csrfToken, navigate, session.workspace.id]);
 
   async function addFiles(files: File[], source: 'camera' | 'gallery') {
     const images = files.filter((file) => file.type.startsWith('image/'));
@@ -1234,7 +1259,7 @@ function ScanPage() {
       return { id: `local-${clientScanId}`, clientScanId, clientOrder: orderBase + images.length - index, source, status: 'uploading', extracted: null, uncertain: [], error: null, file };
     });
     setScans((items) => [...localScans, ...items]);
-    await Promise.all(localScans.map((item) => uploadFile(item.file!, source, item)));
+    await Promise.all(localScans.map((item) => uploadFile(item.file!, source, item, images.length === 1)));
   }
   async function openCamera() {
     setCameraError('');
@@ -1264,7 +1289,7 @@ function ScanPage() {
     <div className="page-heading-row"><div><p className="eyebrow">CAPTURE</p><h1>Keep the next conversation.</h1><p className="page-lede">Choose or take a photo and reading starts as soon as it uploads.</p></div></div>
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
-        {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera')} onQr={(raw) => void addQr(raw)} /> : <>
+        {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>
           <div className="viewfinder-graphic"><div className="viewfinder-corner tl"></div><div className="viewfinder-corner tr"></div><div className="viewfinder-corner bl"></div><div className="viewfinder-corner br"></div><div className="focus-lines"><span></span><span></span><span></span></div><div className="viewfinder-center"><ScanLine size={30} /><span>Show a card or brochure</span></div></div>
           <div className="capture-actions"><button className="button primary open-live-camera" onClick={() => void openCamera()}><ScanLine size={18} /> Open camera</button><label htmlFor={cameraInputId} className="button secondary capture-camera-action">Take photo</label><input id={cameraInputId} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => { void addFiles(Array.from(event.target.files ?? []), 'camera'); event.currentTarget.value = ''; }} /><label htmlFor={inputId} className="button secondary"><ImagePlus size={18} /> Choose photos</label><input id={inputId} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { void addFiles(Array.from(event.target.files ?? []), 'gallery'); event.currentTarget.value = ''; }} /></div>
           {cameraError && <p className="form-error" role="status">{cameraError}</p>}
@@ -1283,7 +1308,7 @@ function ScanPage() {
             {item.status === 'saved' && <span className="saved-check" aria-label="Saved"><Check size={17} /></span>}
             {item.status !== 'saved' && <button aria-label={`Discard ${title}`} className="icon-button" disabled={removingId === item.id} onClick={() => void discard(item)}><Trash2 size={16} /></button>}
           </div>;
-        })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{readingMode === 'manual' && <span>Automatic reading isn’t configured. Type details yourself during review. </span>}Photos upload to your private workspace. Details are always shown for your check.</p></div>}
+        })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{readingMode === 'browser' && <span>Cards are read on this device. Check every detail before saving. </span>}Photos upload to your private workspace. Details are always shown for your check.</p></div>}
       </aside>
     </div>
     {emailNowContactId && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEmailNow(); }}>
@@ -1445,7 +1470,10 @@ type CompanySuggestion = { id: string; name: string; people_count: number; reaso
 function ReviewPage() {
   const { scanId = '' } = useParams();
   const { session, csrfToken, notify } = useWorkspace();
+  const location = useLocation();
   const navigate = useNavigate();
+  const singleCapture = new URLSearchParams(location.search).get('dialog') === '1';
+  const captureFile = (location.state as { ocrFile?: Blob } | null)?.ocrFile;
   const [scan, setScan] = useState<Record<string, unknown> | null>(null);
   const [lead, setLead] = useState<ReviewLead>({ name: '', title: '', company: '', email: '', phone: '', website: '', products: [], topics: [], uncertain: [] });
   const [productChoices, setProductChoices] = useState<ProductChoice[]>([]);
@@ -1466,6 +1494,12 @@ function ReviewPage() {
   const [autoEmailAfterSave, setAutoEmailAfterSave] = useState(false);
   const [emailDismissed, setEmailDismissed] = useState(false);
   const [photoExpanded, setPhotoExpanded] = useState(false);
+  const [ocrRunning, setOcrRunning] = useState(Boolean(singleCapture && captureFile));
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrStage, setOcrStage] = useState('Starting the on-device reader…');
+  const ocrStartedFor = useRef('');
+  const ocrAuth = useRef({ csrfToken, workspaceId: session.workspace.id });
+  ocrAuth.current = { csrfToken, workspaceId: session.workspace.id };
   const reviewVoiceRef = useRef<ReviewVoiceNoteHandle>(null);
 
   useEffect(() => {
@@ -1509,6 +1543,31 @@ function ReviewPage() {
     void load();
     return () => { active = false; window.clearTimeout(timer); };
   }, [scanId, session.workspace.id]);
+
+  useEffect(() => {
+    if (!singleCapture || !captureFile || !scanId || ocrStartedFor.current === scanId) return;
+    ocrStartedFor.current = scanId;
+    setOcrRunning(true);
+    setError('');
+    void (async () => {
+      try {
+        const result = await readCardInBrowser(captureFile, (progress, stage) => {
+          setOcrProgress(progress); setOcrStage(stage || 'Reading the card…');
+        });
+        if (result.confidence < 20 || !Object.values(result.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) {
+          throw new Error('We couldn’t make out enough text. Type the details you can see.');
+        }
+        await request(`/api/scans/${scanId}/ocr`, { method: 'POST', body: JSON.stringify(result.fields) }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
+        setLead((current) => ({ ...current, ...result.fields }));
+        setScan((current) => current ? { ...current, status: 'ready', extracted: result.fields, uncertain: result.fields.uncertain, error: null } : current);
+        setOcrProgress(100);
+        setOcrStage('Reading complete. Check every detail against the photo.');
+      } catch (issue) {
+        setError(`${(issue as Error).message} Nothing is saved yet.`);
+        setScan((current) => current ? { ...current, status: 'failed' } : current);
+      } finally { setOcrRunning(false); }
+    })();
+  }, [captureFile, scanId, singleCapture]);
 
   useEffect(() => {
     if (session.workspace.kind !== 'company') return;
@@ -1624,10 +1683,10 @@ function ReviewPage() {
   const materialAlreadySaved = typeof scan?.materialCompanyId === 'string' && !!scan.materialCompanyId;
   const fieldsDisabled = status === 'saved' && (reviewMode === 'person' || materialAlreadySaved);
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
-  return <section className="review-view">
-    <div className="page-heading-row"><div><p className="eyebrow">CHECK BEFORE SAVING</p><h1>{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : 'One item at a time.'}</h1><p className="page-lede">We only keep details you confirm. Anything uncertain is marked for a closer look.</p></div><Link className="button secondary" to="/scan">Back to cards</Link></div>
+  return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title">
+    <div className="page-heading-row"><div><p className="eyebrow">CHECK BEFORE SAVING</p><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : 'One item at a time.'}</h1><p className="page-lede">We only keep details you confirm. Anything uncertain is marked for a closer look.</p></div><Link className="button secondary" to="/scan">{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
     {error && <p className="form-error review-error" role="alert">{error}</p>}
-    {(status === 'queued' || status === 'reading' || status === 'loading') ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>Reading this photo…</strong><p>The photo was uploaded. You can review it as soon as the details are ready.</p></div> :
+    {(status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning) ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>{ocrRunning ? 'Reading your card on this device…' : 'Reading this photo…'}</strong><p>{ocrRunning ? ocrStage : 'The photo was uploaded. You can review it as soon as the details are ready.'}</p>{ocrRunning && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="Card reading progress" />}</div> :
     <div className="review-layout">
       <aside className="surface-card review-source">
         {Boolean(scan?.mimeType) && <button type="button" className="review-photo-button" onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
