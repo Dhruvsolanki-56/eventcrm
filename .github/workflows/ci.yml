@@ -21,3 +21,20 @@ jobs:
       - run: npm ci
       - run: npm run verify:migrations
       - run: npm run check
+
+  validate-gather-crm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: gather-crm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: gather-crm/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
