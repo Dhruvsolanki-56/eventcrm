@@ -104,6 +104,7 @@ test('event-scoped members cannot read private encounter notes through drafts or
   const unlinkedNoteId = randomUUID();
   const voiceNoteId = randomUUID();
   const emailDraftId = randomUUID();
+  const accessibleSentEmailId = randomUUID();
   const failedEmailId = randomUUID();
   const failedEmailJobId = randomUUID();
   let visibleDraftId = '';
@@ -124,6 +125,9 @@ test('event-scoped members cannot read private encounter notes through drafts or
         .run(voiceNoteId, 'demo-northstar', 'demo-ns-contact-1', encounterId, 'demo-owner', 'Private voice note.', sampleAudio.audio_path, sampleAudio.audio_mime);
       const insertEmail = db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status) VALUES (?,?,?,?,?,?,?,?)`);
       insertEmail.run(emailDraftId, 'demo-northstar', 'demo-ns-contact-1', encounterId, 'contact@example.test', 'Restricted event draft', 'Event A content', 'draft');
+      db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,sent_to_server_at,created_by)
+        VALUES (?,?,?,?,?,?,?,'sent','2000-01-01T00:00:00.000Z','demo-rep')`)
+        .run(accessibleSentEmailId, 'demo-northstar', 'demo-ns-contact-1', 'demo-encounter-1', 'contact@example.test', 'Accessible event follow-up', 'Visible event content');
       insertEmail.run(failedEmailId, 'demo-northstar', 'demo-ns-contact-1', encounterId, 'contact@example.test', 'Restricted failed draft', 'Event A content', 'failed');
       db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at,status) VALUES (?,?,'email_send',?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),'failed')`)
         .run(failedEmailJobId, 'demo-northstar', JSON.stringify({ emailId: failedEmailId }));
@@ -166,6 +170,8 @@ test('event-scoped members cannot read private encounter notes through drafts or
   expect((await browserApi(`/api/emails/${emailDraftId}/alternate`, 'POST', {})).status).toBe(409);
   expect((await browserApi(`/api/emails/${emailDraftId}/send`, 'POST', { subject: 'Changed outside event', body: 'Do not send this.' })).status).toBe(409);
   expect((await browserApi(`/api/emails/${failedEmailId}/retry`, 'POST', {})).status).toBe(409);
+  expect((await browserApi('/api/emails/demo-email-tessa-sent')).status).toBe(404);
+  expect((await browserApi('/api/contacts/demo-ns-contact-1/reply', 'POST', {})).status).toBe(200);
   const deniedDelete = await browserApi('/api/contacts/demo-ns-contact-1', 'DELETE', { confirmation: 'DELETE' });
   expect(deniedDelete.status).toBe(403);
   const verify = new Database(databasePath, { readonly: true });
@@ -173,6 +179,8 @@ test('event-scoped members cannot read private encounter notes through drafts or
     expect(verify.prepare('SELECT body FROM notes WHERE id=?').get(noteId)).toMatchObject({ body: hiddenNote });
     expect(verify.prepare('SELECT status,subject,body FROM emails WHERE id=?').get(emailDraftId)).toMatchObject({ status: 'draft', subject: 'Restricted event draft', body: 'Event A content' });
     expect(verify.prepare('SELECT status FROM emails WHERE id=?').get(failedEmailId)).toMatchObject({ status: 'failed' });
+    expect(verify.prepare('SELECT status FROM emails WHERE id=?').get('demo-email-tessa-sent')).toMatchObject({ status: 'sent' });
+    expect(verify.prepare('SELECT status FROM emails WHERE id=?').get(accessibleSentEmailId)).toMatchObject({ status: 'replied' });
     expect(verify.prepare('SELECT status FROM jobs WHERE id=?').get(failedEmailJobId)).toMatchObject({ status: 'failed' });
   }
   finally { verify.close(); }
@@ -181,7 +189,7 @@ test('event-scoped members cannot read private encounter notes through drafts or
     try {
       cleanup.transaction(() => {
         cleanup.prepare('DELETE FROM jobs WHERE id=?').run(failedEmailJobId);
-        cleanup.prepare('DELETE FROM emails WHERE id IN (?,?)').run(emailDraftId, failedEmailId);
+        cleanup.prepare('DELETE FROM emails WHERE id IN (?,?,?)').run(emailDraftId, accessibleSentEmailId, failedEmailId);
         if (visibleDraftId) cleanup.prepare('DELETE FROM emails WHERE id=?').run(visibleDraftId);
         cleanup.prepare('DELETE FROM notes WHERE id IN (?,?,?)').run(noteId, unlinkedNoteId, voiceNoteId);
         cleanup.prepare('DELETE FROM encounters WHERE id=?').run(encounterId);

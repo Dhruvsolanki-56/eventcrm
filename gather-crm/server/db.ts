@@ -454,18 +454,21 @@ function noteEncounter(actorId: string, workspaceId: string, contactId: string) 
   return row?.id ?? null;
 }
 
+function emailAccessSql(emailAlias = 'm', contactAlias = 'c', membershipAlias = 'ms', linkedAlias = 'linked') {
+  return `(${membershipAlias}.role='admin'
+    OR (${emailAlias}.encounter_id IS NOT NULL AND ${linkedAlias}.id IS NOT NULL AND ${linkedAlias}.event_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM event_access ea WHERE ea.workspace_id=${linkedAlias}.workspace_id AND ea.event_id=${linkedAlias}.event_id AND ea.user_id=?))
+    OR ((${emailAlias}.encounter_id IS NULL OR ${linkedAlias}.id IS NULL OR ${linkedAlias}.event_id IS NULL) AND (${contactAlias}.owner_user_id=? OR EXISTS (
+      SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id
+      WHERE en.workspace_id=${contactAlias}.workspace_id AND en.contact_id=${contactAlias}.id AND ea.user_id=?))))`;
+}
+
 function emailAccessible(actorId: string, workspaceId: string, emailId: string) {
   return Boolean(db.prepare(`SELECT 1 FROM emails m
     JOIN contacts c ON c.workspace_id=m.workspace_id AND c.id=m.contact_id
     JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
     LEFT JOIN encounters linked ON linked.workspace_id=m.workspace_id AND linked.id=m.encounter_id
-    WHERE m.workspace_id=? AND m.id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL
-      AND (ms.role='admin'
-        OR (m.encounter_id IS NOT NULL AND linked.id IS NOT NULL AND linked.event_id IS NOT NULL AND EXISTS (
-          SELECT 1 FROM event_access ea WHERE ea.workspace_id=linked.workspace_id AND ea.event_id=linked.event_id AND ea.user_id=?))
-        OR ((m.encounter_id IS NULL OR linked.id IS NULL OR linked.event_id IS NULL) AND (c.owner_user_id=? OR EXISTS (
-          SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id
-          WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND ea.user_id=?)))) LIMIT 1`)
+    WHERE m.workspace_id=? AND m.id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${emailAccessSql()} LIMIT 1`)
     .get(actorId, workspaceId, emailId, actorId, actorId, actorId));
 }
 
@@ -1412,8 +1415,13 @@ export function markContactReplied(actorId: string, workspaceId: string, contact
       .get(workspaceId, contactId) as { stage: string; lost_reason: string | null } | undefined;
     if (!contact) return false;
 
-    const latestSentEmail = db.prepare(`SELECT id FROM emails WHERE workspace_id=? AND contact_id=? AND status='sent' ORDER BY sent_to_server_at DESC LIMIT 1`)
-      .get(workspaceId, contactId) as { id: string } | undefined;
+    const latestSentEmail = db.prepare(`SELECT m.id FROM emails m
+      JOIN contacts c ON c.workspace_id=m.workspace_id AND c.id=m.contact_id
+      JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
+      LEFT JOIN encounters linked ON linked.workspace_id=m.workspace_id AND linked.id=m.encounter_id
+      WHERE m.workspace_id=? AND m.contact_id=? AND m.status='sent' AND c.deleted_at IS NULL AND c.archived_at IS NULL
+        AND ${emailAccessSql()} ORDER BY m.sent_to_server_at DESC LIMIT 1`)
+      .get(actorId, workspaceId, contactId, actorId, actorId, actorId) as { id: string } | undefined;
     const contactChanged = contact.stage !== 'replied' || contact.lost_reason !== null;
     if (!contactChanged && !latestSentEmail) return true;
 
