@@ -278,7 +278,7 @@ test('Email now from Save & scan next sends only after approval and returns to c
   await dialog.getByRole('button', { name: 'Send email' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('queued for the mail server');
+  await expect(page.getByRole('status').filter({ hasText: 'queued for the mail server' })).toBeVisible();
   await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain(subject);
   const acceptedMessage = readFileSync(capturePath!, 'utf8');
   expect(acceptedMessage).toContain(recipient);

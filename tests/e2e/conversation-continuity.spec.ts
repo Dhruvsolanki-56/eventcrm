@@ -86,7 +86,7 @@ test('repeat cards reuse the stored scan; later conversations stay on one person
     expect(deniedQr.status()).toBe(403);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/scan');
-    await expect(page.getByLabel('Attach new captures to')).toHaveValue('event-main-active');
+    await expect(page.getByLabel('Event for this capture')).toHaveValue('event-main-active');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.goto('/people/demo-ns-contact-1');
     await page.getByLabel('What did you discuss?').fill('At the follow-up, requested the short comparison by email.');
