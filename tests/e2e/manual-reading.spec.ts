@@ -41,7 +41,7 @@ test('a single uploaded card opens its read-and-check dialog and extracts visibl
   await expect(page.getByLabel('Company')).toHaveValue('ACME PACKAGING');
   await expect(page.getByLabel('Email')).toHaveValue('demo.contact@sample.invalid');
   await expect(page.getByLabel('Website')).toHaveValue('acme.co');
-  await expect(page.getByText('Check this detail').first()).toBeVisible();
+  await expect(page.locator('.uncertain-field em').first()).toHaveText('Verify');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page.getByText('Nothing was guessed. Type the details you can see.')).toHaveCount(0);
 
@@ -135,6 +135,6 @@ test('a missing footer company is read from a focused crop and remains reviewabl
   await expect(page).toHaveURL(/\/review\/[^?]+\?dialog=1$/, { timeout: 15_000 });
   await expect(page.getByLabel('Name *')).toHaveValue('Chen Reed', { timeout: 90_000 });
   await expect(page.getByLabel('Company')).toHaveValue('Silverline Products LLC', { timeout: 90_000 });
-  await expect(page.getByText('Check this detail').first()).toBeVisible();
+  await expect(page.locator('.uncertain-field em').first()).toHaveText('Verify');
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

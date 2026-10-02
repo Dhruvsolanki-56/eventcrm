@@ -35,7 +35,8 @@ test('a new photo uses Gemini automatically at upload and still needs review', a
   await expect(page).toHaveURL(/\/review\//);
   await expect(page.getByLabel('Name *')).toHaveValue('Avery Chen', { timeout: 15000 });
   await expect(page.getByLabel('Company')).toHaveValue('Northstar Packaging');
-  await expect(page.locator('.uncertain-field')).toHaveCount(4);
+  await expect(page.locator('.uncertain-field')).toHaveCount(0);
+  await expect(page.locator('.review-check-note')).toContainText('These are suggestions');
   await expect(page.locator('.review-status')).toContainText('Ready to review');
   expect(aiReads).toBe(1);
   await page.setViewportSize({ width: 390, height: 844 });

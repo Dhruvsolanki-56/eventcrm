@@ -41,5 +41,12 @@ test('refresh documented desktop and phone capture screenshots', async ({ page }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page.locator('.phone-scan')).toBeHidden();
+  await expect(page.getByRole('link', { name: 'Close' })).toBeVisible();
+  for (const selector of ['.review-source', '.review-form']) {
+    const box = await page.locator(selector).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  }
   await page.screenshot({ path: resolve('docs/screenshots/review-phone.png'), animations: 'disabled' });
 });

@@ -127,7 +127,7 @@ async function openUploadedReview(page: Page) {
   console.log('Review route audit: background reading is ready; opening the review route.');
   await page.goto(`/review/${scan.id}`);
   console.log(`Review route audit: browser is at ${new URL(page.url()).pathname}.`);
-  await expect(page.getByRole('heading', { name: /One item at a time/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Review this card/ })).toBeVisible();
   console.log('Review route audit: review screen heading is visible.');
 }
 
