@@ -1217,8 +1217,7 @@ function ScanPage() {
   const [scans, setScans] = useState<ScanView[]>([]);
   const [cameraError, setCameraError] = useState('');
   const [readingMode, setReadingMode] = useState<'demo' | 'provider' | 'browser' | 'manual' | null>(null);
-  const [geminiCardsAvailable, setGeminiCardsAvailable] = useState(false);
-  const [useGeminiCards, setUseGeminiCards] = useState(false);
+  const [geminiCardsAvailable, setGeminiCardsAvailable] = useState<boolean | null>(null);
   const [captureEvents, setCaptureEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
   const [captureEventId, setCaptureEventId] = useState<string | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
@@ -1244,7 +1243,7 @@ function ScanPage() {
       return [...newlyVisible, ...refreshed];
     });
   }, [session.workspace.id]);
-  useEffect(() => { void request<{ cardReading: 'demo' | 'provider' | 'browser' | 'manual'; aiCardProvider: string | null }>('/api/capabilities').then((data) => { setReadingMode(data.cardReading); setGeminiCardsAvailable(data.aiCardProvider === 'gemini'); }).catch(() => setReadingMode('browser')); }, []);
+  useEffect(() => { void request<{ cardReading: 'demo' | 'provider' | 'browser' | 'manual'; aiCardProvider: string | null }>('/api/capabilities').then((data) => { setReadingMode(data.cardReading); setGeminiCardsAvailable(data.aiCardProvider === 'gemini'); }).catch(() => { setReadingMode('browser'); setGeminiCardsAvailable(false); }); }, []);
   useEffect(() => {
     let active = true;
     void request<{ events: Array<{ id: string; name: string; is_active: number }> }>('/api/events/accessible', {}, { workspaceId: session.workspace.id })
@@ -1295,6 +1294,9 @@ function ScanPage() {
     setTrayError('');
     try {
       const photo = await shrinkPhoto(file);
+      const geminiReady = geminiCardsAvailable ?? await request<{ aiCardProvider: string | null }>('/api/capabilities')
+        .then((data) => { const available = data.aiCardProvider === 'gemini'; setGeminiCardsAvailable(available); return available; })
+        .catch(() => false);
       const qrPromise = readQrFromImage(photo);
       const result = await request<{ scan: Record<string, unknown>; duplicate: boolean; duplicateImage?: boolean }>('/api/scans', {
         method: 'POST',
@@ -1315,7 +1317,7 @@ function ScanPage() {
         return;
       }
       setScans((items) => items.map((item) => item.id === localId ? { ...uploaded, file } : item));
-      if (openReview && !result.duplicate) navigate(`/review/${uploaded.id}?dialog=1`, { state: { ocrFile: photo, useGeminiCards: geminiCardsAvailable && useGeminiCards } });
+      if (openReview && !result.duplicate) navigate(`/review/${uploaded.id}?dialog=1`, { state: { ocrFile: photo, useGeminiCards: geminiReady } });
       if (!openReview && !result.duplicate) {
         ocrPendingIds.current.add(uploaded.id);
         const readTask = ocrQueue.current.then(async () => {
@@ -1323,7 +1325,7 @@ function ScanPage() {
           try {
             let fields: ReviewLead | null = null;
             let usedGemini = false;
-            if (geminiCardsAvailable && useGeminiCards) {
+            if (geminiReady) {
               try {
                 const ai = await request<{ fields: ReviewLead }>(`/api/scans/${uploaded.id}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
                 if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
@@ -1362,7 +1364,7 @@ function ScanPage() {
       if (!uploadedId) setScans((items) => items.map((item) => item.id === localId ? { ...item, status: 'failed', error: `Upload failed. ${message}` } : item));
       setTrayError(message);
     }
-  }, [captureEventId, csrfToken, geminiCardsAvailable, navigate, notify, session.workspace.id, useGeminiCards]);
+  }, [captureEventId, csrfToken, geminiCardsAvailable, navigate, notify, session.workspace.id]);
 
   async function addFiles(files: File[], source: 'camera' | 'gallery') {
     const images = files.filter((file) => file.type.startsWith('image/'));
@@ -1401,17 +1403,17 @@ function ScanPage() {
   }
   const readyCount = scans.filter((item) => item.status === 'ready' || item.status === 'failed').length;
   return <section className="scan-view">
-    <div className="page-heading-row"><div><p className="eyebrow">CAPTURE</p><h1>Keep the next conversation.</h1><p className="page-lede">Choose or take a photo and reading starts as soon as it uploads.</p></div></div>
-    <div className="capture-event-picker"><label htmlFor="capture-event">Attach new captures to</label><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select><span>Each saved conversation stays in that event’s history and analytics.</span></div>
-    {geminiCardsAvailable && <label className="capture-ai-choice"><input type="checkbox" checked={useGeminiCards} onChange={(event) => setUseGeminiCards(event.target.checked)} /><span><strong>Read new photos with Gemini automatically</strong><small>Starts after upload. If its limited free tier is unavailable, the on-device reader takes over. Photos sent to Gemini on its free tier may be used by Google to improve its products. Check all details before saving.</small></span></label>}
+    <div className="page-heading-row"><div><p className="eyebrow">CAPTURE</p><h1>Keep the next conversation.</h1><p className="page-lede">Take a photo, check the details, and move straight to the next person.</p></div></div>
+    <div className="capture-event-picker"><div className="capture-event-copy"><label htmlFor="capture-event">Event for this capture</label><span>Keep the conversation with the right event.</span></div><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select></div>
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
         {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>
-          <div className="viewfinder-graphic"><div className="viewfinder-corner tl"></div><div className="viewfinder-corner tr"></div><div className="viewfinder-corner bl"></div><div className="viewfinder-corner br"></div><div className="focus-lines"><span></span><span></span><span></span></div><div className="viewfinder-center"><ScanLine size={30} /><span>Show a card or brochure</span></div></div>
+          <div className="viewfinder-graphic"><div className="viewfinder-corner tl"></div><div className="viewfinder-corner tr"></div><div className="viewfinder-corner bl"></div><div className="viewfinder-corner br"></div><div className="viewfinder-center"><span className="viewfinder-index">01 / CAPTURE</span><ScanLine size={30} /><strong>Card, brochure, or QR</strong><span>Place it in the frame or choose a photo below.</span></div></div>
+          <div className="capture-readiness" role="status"><CircleCheck size={16} aria-hidden="true" /><div><strong>{geminiCardsAvailable ? 'Gemini reads first, automatically' : geminiCardsAvailable === null ? 'Checking reading service…' : 'On-device reading is ready'}</strong><span>{geminiCardsAvailable ? 'After upload, the photo is sent to Google. On its free tier, Google may use it to improve products. If reading fails, on-device OCR takes over.' : 'Reading starts after upload. You check every detail before saving.'}</span></div></div>
           <div className="capture-actions"><button className="button primary open-live-camera" onClick={() => void openCamera()}><ScanLine size={18} /> Open camera</button><label htmlFor={cameraInputId} className="button secondary capture-camera-action">Take photo</label><input id={cameraInputId} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => { void addFiles(Array.from(event.target.files ?? []), 'camera'); event.currentTarget.value = ''; }} /><label htmlFor={inputId} className="button secondary"><ImagePlus size={18} /> Choose photos</label><input id={inputId} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { void addFiles(Array.from(event.target.files ?? []), 'gallery'); event.currentTarget.value = ''; }} /></div>
           {cameraError && <p className="form-error" role="status">{cameraError}</p>}
           {trayError && <p className="form-error" role="alert">{trayError}</p>}
-          <p className="helper-copy">You can choose several photos. Review each one as a person lead or save it under a company.</p>
+          <p className="helper-copy">Choose several photos if needed. Review each one separately before saving.</p>
         </>}
       </section>
       <aside className="surface-card tray-card"><div className="section-head"><div><p className="eyebrow">YOUR TRAY</p><h2>Items to review <span className="count-pill">{readyCount}</span></h2></div><span className="tray-badge">{pending ? 'Working' : 'Ready'}</span></div>
@@ -1425,7 +1427,7 @@ function ScanPage() {
             {item.status === 'saved' && <span className="saved-check" aria-label="Saved"><Check size={17} /></span>}
             {item.status !== 'saved' && <button aria-label={`Discard ${title}`} className="icon-button" disabled={removingId === item.id} onClick={() => void discard(item)}><Trash2 size={16} /></button>}
           </div>;
-        })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{readingMode === 'browser' && <span>{useGeminiCards ? 'New photos are sent to Gemini for reading; local OCR is the fallback.' : 'Cards are read on this device.'} Check every detail before saving. </span>}Photos upload to your private workspace. Details are always shown for your check.</p></div>}
+        })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{geminiCardsAvailable ? 'Gemini reads new photos first; on-device OCR is the fallback. ' : 'Cards are read on this device. '}Check every detail before saving. Photos upload to your workspace.</p></div>}
       </aside>
     </div>
     {emailNowContactId && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEmailNow(); }}>

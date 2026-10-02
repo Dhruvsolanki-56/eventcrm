@@ -282,7 +282,7 @@ async function issueSession(res: Response, userId: string) {
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 app.get('/api/capabilities', (_req, res) => res.json({
-  cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : 'browser',
+  cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : isGeminiCardEnabled() ? 'provider' : 'browser',
   aiCardAssist: isCardAIEnabled(),
   aiCardProvider: isGeminiCardEnabled() ? 'gemini' : isAIProviderEnabled() ? 'anthropic' : null,
   emailDrafts: isAIProviderEnabled(),
