@@ -5,6 +5,7 @@ import { statusWords, type DemoAccount, type SessionData } from '../shared/contr
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
 import { readCardInBrowser } from './card-ocr.js';
+import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
 const ReportChart = lazy(() => import('./ReportChart.js'));
@@ -693,9 +694,18 @@ function ReportsPage() {
 
 function PersonPage() {
   const { contactId = '' } = useParams();
+  const location = useLocation();
+  const requestedConversation = new URLSearchParams(location.search).get('newConversation') === '1';
+  const requestedEventId = new URLSearchParams(location.search).get('event');
   const { session, csrfToken, notify } = useWorkspace();
   const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }> } | null>(null);
   const [note, setNote] = useState('');
+  const [conversationEvents, setConversationEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
+  const [conversationEventId, setConversationEventId] = useState('');
+  const conversationRequestId = useRef(crypto.randomUUID());
+  const [emailDraftVersion, setEmailDraftVersion] = useState(0);
+  const [emailAfterConversation, setEmailAfterConversation] = useState(false);
+  const [emailHasOpenDraft, setEmailHasOpenDraft] = useState(false);
   const [saving, setSaving] = useState(false);
   const [stageDraft, setStageDraft] = useState('');
   const [lostReason, setLostReason] = useState('');
@@ -717,6 +727,21 @@ function PersonPage() {
     setDealStatus(['open', 'won', 'lost'].includes(String(value.person.deal_status)) ? value.person.deal_status as 'open' | 'won' | 'lost' : '');
   }, [contactId, session.workspace.id]);
   useEffect(() => { void load().catch((issue) => setError((issue as Error).message)); }, [load]);
+  useEffect(() => {
+    let active = true;
+    void request<{ events: Array<{ id: string; name: string; is_active: number }> }>('/api/events/accessible', {}, { workspaceId: session.workspace.id })
+      .then(({ events }) => { if (active) { setConversationEvents(events); setConversationEventId(requestedEventId !== null && (requestedEventId === '' || events.some((item) => item.id === requestedEventId)) ? requestedEventId : events.find((item) => item.is_active)?.id ?? ''); } })
+      .catch(() => { if (active) setConversationEvents([]); });
+    return () => { active = false; };
+  }, [requestedEventId, session.workspace.id]);
+  useEffect(() => {
+    if (!requestedConversation || !detail) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById('person-conversation')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      document.getElementById('person-note')?.focus({ preventScroll: true });
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [requestedConversation, detail?.person.id]);
   async function changeStage(stage: string, reason = '') {
     if (!detail) return;
     try {
@@ -750,8 +775,11 @@ function PersonPage() {
     } catch (issue) { notify((issue as Error).message); }
   }
   async function addNote(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setSaving(true); setError('');
-    try { await request(`/api/contacts/${contactId}/notes`, { method: 'POST', body: JSON.stringify({ body: note }) }, { csrfToken, workspaceId: session.workspace.id }); setNote(''); await load(); notify('Note saved to this person.'); }
+    event.preventDefault();
+    const prepareEmail = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.dataset.action === 'email';
+    if (prepareEmail && emailHasOpenDraft && !window.confirm('A new email draft will replace the open draft on this page. The earlier draft stays saved and unsent. Continue?')) return;
+    setSaving(true); setError('');
+    try { await request(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); await load(); if (prepareEmail) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
     catch (issue) { setError((issue as Error).message); } finally { setSaving(false); }
   }
   async function saveCompanyDeal(event: FormEvent<HTMLFormElement>) {
@@ -778,10 +806,30 @@ function PersonPage() {
       {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deal-value">Deal value</a>}
     </nav>
     <div className="person-layout"><div className="person-main"><article className="surface-card person-card"><div className="section-head"><div><p className="eyebrow">CONTACT DETAILS</p><h2>{String(person.company_name)}</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{String(person.quality || 'Not set')}</dd><dt>Event conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}<label>Change stage<select value={stageDraft || String(person.stage)} onChange={(event) => { const stage = event.target.value; if (stage === 'lost') { setStageDraft('lost'); setLostReason(''); } else { setStageDraft(''); void changeStage(stage); } }}><option value="new">New</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="meeting">Meeting</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{stageDraft === 'lost' && <div className="lost-reason-form"><label htmlFor="lost-reason">Why was this marked lost?<textarea id="lost-reason" rows={2} maxLength={500} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="A short reason" /></label><button type="button" className="button primary" disabled={!lostReason.trim()} onClick={() => void changeStage('lost', lostReason)}>Save as lost</button><button type="button" className="text-button" onClick={() => { setStageDraft(''); setLostReason(''); }}>Cancel</button></div>}{person.stage === 'lost' && Boolean(person.lost_reason) && <p className="lost-reason-display">Lost because: {String(person.lost_reason)}</p>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}</article>
-    <article className="surface-card timeline-card"><p className="eyebrow">HISTORY</p><h2>Conversations and notes</h2>{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
+    <article className="surface-card timeline-card"><p className="eyebrow">HISTORY</p><h2>Conversations and notes</h2>{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
     <aside className="person-side">
       {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><p className="eyebrow">PIPELINE · COMPANY VALUE</p><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (USD)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(person.deal_value_minor) / 100)} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
-      <TaskPlanner contactId={contactId} kind={plannerKind} onKindChange={setPlannerKind} onSaved={() => void load()} /><FollowUpComposer contactId={contactId} /><form className="surface-card note-form" onSubmit={(event) => void addNote(event)}><p className="eyebrow">ADD A NOTE</p><h2>Keep the detail that matters.</h2><label htmlFor="person-note">Short note</label><textarea id="person-note" rows={4} maxLength={4000} value={note} onChange={(event) => setNote(event.target.value)} placeholder="What did you talk about?" />{error && <p className="form-error">{error}</p>}<button className="button primary" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Save note'}</button></form><VoiceNotesPanel contactId={contactId} notes={detail.voiceNotes} onChange={() => void load()} /><ArchivePersonPanel contactId={contactId} />{(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}<Link className="button secondary" to="/scan"><ScanLine size={16} /> Capture another conversation</Link></aside></div></section>;
+      <form id="person-conversation" className="surface-card note-form" onSubmit={(event) => void addNote(event)}>
+        <p className="eyebrow">NEW CONVERSATION</p><h2>Pick up where you left off.</h2>
+        <p className="subtle">Add this exchange to {String(person.name)}. It will inform the next email draft without creating another person.</p>
+        <label htmlFor="conversation-event">Where did you meet?</label>
+        <select id="conversation-event" value={conversationEventId} onChange={(event) => { setConversationEventId(event.target.value); conversationRequestId.current = crypto.randomUUID(); }}>
+          <option value="">No event / other meeting</option>
+          {conversationEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}
+        </select>
+        <label htmlFor="person-note">What did you discuss?</label>
+        <textarea id="person-note" rows={4} maxLength={4000} value={note} onChange={(event) => { setNote(event.target.value); conversationRequestId.current = crypto.randomUUID(); }} placeholder="Their question, current need, or next step — in your own words" required />
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="button primary" data-action="email" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add & prepare email'}</button>
+        <button className="button secondary" data-action="note" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add conversation'}</button>
+      </form>
+      <FollowUpComposer key={`${contactId}-${emailDraftVersion}`} contactId={contactId} autoOpen={emailAfterConversation} onDraftStateChange={setEmailHasOpenDraft} />
+      <VoiceNotesPanel contactId={contactId} notes={detail.voiceNotes} onChange={() => void load()} />
+      <TaskPlanner contactId={contactId} kind={plannerKind} onKindChange={setPlannerKind} onSaved={() => void load()} />
+      <ArchivePersonPanel contactId={contactId} />
+      {(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}
+      <Link className="button secondary" to="/scan"><ScanLine size={16} /> Capture another conversation</Link>
+    </aside></div></section>;
 }
 
 function ArchivePersonPanel({ contactId }: { contactId: string }) {
@@ -935,6 +983,10 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
   const [previewUrl, setPreviewUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [localTranscribeId, setLocalTranscribeId] = useState('');
+  const [localTranscribeProgress, setLocalTranscribeProgress] = useState('');
+  const [transcriptSuggestions, setTranscriptSuggestions] = useState<Record<string, string>>({});
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<VoiceLanguage>('english');
   useEffect(() => () => { streamRef.current?.getTracks().forEach((track) => track.stop()); if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => {
     if (!recording) return;
@@ -971,13 +1023,25 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
       const mime = clip.type.split(';')[0] || 'audio/webm';
       await request(`/api/contacts/${contactId}/voice`, { method: 'POST', headers: { 'Content-Type': mime, 'X-Recording-Seconds': String(Math.max(1, seconds)) }, body: clip }, { csrfToken, workspaceId: session.workspace.id });
       if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(''); setClip(null); onChange();
-      setError(`Recording saved. No automatic transcript was made. Add text to remember what you said.`);
+      setError('Recording saved. No automatic transcript was made. Transcribe on this device or add text yourself.');
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
   }
   async function saveText(noteId: string, text: string) {
-    try { await request(`/api/notes/${noteId}/text`, { method: 'PUT', body: JSON.stringify({ text }) }, { csrfToken, workspaceId: session.workspace.id }); onChange(); }
+    try { await request(`/api/notes/${noteId}/text`, { method: 'PUT', body: JSON.stringify({ text }) }, { csrfToken, workspaceId: session.workspace.id }); setTranscriptSuggestions((current) => { const next = { ...current }; delete next[noteId]; return next; }); onChange(); }
     catch (issue) { setError((issue as Error).message); }
+  }
+  async function transcribeSavedNote(noteId: string) {
+    setLocalTranscribeId(noteId); setLocalTranscribeProgress('Opening the recording…'); setError('');
+    try {
+      const response = await fetch(`/api/notes/${noteId}/audio`, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Workspace-Id': session.workspace.id } });
+      if (!response.ok) throw new Error('This recording could not be opened.');
+      const text = await transcribeLocally(await response.blob(), setLocalTranscribeProgress, transcriptionLanguage);
+      if (!text) throw new Error('No speech was found. Listen and type the note if needed.');
+      setTranscriptSuggestions((current) => ({ ...current, [noteId]: text.slice(0, 4000) }));
+      setLocalTranscribeProgress('Suggested text is ready. Review it before saving.');
+    } catch (issue) { setError((issue as Error).message); setLocalTranscribeProgress(''); }
+    finally { setLocalTranscribeId(''); }
   }
   async function removeVoice(noteId: string) {
     if (!window.confirm('Delete this recording and its saved text?')) return;
@@ -985,8 +1049,8 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
     catch (issue) { setError((issue as Error).message); }
   }
   const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  return <section id="person-voice-note" className="surface-card voice-panel"><p className="eyebrow">VOICE NOTE · OPTIONAL</p><h2>Save the detail in your own words.</h2><p className="voice-disclosure">Record up to two minutes. Gather does not transcribe it; you can type a note yourself.</p>
-    {notes.map((item) => <article className="saved-voice" key={item.id}><audio controls preload="none" src={`/api/notes/${item.id}/audio`}>Audio playback is not supported by this browser.</audio><small>{Math.floor((item.duration_seconds ?? 0) / 60)}:{String((item.duration_seconds ?? 0) % 60).padStart(2, '0')} · {new Date(item.created_at).toLocaleDateString()}</small><label>Text you typed<textarea key={`${item.id}-${item.transcript}`} rows={3} maxLength={4000} defaultValue={item.transcript} onBlur={(event) => { if (event.currentTarget.value !== item.transcript) void saveText(item.id, event.currentTarget.value); }} placeholder="Optional. Type what you want to remember." /></label><button type="button" className="text-button danger-text" onClick={() => void removeVoice(item.id)}>Delete recording</button></article>)}
+  return <section id="person-voice-note" className="surface-card voice-panel"><p className="eyebrow">VOICE NOTE · OPTIONAL</p><h2>Save the detail in your own words.</h2><p className="voice-disclosure">Record up to two minutes. You can transcribe on this device for free, then check the text, or type it yourself. The speech model downloads on first use; your audio is not sent to its host.</p><label className="voice-language">Recording language<select value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value as VoiceLanguage)}><option value="english">English</option><option value="hindi">Hindi</option><option value="gujarati">Gujarati</option></select></label>
+    {notes.map((item) => <article className="saved-voice" key={item.id}><audio controls preload="none" src={`/api/notes/${item.id}/audio`}>Audio playback is not supported by this browser.</audio><small>{Math.floor((item.duration_seconds ?? 0) / 60)}:{String((item.duration_seconds ?? 0) % 60).padStart(2, '0')} · {new Date(item.created_at).toLocaleDateString()}</small><button type="button" className="button secondary" disabled={Boolean(localTranscribeId)} onClick={() => void transcribeSavedNote(item.id)}>{localTranscribeId === item.id ? 'Transcribing…' : 'Transcribe on this device'}</button>{localTranscribeId === item.id && <p role="status">{localTranscribeProgress}</p>}{transcriptSuggestions[item.id] !== undefined ? <div className="local-transcript-review"><label>Suggested transcript · check before saving<textarea rows={4} maxLength={4000} value={transcriptSuggestions[item.id]} onChange={(event) => setTranscriptSuggestions((current) => ({ ...current, [item.id]: event.target.value }))} /></label><div className="local-transcript-actions"><button type="button" className="button primary" onClick={() => void saveText(item.id, transcriptSuggestions[item.id])}>Save checked text</button><button type="button" className="button secondary" onClick={() => setTranscriptSuggestions((current) => { const next = { ...current }; delete next[item.id]; return next; })}>Discard suggestion</button></div></div> : <label>Text you typed<textarea key={`${item.id}-${item.transcript}`} rows={3} maxLength={4000} defaultValue={item.transcript} onBlur={(event) => { if (event.currentTarget.value !== item.transcript) void saveText(item.id, event.currentTarget.value); }} placeholder="Optional. Type what you want to remember." /></label>}<button type="button" className="text-button danger-text" onClick={() => void removeVoice(item.id)}>Delete recording</button></article>)}
     {clip && <div className="recording-preview"><strong>Review your recording · {clock}</strong><audio controls src={previewUrl || undefined}>Audio playback is not supported by this browser.</audio><button type="button" className="button primary" disabled={busy} onClick={() => void saveRecording()}>{busy ? 'Saving…' : 'Save voice note'}</button><button type="button" className="text-button" onClick={() => { setClip(null); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(''); }}>Discard recording</button></div>}
     {recording ? <div className="recording-controls"><span className="recording-live"><i /> Recording · {clock} / 2:00</span><button type="button" className="button secondary" onClick={stopRecording}>Stop recording</button></div> : !clip && <button type="button" className="button secondary" onClick={() => void startRecording()}><Mic size={16} /> Record voice note</button>}
     {error && <p className="voice-feedback" role="status">{error}</p>}
@@ -1045,6 +1109,7 @@ type ScanView = {
   file?: File;
   imageUrl?: string | null;
   materialCompanyId?: string | null;
+  contactId?: string | null;
 };
 
 const displayStatus: Record<ScanView['status'], string> = {
@@ -1129,6 +1194,7 @@ function scanFromApi(scan: Record<string, unknown>): ScanView {
     queuedAt: typeof scan.queuedAt === 'string' ? scan.queuedAt : undefined,
     imageUrl: scan.mimeType ? `/api/scans/${String(scan.id)}/image` : null,
     materialCompanyId: typeof scan.materialCompanyId === 'string' ? scan.materialCompanyId : null,
+    contactId: typeof scan.contactId === 'string' ? scan.contactId : null,
   };
 }
 
@@ -1151,6 +1217,10 @@ function ScanPage() {
   const [scans, setScans] = useState<ScanView[]>([]);
   const [cameraError, setCameraError] = useState('');
   const [readingMode, setReadingMode] = useState<'demo' | 'provider' | 'browser' | 'manual' | null>(null);
+  const [geminiCardsAvailable, setGeminiCardsAvailable] = useState(false);
+  const [useGeminiCards, setUseGeminiCards] = useState(false);
+  const [captureEvents, setCaptureEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
+  const [captureEventId, setCaptureEventId] = useState<string | null>(null);
   const [cameraOn, setCameraOn] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [trayError, setTrayError] = useState('');
@@ -1174,7 +1244,14 @@ function ScanPage() {
       return [...newlyVisible, ...refreshed];
     });
   }, [session.workspace.id]);
-  useEffect(() => { void request<{ cardReading: 'demo' | 'provider' | 'browser' | 'manual' }>('/api/capabilities').then((data) => setReadingMode(data.cardReading)).catch(() => setReadingMode('browser')); }, []);
+  useEffect(() => { void request<{ cardReading: 'demo' | 'provider' | 'browser' | 'manual'; aiCardProvider: string | null }>('/api/capabilities').then((data) => { setReadingMode(data.cardReading); setGeminiCardsAvailable(data.aiCardProvider === 'gemini'); }).catch(() => setReadingMode('browser')); }, []);
+  useEffect(() => {
+    let active = true;
+    void request<{ events: Array<{ id: string; name: string; is_active: number }> }>('/api/events/accessible', {}, { workspaceId: session.workspace.id })
+      .then(({ events }) => { if (active) { setCaptureEvents(events); setCaptureEventId(events.find((item) => item.is_active)?.id ?? ''); } })
+      .catch(() => { if (active) { setCaptureEvents([]); setCaptureEventId(''); } });
+    return () => { active = false; };
+  }, [session.workspace.id]);
   useEffect(() => { void reloadScans().catch((error) => setTrayError((error as Error).message)); }, [reloadScans]);
   const pending = scans.some((item) => item.status === 'uploading' || item.status === 'queued' || item.status === 'reading');
   useEffect(() => {
@@ -1191,41 +1268,79 @@ function ScanPage() {
     if (Date.now() - lastAt < 12_000) return;
     qrCreatedAt.current.set(raw, Date.now());
     try {
-      const response = await request<{ scan: Record<string, unknown> }>('/api/scans/qr', {
-        method: 'POST', body: JSON.stringify({ clientScanId: crypto.randomUUID(), fields }),
+      const response = await request<{ scan: Record<string, unknown>; duplicateQr?: boolean }>('/api/scans/qr', {
+        method: 'POST', body: JSON.stringify({ clientScanId: crypto.randomUUID(), fields, ...(captureEventId !== null ? { eventId: captureEventId || null } : {}) }),
       }, { csrfToken, workspaceId: session.workspace.id });
-      setScans((items) => [scanFromApi(response.scan), ...items]);
-      notify('QR details are ready for your review.');
+      const scan = scanFromApi(response.scan);
+      if (response.duplicateQr) {
+        if (scan.contactId) {
+          notify('This QR contact is already saved. Add the new conversation to that person.');
+          navigate(`/people/${scan.contactId}?newConversation=1&event=${encodeURIComponent(captureEventId ?? '')}`);
+        } else {
+          notify('These QR details are already waiting for review.');
+          navigate(`/review/${scan.id}`);
+        }
+      } else {
+        setScans((items) => [scan, ...items]);
+        notify('QR details are ready for your review.');
+      }
     } catch (error) { setTrayError((error as Error).message); }
-  }, [csrfToken, notify, session.workspace.id]);
+  }, [captureEventId, csrfToken, navigate, notify, session.workspace.id]);
 
   const uploadFile = useCallback(async (file: File, source: 'camera' | 'gallery', localScan?: ScanView, openReview = false) => {
     const clientScanId = localScan?.clientScanId ?? crypto.randomUUID();
     const localId = localScan?.id ?? `local-${clientScanId}`;
+    let uploadedId = localScan?.id && !localScan.id.startsWith('local-') ? localScan.id : '';
     if (!localScan) setScans((items) => [{ id: localId, clientScanId, source, status: 'uploading', extracted: null, uncertain: [], error: null, file }, ...items]);
     setTrayError('');
     try {
       const photo = await shrinkPhoto(file);
       const qrPromise = readQrFromImage(photo);
-      const result = await request<{ scan: Record<string, unknown>; duplicate: boolean }>('/api/scans', {
+      const result = await request<{ scan: Record<string, unknown>; duplicate: boolean; duplicateImage?: boolean }>('/api/scans', {
         method: 'POST',
-        headers: { 'Content-Type': photo.type, 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': source, 'X-Client-Order': String(localScan?.clientOrder ?? Date.now() * 10) },
+        headers: { 'Content-Type': photo.type, 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': source, 'X-Client-Order': String(localScan?.clientOrder ?? Date.now() * 10), ...(captureEventId !== null ? { 'X-Event-Id': captureEventId || 'none' } : {}) },
         body: photo,
       }, { csrfToken, workspaceId: session.workspace.id });
       const uploaded = scanFromApi(result.scan);
+      uploadedId = uploaded.id;
+      if (result.duplicateImage) {
+        setScans((items) => items.filter((item) => item.id !== localId));
+        if (uploaded.contactId) {
+          notify('This card is already saved. Add the new conversation to the existing person.');
+          navigate(`/people/${uploaded.contactId}?newConversation=1&event=${encodeURIComponent(captureEventId ?? '')}`);
+        } else {
+          notify('This photo is already waiting for review. Opening the existing copy.');
+          navigate(`/review/${uploaded.id}?dialog=1`);
+        }
+        return;
+      }
       setScans((items) => items.map((item) => item.id === localId ? { ...uploaded, file } : item));
-      if (openReview && !result.duplicate) navigate(`/review/${uploaded.id}?dialog=1`, { state: { ocrFile: photo } });
+      if (openReview && !result.duplicate) navigate(`/review/${uploaded.id}?dialog=1`, { state: { ocrFile: photo, useGeminiCards: geminiCardsAvailable && useGeminiCards } });
       if (!openReview && !result.duplicate) {
         ocrPendingIds.current.add(uploaded.id);
         const readTask = ocrQueue.current.then(async () => {
           setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'reading', error: null } : item));
           try {
-            const read = await readCardInBrowser(photo, () => undefined);
-            if (read.confidence < 20 || !Object.values(read.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details during review.');
-            await request(`/api/scans/${uploaded.id}/ocr`, { method: 'POST', body: JSON.stringify(read.fields) }, { csrfToken, workspaceId: session.workspace.id });
-            setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'ready', extracted: read.fields, uncertain: read.fields.uncertain, error: null } : item));
+            let fields: ReviewLead | null = null;
+            let usedGemini = false;
+            if (geminiCardsAvailable && useGeminiCards) {
+              try {
+                const ai = await request<{ fields: ReviewLead }>(`/api/scans/${uploaded.id}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
+                if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
+                fields = { ...ai.fields, uncertain: [...new Set([...ai.fields.uncertain, ...(['name','title','company','email','phone','website'] as const).filter((key) => Boolean(ai.fields[key]))])] };
+                usedGemini = true;
+              } catch { /* The local reader is the fallback when the free tier is unavailable. */ }
+            }
+            if (!fields) {
+              const read = await readCardInBrowser(photo, () => undefined);
+              if (read.confidence < 20 || !Object.values(read.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details during review.');
+              fields = read.fields;
+            }
+            await request(`/api/scans/${uploaded.id}/ocr`, { method: 'POST', headers: usedGemini ? { 'X-Read-Source': 'ai' } : undefined, body: JSON.stringify(fields) }, { csrfToken, workspaceId: session.workspace.id });
+            setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'ready', extracted: fields, uncertain: fields.uncertain, error: null } : item));
           } catch (issue) {
             setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'failed', error: (issue as Error).message } : item));
+            await request(`/api/scans/${uploaded.id}/ocr-failure`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id }).catch(() => undefined);
           } finally {
             ocrPendingIds.current.delete(uploaded.id);
           }
@@ -1244,10 +1359,10 @@ function ScanPage() {
       }
     } catch (error) {
       const message = (error as Error).message;
-      setScans((items) => items.map((item) => item.id === localId ? { ...item, status: 'failed', error: `Upload failed. ${message}` } : item));
+      if (!uploadedId) setScans((items) => items.map((item) => item.id === localId ? { ...item, status: 'failed', error: `Upload failed. ${message}` } : item));
       setTrayError(message);
     }
-  }, [csrfToken, navigate, session.workspace.id]);
+  }, [captureEventId, csrfToken, geminiCardsAvailable, navigate, notify, session.workspace.id, useGeminiCards]);
 
   async function addFiles(files: File[], source: 'camera' | 'gallery') {
     const images = files.filter((file) => file.type.startsWith('image/'));
@@ -1287,6 +1402,8 @@ function ScanPage() {
   const readyCount = scans.filter((item) => item.status === 'ready' || item.status === 'failed').length;
   return <section className="scan-view">
     <div className="page-heading-row"><div><p className="eyebrow">CAPTURE</p><h1>Keep the next conversation.</h1><p className="page-lede">Choose or take a photo and reading starts as soon as it uploads.</p></div></div>
+    <div className="capture-event-picker"><label htmlFor="capture-event">Attach new captures to</label><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select><span>Each saved conversation stays in that event’s history and analytics.</span></div>
+    {geminiCardsAvailable && <label className="capture-ai-choice"><input type="checkbox" checked={useGeminiCards} onChange={(event) => setUseGeminiCards(event.target.checked)} /><span><strong>Read new photos with Gemini automatically</strong><small>Starts after upload. If its limited free tier is unavailable, the on-device reader takes over. Photos sent to Gemini on its free tier may be used by Google to improve its products. Check all details before saving.</small></span></label>}
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
         {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>
@@ -1304,11 +1421,11 @@ function ScanPage() {
           return <div className="tray-item" key={item.id} data-client-scan-id={item.clientScanId}>
             <ScanThumbnail item={item} />
             <div className="tray-item-copy"><strong>{title}</strong><span><StatusIcon status={item.status} /> {displayStatus[item.status]}</span>{item.error && <small>{item.error}</small>}</div>
-            {reviewable && <button className="tray-review" onClick={() => navigate(`/review/${item.id}`)}>Review</button>}
+            {reviewable && <button className="tray-review" onClick={() => navigate(`/review/${item.id}${item.status === 'failed' ? '?dialog=1' : ''}`)}>Review</button>}
             {item.status === 'saved' && <span className="saved-check" aria-label="Saved"><Check size={17} /></span>}
             {item.status !== 'saved' && <button aria-label={`Discard ${title}`} className="icon-button" disabled={removingId === item.id} onClick={() => void discard(item)}><Trash2 size={16} /></button>}
           </div>;
-        })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{readingMode === 'browser' && <span>Cards are read on this device. Check every detail before saving. </span>}Photos upload to your private workspace. Details are always shown for your check.</p></div>}
+        })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{readingMode === 'browser' && <span>{useGeminiCards ? 'New photos are sent to Gemini for reading; local OCR is the fallback.' : 'Cards are read on this device.'} Check every detail before saving. </span>}Photos upload to your private workspace. Details are always shown for your check.</p></div>}
       </aside>
     </div>
     {emailNowContactId && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEmailNow(); }}>
@@ -1388,7 +1505,7 @@ function CameraPreview({ stream, onClose, onCapture, onQr }: { stream: MediaStre
 
 type ReviewLead = { name: string; title: string; company: string; email: string; phone: string; website: string; products: string[]; topics: string[]; uncertain: string[] };
 type ProductChoice = { id: string; name: string; description: string };
-type ReviewVoiceNoteHandle = { attach: (contactId: string) => Promise<boolean | null> };
+type ReviewVoiceNoteHandle = { attach: (contactId: string, encounterId?: string) => Promise<boolean | null> };
 
 const InlineVoiceNote = forwardRef<ReviewVoiceNoteHandle, { contactId?: string; compact?: boolean }>(function InlineVoiceNote({ contactId, compact = false }, forwardedRef) {
   const { session, csrfToken } = useWorkspace();
@@ -1400,6 +1517,9 @@ const InlineVoiceNote = forwardRef<ReviewVoiceNoteHandle, { contactId?: string; 
   const [clip, setClip] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [manualText, setManualText] = useState('');
+  const [localTranscript, setLocalTranscript] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcriptionLanguage, setTranscriptionLanguage] = useState<VoiceLanguage>('english');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -1417,7 +1537,7 @@ const InlineVoiceNote = forwardRef<ReviewVoiceNoteHandle, { contactId?: string; 
   }, [recording]);
 
   async function startRecording() {
-    setMessage(''); setSeconds(0); setClip(null); setManualText('');
+    setMessage(''); setSeconds(0); setClip(null); setManualText(''); setLocalTranscript(false);
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { setMessage('Voice recording is not available here. Type a note instead.'); return; }
     try {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -1437,7 +1557,18 @@ const InlineVoiceNote = forwardRef<ReviewVoiceNoteHandle, { contactId?: string; 
     } catch { setMessage('Microphone access was not available. Type a note instead.'); }
   }
   function stopRecording() { if (recorderRef.current?.state === 'recording') recorderRef.current.stop(); }
-  async function attach(contact: string) {
+  async function transcribeClip() {
+    if (!clip) return;
+    setTranscribing(true); setMessage('Preparing local transcription…');
+    try {
+      const text = await transcribeLocally(clip, setMessage, transcriptionLanguage);
+      if (!text) throw new Error('No speech was found. Listen and type the note if needed.');
+      setManualText(text.slice(0, 4000)); setLocalTranscript(true);
+      setMessage('Suggested text is ready. Check it before saving the person.');
+    } catch (issue) { setMessage((issue as Error).message); }
+    finally { setTranscribing(false); }
+  }
+  async function attach(contact: string, encounterId?: string) {
     if (!clip) return null;
     if (busy) return false;
     const text = manualText.trim();
@@ -1445,11 +1576,11 @@ const InlineVoiceNote = forwardRef<ReviewVoiceNoteHandle, { contactId?: string; 
     setBusy(true); setMessage('');
     try {
       const mime = clip.type.split(';')[0] || 'audio/webm';
-      const saved = await request<{ id: string }>(`/api/contacts/${contact}/voice`, { method: 'POST', headers: { 'Content-Type': mime, 'X-Recording-Seconds': String(Math.max(1, seconds)) }, body: clip }, { csrfToken, workspaceId: session.workspace.id });
+      const saved = await request<{ id: string }>(`/api/contacts/${contact}/voice`, { method: 'POST', headers: { 'Content-Type': mime, 'X-Recording-Seconds': String(Math.max(1, seconds)), ...(encounterId ? { 'X-Encounter-Id': encounterId } : {}) }, body: clip }, { csrfToken, workspaceId: session.workspace.id });
       audioSaved = true;
       setClip(null); setManualText(''); setPreviewUrl('');
       if (text) await request(`/api/notes/${saved.id}/text`, { method: 'PUT', body: JSON.stringify({ text }) }, { csrfToken, workspaceId: session.workspace.id });
-      setMessage(text ? 'Voice note and your text are saved to this person.' : 'Voice note saved. No automatic transcript was made.');
+      setMessage(text ? 'Voice note and your text are saved to this person.' : 'Voice note saved. No automatic transcript was made. Transcribe it on the person page or add text yourself.');
       return true;
     } catch (issue) { setMessage(audioSaved ? 'Voice note saved. Your text could not be saved; add it from the person page.' : (issue as Error).message); return audioSaved; }
     finally { setBusy(false); }
@@ -1459,7 +1590,7 @@ const InlineVoiceNote = forwardRef<ReviewVoiceNoteHandle, { contactId?: string; 
   return <div className={compact ? 'inline-voice-note compact' : 'inline-voice-note'}>
     {recording ? <div className="inline-voice-live"><span><Mic size={15} /> Recording · {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')} / 2:00</span><button type="button" className="button secondary" onClick={stopRecording}>Stop recording</button></div>
       : !clip && <button type="button" className="button secondary inline-voice-trigger" onClick={() => void startRecording()}><Mic size={16} /> Record voice note</button>}
-    {clip && <div className="inline-voice-preview"><audio controls src={previewUrl || undefined}>Audio playback is not supported by this browser.</audio><label>Text you typed (optional)<textarea rows={2} maxLength={4000} value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder="Type what you want to remember." /></label>{contactId ? <button type="button" className="button primary" disabled={busy} onClick={() => void attach(contactId)}>{busy ? 'Saving…' : 'Save voice note'}</button> : <p>Keep this card open, then save the person to attach this note.</p>}<button type="button" className="text-button" disabled={busy} onClick={() => { setClip(null); setManualText(''); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(''); }}>Discard recording</button></div>}
+    {clip && <div className="inline-voice-preview"><audio controls src={previewUrl || undefined}>Audio playback is not supported by this browser.</audio><label className="voice-language">Recording language<select value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value as VoiceLanguage)}><option value="english">English</option><option value="hindi">Hindi</option><option value="gujarati">Gujarati</option></select></label><button type="button" className="button secondary" disabled={transcribing || busy} onClick={() => void transcribeClip()}>{transcribing ? 'Transcribing here…' : 'Transcribe on this device'}</button><p className="subtle">First use downloads a speech model. Transcription happens on this device; the audio is not sent to its model host.</p><label>{localTranscript ? 'Suggested transcript · check before saving' : 'Text you typed (optional)'}<textarea rows={2} maxLength={4000} value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder="Type what you want to remember." /></label>{contactId ? <button type="button" className="button primary" disabled={busy || transcribing} onClick={() => void attach(contactId)}>{busy ? 'Saving…' : 'Save voice note'}</button> : <p>Keep this card open, then save the person to attach this note.</p>}<button type="button" className="text-button" disabled={busy || transcribing} onClick={() => { setClip(null); setManualText(''); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(''); }}>Discard recording</button></div>}
     {message && <p role="status">{message}</p>}
   </div>;
 });
@@ -1474,6 +1605,7 @@ function ReviewPage() {
   const navigate = useNavigate();
   const singleCapture = new URLSearchParams(location.search).get('dialog') === '1';
   const captureFile = (location.state as { ocrFile?: Blob } | null)?.ocrFile;
+  const useGeminiCards = (location.state as { useGeminiCards?: boolean } | null)?.useGeminiCards === true;
   const [scan, setScan] = useState<Record<string, unknown> | null>(null);
   const [lead, setLead] = useState<ReviewLead>({ name: '', title: '', company: '', email: '', phone: '', website: '', products: [], topics: [], uncertain: [] });
   const [productChoices, setProductChoices] = useState<ProductChoice[]>([]);
@@ -1497,10 +1629,20 @@ function ReviewPage() {
   const [ocrRunning, setOcrRunning] = useState(Boolean(singleCapture && captureFile));
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStage, setOcrStage] = useState('Starting the on-device reader…');
+  const [aiCardAssist, setAiCardAssist] = useState(false);
+  const [aiCardProvider, setAiCardProvider] = useState<string | null>(null);
+  const [aiReading, setAiReading] = useState(false);
+  const [aiReadMessage, setAiReadMessage] = useState('');
   const ocrStartedFor = useRef('');
   const ocrAuth = useRef({ csrfToken, workspaceId: session.workspace.id });
   ocrAuth.current = { csrfToken, workspaceId: session.workspace.id };
   const reviewVoiceRef = useRef<ReviewVoiceNoteHandle>(null);
+
+  useEffect(() => {
+    let active = true;
+    void request<{ aiCardAssist: boolean; aiCardProvider: string | null }>('/api/capabilities').then((value) => { if (active) { setAiCardAssist(value.aiCardAssist); setAiCardProvider(value.aiCardProvider); } }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     setScan(null);
@@ -1545,29 +1687,61 @@ function ReviewPage() {
   }, [scanId, session.workspace.id]);
 
   useEffect(() => {
-    if (!singleCapture || !captureFile || !scanId || ocrStartedFor.current === scanId) return;
+    const retrySavedPhoto = !captureFile && scan?.status === 'failed' && typeof scan.mimeType === 'string';
+    if (!singleCapture || !scanId || (!captureFile && !retrySavedPhoto) || ocrStartedFor.current === scanId) return;
     ocrStartedFor.current = scanId;
     setOcrRunning(true);
     setError('');
     void (async () => {
       try {
-        const result = await readCardInBrowser(captureFile, (progress, stage) => {
-          setOcrProgress(progress); setOcrStage(stage || 'Reading the card…');
-        });
-        if (result.confidence < 20 || !Object.values(result.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) {
-          throw new Error('We couldn’t make out enough text. Type the details you can see.');
+        let photo = captureFile;
+        if (!photo) {
+          setOcrStage('Opening the uploaded photo on this device…');
+          const response = await fetch(`/api/scans/${scanId}/image`, {
+            credentials: 'same-origin', cache: 'no-store',
+            headers: { 'X-Workspace-Id': ocrAuth.current.workspaceId },
+          });
+          if (!response.ok) throw new Error('We couldn’t reopen the uploaded photo. Type the details you can see.');
+          photo = await response.blob();
         }
-        await request(`/api/scans/${scanId}/ocr`, { method: 'POST', body: JSON.stringify(result.fields) }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
-        setLead((current) => ({ ...current, ...result.fields }));
-        setScan((current) => current ? { ...current, status: 'ready', extracted: result.fields, uncertain: result.fields.uncertain, error: null } : current);
+        let fields: ReviewLead | null = null;
+        let usedGemini = false;
+        if (useGeminiCards) {
+          try {
+            setOcrStage('Reading this photo with Gemini…');
+            const ai = await request<{ fields: ReviewLead }>(`/api/scans/${scanId}/ai-read`, { method: 'POST' }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
+            if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
+            fields = { ...ai.fields, uncertain: [...new Set([...ai.fields.uncertain, ...(['name','title','company','email','phone','website'] as const).filter((key) => Boolean(ai.fields[key]))])] };
+            usedGemini = true;
+            setAiReadMessage('Gemini suggested these details. Check every marked field against the photo.');
+          } catch { setOcrStage('Gemini was unavailable. Reading on this device…'); }
+        }
+        if (!fields) {
+          const result = await readCardInBrowser(photo, (progress, stage) => {
+            setOcrProgress(progress); setOcrStage(stage || 'Reading the card…');
+          });
+          if (result.confidence < 20 || !Object.values(result.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) {
+            throw new Error('We couldn’t make out enough text. Type the details you can see.');
+          }
+          fields = result.fields;
+        }
+        const applied = await request<{ applied: boolean }>(`/api/scans/${scanId}/ocr`, { method: 'POST', headers: usedGemini ? { 'X-Read-Source': 'ai' } : undefined, body: JSON.stringify(fields) }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
+        if (!applied.applied) return;
+        const latest = await request<{ scan: { extracted: ReviewLead | null; uncertain: string[] } }>(`/api/scans/${scanId}`, {}, { workspaceId: ocrAuth.current.workspaceId });
+        const confirmed = latest.scan.extracted ?? fields;
+        setLead((current) => ({ ...current, ...confirmed }));
+        setScan((current) => current ? { ...current, status: 'ready', extracted: confirmed, uncertain: latest.scan.uncertain, error: null } : current);
         setOcrProgress(100);
         setOcrStage('Reading complete. Check every detail against the photo.');
       } catch (issue) {
+        const latest = await request<{ scan: { status: string } }>(`/api/scans/${scanId}`, {}, { workspaceId: ocrAuth.current.workspaceId }).catch(() => null);
+        if (latest?.scan.status === 'ready' || latest?.scan.status === 'saved') return;
         setError(`${(issue as Error).message} Nothing is saved yet.`);
         setScan((current) => current ? { ...current, status: 'failed' } : current);
+        await request(`/api/scans/${scanId}/ocr-failure`, { method: 'POST' }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId }).catch(() => undefined);
       } finally { setOcrRunning(false); }
     })();
-  }, [captureFile, scanId, singleCapture]);
+  }, [captureFile, scan, scanId, singleCapture, useGeminiCards]);
 
   useEffect(() => {
     if (session.workspace.kind !== 'company') return;
@@ -1599,6 +1773,27 @@ function ReviewPage() {
     if (company.reason === 'similar name') setCompanyChoice(company.id);
     else { setLead((current) => ({ ...current, company: company.name })); setCompanyChoice(''); }
   }
+  async function improveWithAi() {
+    setAiReading(true); setAiReadMessage('');
+    try {
+      const result = await request<{ fields: ReviewLead; needsReview: boolean }>(`/api/scans/${scanId}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
+      const fields = result.fields;
+      const keys = ['name', 'title', 'company', 'email', 'phone', 'website'] as const;
+      if (!keys.some((key) => fields[key]?.trim())) throw new Error('AI did not find usable contact details. Type what you can see.');
+      setLead((current) => {
+        const next = { ...current, uncertain: [...current.uncertain] };
+        for (const key of keys) {
+          if (fields[key]?.trim() && (!current[key].trim() || current.uncertain.includes(key))) {
+            next[key] = fields[key].trim();
+            if (!next.uncertain.includes(key)) next.uncertain.push(key);
+          }
+        }
+        return next;
+      });
+      setAiReadMessage('AI suggested details are marked for review. Compare them with the photo before saving.');
+    } catch (issue) { setAiReadMessage((issue as Error).message); }
+    finally { setAiReading(false); }
+  }
   function companyMatches() {
     if (!companySuggestions.length || status === 'saved') return null;
     const exact = companySuggestions.some((company) => company.reason !== 'similar name');
@@ -1622,7 +1817,7 @@ function ReviewPage() {
       }
       if (!result.saved) throw new Error('The lead was not saved. Check the details and try again.');
       const savedContactId = typeof result.contactId === 'string' ? result.contactId : '';
-      const voiceSaved = savedContactId ? await reviewVoiceRef.current?.attach(savedContactId) : null;
+      const voiceSaved = savedContactId ? await reviewVoiceRef.current?.attach(savedContactId, typeof result.encounterId === 'string' ? result.encounterId : undefined) : null;
       setScan((current) => current ? { ...current, status: 'saved', contactId: savedContactId } : current);
       if (voiceSaved === false) {
         setError('The person was saved, but the voice note was not. Try saving the recording again before moving on.');
@@ -1686,16 +1881,17 @@ function ReviewPage() {
   return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title">
     <div className="page-heading-row"><div><p className="eyebrow">CHECK BEFORE SAVING</p><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : 'One item at a time.'}</h1><p className="page-lede">We only keep details you confirm. Anything uncertain is marked for a closer look.</p></div><Link className="button secondary" to="/scan">{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
     {error && <p className="form-error review-error" role="alert">{error}</p>}
-    {(status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning) ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>{ocrRunning ? 'Reading your card on this device…' : 'Reading this photo…'}</strong><p>{ocrRunning ? ocrStage : 'The photo was uploaded. You can review it as soon as the details are ready.'}</p>{ocrRunning && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="Card reading progress" />}</div> :
+    {(status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning) ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>{ocrRunning && !useGeminiCards ? 'Reading your card on this device…' : 'Reading this photo…'}</strong><p>{ocrRunning ? ocrStage : 'The photo was uploaded. You can review it as soon as the details are ready.'}</p>{ocrRunning && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="Card reading progress" />}</div> :
     <div className="review-layout">
       <aside className="surface-card review-source">
         {Boolean(scan?.mimeType) && <button type="button" className="review-photo-button" onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
-        {status === 'failed' && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
+        {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <div className="ai-card-assist"><p className="subtle">If details are missing, you can send this photo to the configured AI provider for another suggestion. {aiCardProvider === 'gemini' ? 'On Gemini’s free tier, Google may use the photo to improve its products. ' : ''}Check every suggestion before saving.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? 'Checking with AI…' : 'Ask AI to check this photo'}</button>{aiReadMessage && <p role="status">{aiReadMessage}</p>}</div>}
+        {status === 'failed' && !ocrRunning && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
         {extracted && <p className="subtle review-honesty">Check spelling, company names, and any visible contact details against the {reviewMode === 'brochure' ? 'brochure' : 'card'}.</p>}
       </aside>
       <form id="review-save-form" className="surface-card review-form" onSubmit={(event) => reviewMode === 'brochure' ? void saveMaterial(event) : void submit(event)}>
         {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
-        <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${status}`}><ReviewStatusIcon size={14} aria-hidden="true" />{displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
+        <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
         {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key) => <Fragment key={key}><label className={lead.uncertain.includes(key) ? 'uncertain-field' : ''}>
           <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}{lead.uncertain.includes(key) && <em>Check this detail</em>}</span>
           <input value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
@@ -1716,11 +1912,11 @@ function ReviewPage() {
             <p>This photo will be kept with the company. It won’t create a person record.</p>
             <button className="button primary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save brochure'}</button>
           </> : <>
-            <p>Name plus email or phone is needed to save. You can add the rest later.</p>
+            <p>Save once, then review a personal email draft. Nothing sends without your approval.</p>
             <div className="review-save-actions">
               <button type="submit" data-save-action="stay" className="button secondary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save person'}</button>
-              <button type="submit" data-save-action="next" className="button primary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save & scan next'} <ScanLine size={17} /></button>
-              <button type="submit" data-save-action="email" className="text-button" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save & email'}</button>
+              <button type="submit" data-save-action="email" className="button primary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save & prepare email'}</button>
+              <button type="submit" data-save-action="next" className="text-button" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save & scan next'} <ScanLine size={17} /></button>
             </div>
           </>}
         </div>
@@ -1728,11 +1924,11 @@ function ReviewPage() {
       </form>
     </div>}
     {Boolean(scan?.mimeType) && photoExpanded && <div className="review-photo-overlay" role="dialog" aria-modal="true" aria-label="Uploaded photo" onKeyDown={(event) => { if (event.key === 'Escape') setPhotoExpanded(false); }}><button type="button" className="button secondary" autoFocus onClick={() => setPhotoExpanded(false)}>Close photo</button><img src={`/api/scans/${scanId}/image`} alt={reviewMode === 'brochure' ? 'Uploaded brochure enlarged' : 'Uploaded business card enlarged'} /></div>}
-    {(status === 'ready' || status === 'failed') && <div className="mobile-review-actions"><button type="submit" form="review-save-form" data-save-action="next" className="button primary" disabled={busy}>{busy ? 'Saving…' : reviewMode === 'brochure' ? 'Save brochure' : 'Save & scan next'}</button>{reviewMode === 'person' && <button type="submit" form="review-save-form" data-save-action="email" className="button secondary" disabled={busy}>Save & email</button>}</div>}
+    {(status === 'ready' || status === 'failed') && <div className="mobile-review-actions">{reviewMode === 'person' && <button type="submit" form="review-save-form" data-save-action="email" className="button primary" disabled={busy}>{busy ? 'Saving…' : 'Save & prepare email'}</button>}<button type="submit" form="review-save-form" data-save-action="next" className={reviewMode === 'person' ? 'button secondary' : 'button primary'} disabled={busy}>{busy ? 'Saving…' : reviewMode === 'brochure' ? 'Save brochure' : 'Save & scan next'}</button></div>}
   </section>;
 }
 
-function FollowUpComposer({ contactId, autoOpen = false, onSkip, onComplete }: { contactId: string; autoOpen?: boolean; onSkip?: () => void; onComplete?: (message: string) => void }) {
+function FollowUpComposer({ contactId, autoOpen = false, onSkip, onComplete, onDraftStateChange }: { contactId: string; autoOpen?: boolean; onSkip?: () => void; onComplete?: (message: string) => void; onDraftStateChange?: (open: boolean) => void }) {
   const { session, csrfToken } = useWorkspace();
   const [draft, setDraft] = useState<{ id: string; recipient: string; subject: string; body: string; status: 'draft' | 'queued' | 'outbox' | 'sent' | 'failed'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> } | null>(null);
   const [message, setMessage] = useState('');
@@ -1740,6 +1936,7 @@ function FollowUpComposer({ contactId, autoOpen = false, onSkip, onComplete }: {
   const [error, setError] = useState('');
   const autoOpenStarted = useRef(false);
   const suggestedDraft = useRef<{ subject: string; body: string } | null>(null);
+  useEffect(() => { onDraftStateChange?.(draft?.status === 'draft'); }, [draft?.status, onDraftStateChange]);
   useEffect(() => {
     if (draft?.status !== 'queued') return;
     let active = true;

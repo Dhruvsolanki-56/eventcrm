@@ -19,7 +19,11 @@ services:
       - key: UPLOADS_PATH
         value: /tmp/gather-demo-uploads
       - key: AI_MODE
-        value: "off"
+        value: provider
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
       - key: REQUIRE_EMAIL_VERIFICATION
         value: "false"
       - key: DEMO_PASSWORD

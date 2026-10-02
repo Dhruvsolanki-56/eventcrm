@@ -3,6 +3,8 @@ const safeCodes = new Set([
   'EMESSAGE', 'ENETUNREACH', 'ESOCKET', 'ETIMEDOUT', 'EAI_AGAIN', 'EDNS',
 ]);
 
+export const serverCardReaderUnavailableMessage = 'Server reading is off. Open Review to try on-device reading, or type it in.';
+
 export function safeFailureCode(error: unknown): string {
   if (!error || typeof error !== 'object' || !('code' in error)) return 'PROVIDER_ERROR';
   const code = (error as { code?: unknown }).code;
@@ -17,7 +19,7 @@ export function safeJobFailureMessage(type: string): string {
     case 'email_verification':
       return 'The mail server could not accept this message.';
     case 'card_read':
-      return 'Automatic card reading did not finish. Type the details to continue.';
+      return 'Card reading did not finish on the server. Open Review to try on-device reading, or type it in.';
     default:
       return 'This background task did not finish. Try again or contact your admin.';
   }

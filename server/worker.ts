@@ -1,8 +1,7 @@
 import 'dotenv/config';
 import { createTransport } from 'nodemailer';
 import { completeJob, claimNextJob, failJobAttempt, getDailyDigestForWorker, getEmailForWorker, getEmailVerificationForWorker, getPasswordResetEmailForWorker, getScanForWorker, getWorkspaceEmailSettingsForWorker, markScanNeedsInput, markScanReading, recordEmailFailed, recordEmailSent, scheduleReminderWork, updateDigestRunForJob, updateScanRead, type JobRow } from './db.js';
-import { readCard } from './ai.js';
-import { safeFailureCode, safeJobFailureMessage } from './safe-failure.js';
+import { safeFailureCode, safeJobFailureMessage, serverCardReaderUnavailableMessage } from './safe-failure.js';
 
 let active = false;
 let timer: NodeJS.Timeout | undefined;
@@ -134,18 +133,8 @@ async function processJob(job: JobRow) {
     await (completeJob(job.id));
     return;
   }
-  try {
-    const result = await readCard(scan.image_path, scan.image_mime);
-    if (!result.available) {
-      await (markScanNeedsInput(scan.id, job.workspace_id, 'Automatic reading is not set up. Type the details to continue.'));
-      await (completeJob(job.id));
-      return;
-    }
-    await (updateScanRead(scan.id, job.workspace_id, result.data, result.data.uncertain));
-    await (completeJob(job.id));
-  } catch (error) {
-    throw error;
-  }
+  await (markScanNeedsInput(scan.id, job.workspace_id, serverCardReaderUnavailableMessage));
+  await (completeJob(job.id));
 }
 
 async function tick() {

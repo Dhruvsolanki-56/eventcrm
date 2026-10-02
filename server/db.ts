@@ -447,10 +447,12 @@ function visibleNoteSql(alias: string) {
 
 async function noteVisible(actorId: string, workspaceId: string, noteId: string, edit = false) {
   const scope = await (noteScope(actorId, workspaceId));
-  const row = await (db.prepare(`SELECT n.contact_id FROM notes n WHERE n.workspace_id=? AND n.id=? AND ${edit
-    ? '(?=1 OR n.created_by=?)'
-    : visibleNoteSql('n')} LIMIT 1`)
-    .get(workspaceId, noteId, scope.all, actorId, ...(edit ? [] : [actorId]))) as { contact_id: string } | undefined;
+  const row = await (db.prepare(`SELECT n.contact_id FROM notes n
+    LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
+    WHERE n.workspace_id=? AND n.id=? AND ${edit ? '(?=1 OR n.created_by=?)' : visibleNoteSql('n')}
+      AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
+    LIMIT 1`)
+    .get(workspaceId, noteId, scope.all, actorId, ...(edit ? [] : [actorId]), scope.all, actorId)) as { contact_id: string } | undefined;
   return Boolean(row && await (contactAccessible(actorId, workspaceId, row.contact_id)));
 }
 
@@ -502,6 +504,14 @@ export async function getCurrentEvent(actorId: string, workspaceId: string) {
     JOIN event_access a ON a.event_id=e.id AND a.workspace_id=e.workspace_id
     WHERE e.workspace_id=? AND e.is_active=1 AND a.user_id=? ORDER BY e.starts_at DESC LIMIT 1`)
     .get(workspaceId, actorId)) as { id: string; name: string; starts_at: string; ends_at: string; time_zone: string } | undefined;
+}
+
+export async function listAccessibleEvents(actorId: string, workspaceId: string) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  return await (db.prepare(`SELECT e.id,e.name,e.starts_at,e.ends_at,e.time_zone,e.is_active FROM events e
+    JOIN event_access ea ON ea.workspace_id=e.workspace_id AND ea.event_id=e.id AND ea.user_id=?
+    WHERE e.workspace_id=? ORDER BY e.is_active DESC,e.starts_at DESC,e.name`)
+    .all(actorId, workspaceId)) as Array<{ id: string; name: string; starts_at: string; ends_at: string; time_zone: string; is_active: number }>;
 }
 
 export async function getDashboard(actorId: string, workspaceId: string) {
@@ -1058,7 +1068,7 @@ export async function listNotifications(actorId: string, workspaceId: string) {
 
 export async function markNotificationRead(actorId: string, workspaceId: string, notificationId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  return await (db.prepare(`UPDATE notifications SET read_at=COALESCE(read_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE workspace_id=? AND user_id=? AND id=?`).run(workspaceId, actorId, notificationId).changes) > 0;
+  return (await db.prepare(`UPDATE notifications SET read_at=COALESCE(read_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE workspace_id=? AND user_id=? AND id=?`).run(workspaceId, actorId, notificationId)).changes > 0;
 }
 
 export async function getDigestRuns(actorId: string, workspaceId: string) {
@@ -1177,18 +1187,25 @@ export async function getPersonDetail(actorId: string, workspaceId: string, cont
     WHERE c.workspace_id=? AND c.id=? AND c.deleted_at IS NULL`).get(workspaceId, contactId)) as Record<string, unknown> | undefined;
   if (!person || !await (contactAccessible(actorId, workspaceId, contactId))) return undefined;
   const noteAccess = await (noteScope(actorId, workspaceId));
-  const timeline = await (db.prepare(`SELECT 'note' AS kind,n.id,CASE WHEN n.kind='audio' THEN CASE WHEN n.transcript<>'' THEN n.transcript ELSE 'Voice recording — no text added.' END ELSE n.body END AS detail,n.created_at FROM notes n
+  const timeline = await (db.prepare(`SELECT 'note' AS kind,n.id,CASE WHEN n.kind='audio' THEN CASE WHEN n.transcript<>'' THEN n.transcript ELSE 'Voice recording — no text added.' END ELSE n.body END AS detail,n.created_at,e.name AS event_name FROM notes n
+      LEFT JOIN encounters note_en ON note_en.id=n.encounter_id AND note_en.workspace_id=n.workspace_id
+      LEFT JOIN events e ON e.id=note_en.event_id AND e.workspace_id=note_en.workspace_id
       WHERE n.workspace_id=? AND n.contact_id=? AND ${visibleNoteSql('n')}
-    UNION ALL SELECT 'encounter',en.id,COALESCE(e.name,'Conversation saved'),en.occurred_at FROM encounters en
+        AND (note_en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=note_en.workspace_id AND ea.event_id=note_en.event_id AND ea.user_id=?))
+    UNION ALL SELECT 'encounter',en.id,COALESCE(e.name,'Conversation saved'),en.occurred_at,e.name FROM encounters en
       LEFT JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id WHERE en.workspace_id=? AND en.contact_id=? AND (en.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
-    UNION ALL SELECT t.kind,t.id,COALESCE(t.title,'Follow up'),t.due_at FROM tasks t WHERE t.workspace_id=? AND t.contact_id=? AND (t.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=t.workspace_id AND ea.event_id=t.event_id AND ea.user_id=?))
-    UNION ALL SELECT 'email',m.id,m.subject,m.created_at FROM emails m WHERE m.workspace_id=? AND m.contact_id=? AND (m.encounter_id IS NULL OR EXISTS (SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=m.workspace_id AND en.id=m.encounter_id AND ea.user_id=?))
-    UNION ALL SELECT 'reply',a.id,'You marked that they replied',a.created_at FROM audit_events a WHERE a.workspace_id=? AND a.target_id=? AND a.target_type='contact' AND a.action='contact_replied'
-    ORDER BY created_at DESC LIMIT 60`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, workspaceId, contactId, actorId, workspaceId, contactId, actorId, workspaceId, contactId, actorId, workspaceId, contactId));
+    UNION ALL SELECT t.kind,t.id,COALESCE(t.title,'Follow up'),t.due_at,NULL FROM tasks t WHERE t.workspace_id=? AND t.contact_id=? AND (t.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=t.workspace_id AND ea.event_id=t.event_id AND ea.user_id=?))
+    UNION ALL SELECT 'email',m.id,m.subject,m.created_at,NULL FROM emails m WHERE m.workspace_id=? AND m.contact_id=? AND (m.encounter_id IS NULL OR EXISTS (SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=m.workspace_id AND en.id=m.encounter_id AND ea.user_id=?))
+    UNION ALL SELECT 'reply',a.id,'You marked that they replied',a.created_at,NULL FROM audit_events a WHERE a.workspace_id=? AND a.target_id=? AND a.target_type='contact' AND a.action='contact_replied'
+    ORDER BY created_at DESC LIMIT 60`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId, workspaceId, contactId, actorId, workspaceId, contactId, actorId, workspaceId, contactId, actorId, workspaceId, contactId));
   const products = await (db.prepare(`SELECT p.id,p.name,p.description FROM contact_products cp JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id
     WHERE cp.workspace_id=? AND cp.contact_id=? AND p.archived_at IS NULL`).all(workspaceId, contactId));
-  const voiceNotes = await (db.prepare(`SELECT n.id,n.transcript,n.duration_seconds,n.audio_mime,n.created_at FROM notes n WHERE n.workspace_id=? AND n.contact_id=? AND n.kind='audio' AND ${visibleNoteSql('n')} ORDER BY n.created_at DESC`)
-    .all(workspaceId, contactId, noteAccess.all, actorId, actorId)) as Array<{ id: string; transcript: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>;
+  const voiceNotes = await (db.prepare(`SELECT n.id,n.transcript,n.duration_seconds,n.audio_mime,n.created_at FROM notes n
+    LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
+    WHERE n.workspace_id=? AND n.contact_id=? AND n.kind='audio' AND ${visibleNoteSql('n')}
+      AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
+    ORDER BY n.created_at DESC`)
+    .all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ id: string; transcript: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>;
   return { person, timeline, products, voiceNotes };
 }
 
@@ -1274,6 +1291,45 @@ export async function deletePerson(actorId: string, workspaceId: string, contact
   return { mediaPaths, counts: result };
 }
 
+export async function addConversation(actorId: string, workspaceId: string, contactId: string, input: { eventId: string | null; body: string; clientConversationId: string }) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  await (assertContactAccess(actorId, workspaceId, contactId));
+  const body = input.body.trim();
+  if (!body) throw new Error('Add what you discussed before saving this conversation.');
+  if (input.eventId && !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`)
+    .get(workspaceId, input.eventId, actorId))) throw new Error('Choose an event you can access.');
+  return await (db.transaction(async () => {
+    const existing = await (db.prepare(`SELECT id,contact_id,event_id FROM encounters WHERE workspace_id=? AND client_conversation_id=?`)
+      .get(workspaceId, input.clientConversationId)) as { id: string; contact_id: string; event_id: string | null } | undefined;
+    if (existing) {
+      if (existing.contact_id !== contactId || existing.event_id !== input.eventId) throw new Error('This conversation request was already used for another person or event.');
+      return { id: existing.id, duplicate: true };
+    }
+    const workspaceBytes = (await (db.prepare(`SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) AS total FROM notes WHERE workspace_id=? AND kind='text'`).get(workspaceId)) as { total: number }).total;
+    const totalBytes = (await (db.prepare(`SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) AS total FROM notes WHERE kind='text'`).get()) as { total: number }).total;
+    const workspaceCount = (await (db.prepare(`SELECT COUNT(*) AS count FROM notes WHERE workspace_id=? AND kind='text'`).get(workspaceId)) as { count: number }).count;
+    const totalCount = (await (db.prepare(`SELECT COUNT(*) AS count FROM notes WHERE kind='text'`).get()) as { count: number }).count;
+    const noteBytes = Buffer.byteLength(body, 'utf8');
+    if (workspaceBytes + noteBytes > configuredStorageLimit('NOTE_STORAGE_WORKSPACE_LIMIT_BYTES', 16777216) || workspaceCount >= configuredStorageLimit('NOTE_COUNT_WORKSPACE_LIMIT', 100000)) throw new NoteStorageLimitError('workspace');
+    if (totalBytes + noteBytes > configuredStorageLimit('NOTE_STORAGE_TOTAL_LIMIT_BYTES', 536870912) || totalCount >= configuredStorageLimit('NOTE_COUNT_TOTAL_LIMIT', 500000)) throw new NoteStorageLimitError('service');
+    const id = randomUUID();
+    const created = await (db.prepare(`INSERT INTO encounters(id,workspace_id,contact_id,event_id,client_conversation_id) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`)
+      .run(id, workspaceId, contactId, input.eventId, input.clientConversationId));
+    if (!created.changes) {
+      const raced = await (db.prepare(`SELECT id,contact_id,event_id FROM encounters WHERE workspace_id=? AND client_conversation_id=?`)
+        .get(workspaceId, input.clientConversationId)) as { id: string; contact_id: string; event_id: string | null } | undefined;
+      if (!raced || raced.contact_id !== contactId || raced.event_id !== input.eventId) throw new Error('This conversation request was already used for another person or event.');
+      return { id: raced.id, duplicate: true };
+    }
+    await (db.prepare(`INSERT INTO notes(id,workspace_id,contact_id,encounter_id,created_by,kind,body) VALUES (?,?,?,?,?,'text',?)`)
+      .run(randomUUID(), workspaceId, contactId, id, actorId, body));
+    await (db.prepare(`UPDATE contacts SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),version=version+1 WHERE id=? AND workspace_id=?`).run(contactId, workspaceId));
+    await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'conversation_added','contact',?,?)`)
+      .run(randomUUID(), workspaceId, actorId, contactId, JSON.stringify({ eventId: input.eventId, encounterId: id })));
+    return { id, duplicate: false };
+  })());
+}
+
 export async function addPersonNote(actorId: string, workspaceId: string, contactId: string, body: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   await (assertContactAccess(actorId, workspaceId, contactId));
@@ -1309,9 +1365,12 @@ export class NoteStorageLimitError extends Error {
   }
 }
 
-export async function addVoiceNote(actorId: string, workspaceId: string, contactId: string, audioPath: string, audioMime: string, durationSeconds: number, audioBytes: number, id = randomUUID()) {
+export async function addVoiceNote(actorId: string, workspaceId: string, contactId: string, audioPath: string, audioMime: string, durationSeconds: number, audioBytes: number, id = randomUUID(), encounterId?: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   await (assertContactAccess(actorId, workspaceId, contactId));
+  if (encounterId && !await (db.prepare(`SELECT 1 FROM encounters en WHERE en.workspace_id=? AND en.contact_id=? AND en.id=?
+    AND (en.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))`)
+    .get(workspaceId, contactId, encounterId, actorId))) throw new Error('That conversation is no longer available to you.');
   await (db.transaction(async () => {
     const storedBytes = await (db.prepare(`SELECT COALESCE(SUM(audio_bytes),0) AS total FROM notes WHERE workspace_id=? AND kind='audio'`).get(workspaceId)) as { total: number };
     const workspaceLimit = configuredStorageLimit('VOICE_STORAGE_WORKSPACE_LIMIT_BYTES', 268435456);
@@ -1325,7 +1384,7 @@ export async function addVoiceNote(actorId: string, workspaceId: string, contact
     const serviceCountLimit = configuredStorageLimit('VOICE_NOTE_COUNT_TOTAL_LIMIT', 100000);
     if (workspaceCreated >= workspaceCountLimit || serviceCreated >= serviceCountLimit) throw new VoiceStorageLimitError(workspaceCreated >= workspaceCountLimit ? 'workspace' : 'service');
     await (db.prepare(`INSERT INTO notes(id,workspace_id,contact_id,encounter_id,created_by,kind,transcript_status,audio_path,audio_mime,duration_seconds,audio_bytes) VALUES (?,?,?,?,?,'audio','manual',?,?,?,?)`)
-      .run(id, workspaceId, contactId, await (noteEncounter(actorId, workspaceId, contactId)), actorId, audioPath, audioMime, durationSeconds, audioBytes));
+      .run(id, workspaceId, contactId, encounterId ?? await (noteEncounter(actorId, workspaceId, contactId)), actorId, audioPath, audioMime, durationSeconds, audioBytes));
     await (db.prepare(`INSERT INTO voice_note_usage(scope_id,created_count) VALUES (?,1) ON CONFLICT(scope_id) DO UPDATE SET created_count=created_count+1`).run(workspaceId));
     await (db.prepare(`UPDATE voice_note_usage SET created_count=created_count+1 WHERE scope_id='__service__'`).run());
     await (db.prepare(`UPDATE contacts SET version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=?`).run(workspaceId, contactId));
@@ -1484,16 +1543,22 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const lookingFor = typeof settings.lookingFor === 'string' ? settings.lookingFor.trim().slice(0, 200) : '';
   const profileSignature = typeof settings.signature === 'string' ? settings.signature.trim().slice(0, 600) : '';
   const noteAccess = await (noteScope(actorId, workspaceId));
-  const noteRow = await (db.prepare(`SELECT CASE WHEN kind='audio' THEN transcript ELSE body END AS text
-    FROM notes WHERE workspace_id=? AND contact_id=? AND ((kind='text' AND body<>'') OR (kind='audio' AND transcript<>''))
-      AND ${visibleNoteSql('notes')}
-    ORDER BY created_at DESC LIMIT 1`).get(workspaceId, contactId, noteAccess.all, actorId, actorId)) as { text: string } | undefined;
-  const note = noteRow?.text.trim().slice(0, 1000) ?? '';
+  const recentConversations = await (db.prepare(`SELECT n.created_at AS date,e.name AS event_name,en.id AS encounter_id,
+      CASE WHEN n.kind='audio' THEN n.transcript ELSE n.body END AS text
+    FROM notes n LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
+    LEFT JOIN events e ON e.workspace_id=en.workspace_id AND e.id=en.event_id
+    WHERE n.workspace_id=? AND n.contact_id=? AND ((n.kind='text' AND n.body<>'') OR (n.kind='audio' AND n.transcript<>''))
+      AND ${visibleNoteSql('n')}
+      AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
+    ORDER BY n.created_at DESC,n.id DESC LIMIT 6`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ date: string; event_name: string | null; encounter_id: string | null; text: string }>;
+  const note = recentConversations[0]?.text.trim().slice(0, 1000) ?? '';
+  const emailEventName = recentConversations.length ? recentConversations[0].event_name : contact.event_name;
+  const emailEncounterId = recentConversations.length ? recentConversations[0].encounter_id : contact.encounter_id;
   const interestedProducts = await (db.prepare(`SELECT p.name FROM contact_products cp JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id
     WHERE cp.workspace_id=? AND cp.contact_id=? AND p.archived_at IS NULL ORDER BY p.name`).all(workspaceId, contactId)) as Array<{ name: string }>;
   const interestedProductNames = interestedProducts.map((product) => product.name);
   const greeting = contact.name.split(/\s+/)[0] || 'there';
-  const event = contact.event_name ? ` at ${contact.event_name}` : '';
+  const event = emailEventName ? ` at ${emailEventName}` : '';
   const subject = variant === 'alternate' ? `A quick note about ${contact.company_name}` : `Following up${event}`;
   const opening = variant === 'alternate'
     ? tone === 'Professional'
@@ -1515,17 +1580,19 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const closing = variant === 'alternate' ? 'Would it be helpful if I checked back next week?' : tone === 'Short' ? 'Would a quick follow-up next week help?' : 'Would a short follow-up next week be useful?';
   const body = `Hi ${greeting},\n\n${opening}${personalContext.length ? `\n\n${personalContext.join('\n\n')}` : ''}\n\n${closing}\n\n${profileSignature || await (getActorName(actorId))}`;
   const sourcesUsed = [
-    ...(contact.event_name ? [{ label: 'Event', excerpt: contact.event_name }] : []),
-    ...(note ? [{ label: 'Your saved note', excerpt: note.slice(0, 180) }] : []),
+    ...(emailEventName ? [{ label: 'Event', excerpt: emailEventName }] : []),
+    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} conversation${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: item.text.trim().slice(0, 180) })),
     ...(interestedProductNames.length ? [{ label: 'Products of interest', excerpt: interestedProductNames.join(', ') }] : []),
     ...(productNames.length ? [{ label: 'Your product list', excerpt: productNames.join(', ') }] : whatYouSell ? [{ label: 'What you sell', excerpt: whatYouSell.slice(0, 180) }] : []),
     ...(lookingFor ? [{ label: 'About me', excerpt: lookingFor }] : []),
   ];
   return {
-    recipient: contact.email, subject, body, sourcesUsed, encounterId: contact.encounter_id,
+    recipient: contact.email, subject, body, sourcesUsed, encounterId: emailEncounterId,
     aiContext: {
-      firstName: greeting, companyName: contact.company_name, eventName: contact.event_name,
-      productsOfInterest: interestedProductNames, companyProducts: productNames, latestNote: note, tone: tone as 'Friendly' | 'Professional' | 'Short',
+      firstName: greeting, companyName: contact.company_name, eventName: emailEventName,
+      productsOfInterest: interestedProductNames, companyProducts: productNames, latestNote: note,
+      recentConversations: recentConversations.map((item) => ({ date: item.date, eventName: item.event_name, note: item.text.trim().slice(0, 700) })),
+      tone: tone as 'Friendly' | 'Professional' | 'Short',
       signature: profileSignature || await (getActorName(actorId)),
       neverPromise: typeof settings.neverPromise === 'string' ? settings.neverPromise.trim().slice(0, 500) : '',
       aboutMe: [whatYouSell, lookingFor].filter(Boolean).join(' · ').slice(0, 600),
@@ -1774,33 +1841,50 @@ export async function findScanByClientId(actorId: string, workspaceId: string, c
     .get(workspaceId, clientScanId, actorId, actorId)) as ScanRow | undefined;
 }
 
+export async function findScanByContentHash(actorId: string, workspaceId: string, contentHash: string) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  return await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at
+    FROM scans s WHERE s.workspace_id=? AND s.content_sha256=? AND s.status<>'discarded'
+      AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))
+    ORDER BY CASE WHEN s.status='saved' THEN 0 ELSE 1 END,s.queued_at DESC LIMIT 1`)
+    .get(workspaceId, contentHash, actorId, actorId)) as ScanRow | undefined;
+}
+
 function configuredStorageLimit(name: string, fallback: number) {
   const value = process.env[name] === undefined ? fallback : Number(process.env[name]);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid ${name} storage limit configuration.`);
   return value;
 }
 
-export async function createScan(input: { actorId: string; workspaceId: string; eventId: string | null; clientScanId: string; clientOrder?: number; scanId?: string; source: ScanRow['source']; imagePath: string; imageMime: string; imageBytes: number }) {
+export async function createScan(input: { actorId: string; workspaceId: string; eventId: string | null; clientScanId: string; clientOrder?: number; scanId?: string; source: ScanRow['source']; imagePath: string; imageMime: string; imageBytes: number; contentHash?: string }) {
   await (assertWorkspaceAccess(input.actorId, input.workspaceId));
   if (!Number.isSafeInteger(input.imageBytes) || input.imageBytes <= 0) throw new Error('scan_storage_limit');
   const scanId = input.scanId ?? randomUUID();
   const jobId = randomUUID();
   return await (db.transaction(async () => {
-    const existing = await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at FROM scans s WHERE s.workspace_id=? AND s.client_scan_id=? AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))`)
-      .get(input.workspaceId, input.clientScanId, input.actorId, input.actorId)) as ScanRow | undefined;
-    if (existing) return { scan: existing, duplicate: true };
     if (input.eventId) {
       const event = await (db.prepare(`SELECT e.id FROM events e JOIN event_access a ON a.event_id=e.id AND a.workspace_id=e.workspace_id
         WHERE e.id=? AND e.workspace_id=? AND a.user_id=?`).get(input.eventId, input.workspaceId, input.actorId));
       if (!event) throw new Error('This event is no longer available. Choose another event.');
+    }
+    const existing = await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at FROM scans s WHERE s.workspace_id=? AND s.client_scan_id=? AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))`)
+      .get(input.workspaceId, input.clientScanId, input.actorId, input.actorId)) as ScanRow | undefined;
+    if (existing) return { scan: existing, duplicate: true };
+    if (input.contentHash) {
+      const matching = await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at
+        FROM scans s WHERE s.workspace_id=? AND s.content_sha256=? AND s.status<>'discarded'
+          AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))
+        ORDER BY CASE WHEN s.status='saved' THEN 0 ELSE 1 END,s.queued_at DESC LIMIT 1`)
+        .get(input.workspaceId, input.contentHash, input.actorId, input.actorId)) as ScanRow | undefined;
+      if (matching) return { scan: matching, duplicate: true };
     }
     const workspaceLimit = configuredStorageLimit('SCAN_STORAGE_WORKSPACE_LIMIT_BYTES', 536870912);
     const totalLimit = configuredStorageLimit('SCAN_STORAGE_TOTAL_LIMIT_BYTES', 5368709120);
     const workspaceBytes = (await (db.prepare(`SELECT COALESCE(SUM(image_bytes),0) AS total FROM scans WHERE workspace_id=? AND image_path IS NOT NULL`).get(input.workspaceId)) as { total: number }).total;
     const allBytes = (await (db.prepare(`SELECT COALESCE(SUM(image_bytes),0) AS total FROM scans WHERE image_path IS NOT NULL`).get()) as { total: number }).total;
     if (workspaceBytes + input.imageBytes > workspaceLimit || allBytes + input.imageBytes > totalLimit) throw new Error('scan_storage_limit');
-    await (db.prepare(`INSERT INTO scans(id,workspace_id,event_id,client_scan_id,source,image_path,image_mime,image_bytes,status,created_by,client_order) VALUES (?,?,?,?,?,?,?,?, 'queued',?,?)`)
-      .run(scanId, input.workspaceId, input.eventId, input.clientScanId, input.source, input.imagePath, input.imageMime, input.imageBytes, input.actorId, input.clientOrder ?? Date.now() * 10));
+    await (db.prepare(`INSERT INTO scans(id,workspace_id,event_id,client_scan_id,source,image_path,image_mime,image_bytes,content_sha256,status,created_by,client_order) VALUES (?,?,?,?,?,?,?,?,?, 'queued',?,?)`)
+      .run(scanId, input.workspaceId, input.eventId, input.clientScanId, input.source, input.imagePath, input.imageMime, input.imageBytes, input.contentHash ?? null, input.actorId, input.clientOrder ?? Date.now() * 10));
     await (db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at) VALUES (?,?, 'card_read', ?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
       .run(jobId, input.workspaceId, JSON.stringify({ scanId })));
     const scan = await (db.prepare(`SELECT id,client_scan_id,source,image_mime,status,extracted_json,uncertain_json,error_message,contact_id,queued_at,ready_at,saved_at FROM scans WHERE id=?`)
@@ -1809,15 +1893,23 @@ export async function createScan(input: { actorId: string; workspaceId: string; 
   })());
 }
 
-export async function createQrScan(input: { actorId: string; workspaceId: string; eventId: string | null; clientScanId: string; result: unknown; uncertain: string[] }) {
+export async function createQrScan(input: { actorId: string; workspaceId: string; eventId: string | null; clientScanId: string; result: unknown; uncertain: string[]; contentHash?: string }) {
   await (assertWorkspaceAccess(input.actorId, input.workspaceId));
   const scanId = randomUUID();
   return await (db.transaction(async () => {
+    if (input.eventId && !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(input.workspaceId, input.eventId, input.actorId))) {
+      throw new Error('You no longer have access to this event. Ask your admin for access.');
+    }
     const existing = await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at FROM scans s WHERE s.workspace_id=? AND s.client_scan_id=? AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))`)
       .get(input.workspaceId, input.clientScanId, input.actorId, input.actorId)) as ScanRow | undefined;
     if (existing) return { scan: existing, duplicate: true };
-    if (input.eventId && !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(input.workspaceId, input.eventId, input.actorId))) {
-      throw new Error('You no longer have access to this event. Ask your admin for access.');
+    if (input.contentHash) {
+      const matching = await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at
+        FROM scans s WHERE s.workspace_id=? AND s.content_sha256=? AND s.status<>'discarded'
+          AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))
+        ORDER BY CASE WHEN s.status='saved' THEN 0 ELSE 1 END,s.queued_at DESC LIMIT 1`)
+        .get(input.workspaceId, input.contentHash, input.actorId, input.actorId)) as ScanRow | undefined;
+      if (matching) return { scan: matching, duplicate: true };
     }
     const workspaceCount = (await (db.prepare(`SELECT COUNT(*) AS total FROM scans WHERE workspace_id=? AND source='qr'`).get(input.workspaceId)) as { total: number }).total;
     const totalCount = (await (db.prepare(`SELECT COUNT(*) AS total FROM scans WHERE source='qr'`).get()) as { total: number }).total;
@@ -1825,9 +1917,9 @@ export async function createQrScan(input: { actorId: string; workspaceId: string
     const totalLimit = configuredStorageLimit('QR_SCAN_TOTAL_LIMIT_COUNT', 100000);
     if (workspaceCount >= workspaceLimit) throw new QrScanStorageLimitError('workspace');
     if (totalCount >= totalLimit) throw new QrScanStorageLimitError('service');
-    await (db.prepare(`INSERT INTO scans(id,workspace_id,event_id,client_scan_id,source,status,extracted_json,uncertain_json,queued_at,ready_at,created_by)
-      VALUES (?,?,?,?,?,'ready',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?)`)
-      .run(scanId, input.workspaceId, input.eventId, input.clientScanId, 'qr', JSON.stringify(input.result), JSON.stringify(input.uncertain), input.actorId));
+    await (db.prepare(`INSERT INTO scans(id,workspace_id,event_id,client_scan_id,source,status,extracted_json,uncertain_json,content_sha256,queued_at,ready_at,created_by)
+      VALUES (?,?,?,?,?,'ready',?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?)`)
+      .run(scanId, input.workspaceId, input.eventId, input.clientScanId, 'qr', JSON.stringify(input.result), JSON.stringify(input.uncertain), input.contentHash ?? null, input.actorId));
     return { scan: await (db.prepare(`SELECT id,client_scan_id,source,image_mime,status,extracted_json,uncertain_json,error_message,contact_id,queued_at,ready_at,saved_at FROM scans WHERE id=?`)
       .get(scanId)) as ScanRow, duplicate: false };
   })());
@@ -1877,11 +1969,17 @@ function mergeScanReadResult(existingValue: string | null, incomingValue: unknow
     const ordered = preferIncoming ? [...next, ...current] : [...current, ...next];
     merged[field] = [...new Set(ordered.filter((item): item is string => typeof item === 'string' && !!item.trim()).map((item) => item.trim()))];
   }
+  const incomingUncertain = Array.isArray(incoming.uncertain) ? incoming.uncertain.filter((item): item is string => typeof item === 'string') : [];
   const uncertain = new Set([
     ...(Array.isArray(parsedExisting.uncertain) ? parsedExisting.uncertain : []),
-    ...(Array.isArray(incoming.uncertain) ? incoming.uncertain : []),
+    ...incomingUncertain,
   ].filter((item): item is string => typeof item === 'string'));
-  merged.uncertain = [...uncertain].filter((field) => typeof merged[field] === 'string' && !(merged[field] as string).trim());
+  if (preferIncoming) {
+    for (const field of ['name', 'title', 'company', 'email', 'phone', 'website']) {
+      if (typeof incoming[field] === 'string' && incoming[field].trim() && !incomingUncertain.includes(field)) uncertain.delete(field);
+    }
+  }
+  merged.uncertain = [...uncertain].filter((field) => ['name', 'title', 'company', 'email', 'phone', 'website'].includes(field));
   return merged;
 }
 
@@ -1893,7 +1991,7 @@ export async function updateScanRead(scanId: string, workspaceId: string, result
     .run(JSON.stringify(merged), JSON.stringify(merged.uncertain ?? uncertain), scanId, workspaceId));
 }
 
-export async function applyQrToScan(actorId: string, workspaceId: string, scanId: string, result: unknown, uncertain: string[]) {
+export async function applyQrToScan(actorId: string, workspaceId: string, scanId: string, result: unknown, uncertain: string[], preferIncoming = true, finalizeRead = false) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const scan = await (db.prepare(`SELECT event_id,status,created_by FROM scans WHERE workspace_id=? AND id=?`).get(workspaceId, scanId)) as { event_id: string | null; status: string; created_by: string | null } | undefined;
   if (!scan || ['saved','discarded'].includes(scan.status)) return false;
@@ -1902,8 +2000,8 @@ export async function applyQrToScan(actorId: string, workspaceId: string, scanId
   }
   return await (db.transaction(async () => {
     const current = await (db.prepare(`SELECT extracted_json FROM scans WHERE workspace_id=? AND id=?`).get(workspaceId, scanId)) as { extracted_json: string | null };
-    const merged = mergeScanReadResult(current.extracted_json, result, true);
-    const reading = scan.status === 'queued' || scan.status === 'reading';
+    const merged = mergeScanReadResult(current.extracted_json, result, preferIncoming);
+    const reading = !finalizeRead && (scan.status === 'queued' || scan.status === 'reading');
     await (db.prepare(`UPDATE scans SET status=CASE WHEN ? THEN status ELSE 'ready' END,extracted_json=?,uncertain_json=?,error_message=NULL,ready_at=CASE WHEN ? THEN ready_at ELSE strftime('%Y-%m-%dT%H:%M:%fZ','now') END WHERE workspace_id=? AND id=?`)
       .run(reading ? 1 : 0, JSON.stringify(merged), JSON.stringify(merged.uncertain ?? uncertain), reading ? 1 : 0, workspaceId, scanId));
     return true;
@@ -1919,15 +2017,26 @@ export async function markScanNeedsInput(scanId: string, workspaceId: string, me
     .run(message, scanId, workspaceId));
 }
 
+export async function markScanNeedsInputByActor(actorId: string, workspaceId: string, scanId: string, message: string) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  const scan = await (db.prepare(`SELECT event_id,status,created_by FROM scans WHERE workspace_id=? AND id=?`).get(workspaceId, scanId)) as { event_id: string | null; status: string; created_by: string | null } | undefined;
+  if (!scan || ['saved','discarded'].includes(scan.status)) return false;
+  if (scan.event_id ? !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId)) : scan.created_by !== actorId) {
+    throw new Error('You no longer have access to this event. Ask your admin for access.');
+  }
+  return (await db.prepare(`UPDATE scans SET status='failed',error_message=?,ready_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=? AND status IN ('queued','reading','failed')`)
+    .run(message, workspaceId, scanId)).changes > 0;
+}
+
 export async function discardScan(actorId: string, workspaceId: string, scanId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   return await (db.transaction(async () => {
     const scan = await (db.prepare(`SELECT event_id,created_by,source FROM scans WHERE workspace_id=? AND id=? AND contact_id IS NULL AND status<>'discarded'`).get(workspaceId, scanId)) as { event_id: string | null; created_by: string | null; source: ScanRow['source'] } | undefined;
     if (!scan || (scan.event_id ? !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId)) : scan.created_by !== actorId)) return false;
     if (scan.source === 'qr') {
-      return await (db.prepare(`DELETE FROM scans WHERE workspace_id=? AND id=? AND contact_id IS NULL AND status<>'discarded'`).run(workspaceId, scanId).changes) > 0;
+      return (await db.prepare(`DELETE FROM scans WHERE workspace_id=? AND id=? AND contact_id IS NULL AND status<>'discarded'`).run(workspaceId, scanId)).changes > 0;
     }
-    return await (db.prepare(`UPDATE scans SET status='discarded',image_path=NULL,image_bytes=0 WHERE workspace_id=? AND id=? AND contact_id IS NULL AND status<>'discarded'`).run(workspaceId, scanId).changes) > 0;
+    return (await db.prepare(`UPDATE scans SET status='discarded',image_path=NULL,image_bytes=0 WHERE workspace_id=? AND id=? AND contact_id IS NULL AND status<>'discarded'`).run(workspaceId, scanId)).changes > 0;
   })());
 }
 
@@ -2222,7 +2331,7 @@ export async function saveScannedLead(actorId: string, workspaceId: string, inpu
     }
     await (db.prepare(`UPDATE contacts SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),version=version+1 WHERE id=? AND workspace_id=?`).run(contactId, workspaceId));
     await (db.prepare(`UPDATE scans SET status='saved',contact_id=?,saved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND workspace_id=? AND status<>'saved'`).run(contactId, scan.id, workspaceId));
-    return { saved: true as const, duplicate: false, contactId, companyId };
+    return { saved: true as const, duplicate: false, contactId, companyId, encounterId: encounter?.id ?? null };
   })());
 }
 

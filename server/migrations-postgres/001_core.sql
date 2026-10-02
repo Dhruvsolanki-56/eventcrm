@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS scans (
   client_order bigint,
   material_company_id text REFERENCES companies(id) ON DELETE SET NULL,
   image_bytes bigint NOT NULL DEFAULT 0 CHECK (image_bytes >= 0),
+  content_sha256 text,
   UNIQUE(workspace_id,client_scan_id)
 );
 CREATE INDEX IF NOT EXISTS scans_workspace_owner ON scans(workspace_id,created_by,queued_at);
@@ -152,7 +153,8 @@ CREATE TABLE IF NOT EXISTS encounters (
   contact_id text NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
   event_id text REFERENCES events(id),
   scan_id text REFERENCES scans(id) ON DELETE SET NULL UNIQUE,
-  occurred_at text NOT NULL DEFAULT to_char(timezone('utc', now()), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  occurred_at text NOT NULL DEFAULT to_char(timezone('utc', now()), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  client_conversation_id text
 );
 CREATE TABLE IF NOT EXISTS notes (
   id text PRIMARY KEY,

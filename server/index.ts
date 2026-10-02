@@ -3,7 +3,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import argon2 from 'argon2';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, unlink } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
@@ -32,6 +32,7 @@ import {
   findPasswordResetUser,
   findEmailVerificationUser,
   getCurrentEvent,
+  listAccessibleEvents,
   hasSampleWorkspaceData,
   queuePasswordReset,
   queueEmailVerification,
@@ -55,6 +56,7 @@ import {
   getEmailDraftSuggestion,
   getFollowUpSuggestionContext,
   addPersonNote,
+  addConversation,
   updatePersonStage,
   updatePersonDetails,
   setPersonArchived,
@@ -97,7 +99,9 @@ import {
   retryJob,
   discardScan,
   findScanByClientId,
+  findScanByContentHash,
   applyQrToScan,
+  markScanNeedsInputByActor,
   saveScannedLead,
   saveScannedMaterial,
   removeScannedMaterial,
@@ -107,7 +111,8 @@ import {
   type ActorInfo,
   type WorkspaceInfo,
 } from './db.js';
-import { draftEmail, isAIProviderEnabled, suggestFollowUp } from './ai.js';
+import { draftEmail, isAIProviderEnabled, isCardAIEnabled, readCard, suggestFollowUp } from './ai.js';
+import { isGeminiCardEnabled } from './gemini-card.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
 
@@ -137,7 +142,7 @@ app.disable('x-powered-by');
 if (isProduction) app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-site' },
-  contentSecurityPolicy: isProduction ? { directives: { scriptSrc: ["'self'", "'wasm-unsafe-eval'"], workerSrc: ["'self'"] } } : false,
+  contentSecurityPolicy: isProduction ? { directives: { scriptSrc: ["'self'", "'wasm-unsafe-eval'"], workerSrc: ["'self'"], connectSrc: ["'self'", 'https://huggingface.co', 'https://*.hf.co', 'https://*.huggingface.co', 'https://*.xethub.hf.co'] } } : false,
 }));
 app.use(express.json({ limit: '2mb', strict: true }));
 await startWorker();
@@ -277,11 +282,13 @@ async function issueSession(res: Response, userId: string) {
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 app.get('/api/capabilities', (_req, res) => res.json({
-  cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : isAIProviderEnabled() ? 'provider' : 'browser',
+  cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : 'browser',
+  aiCardAssist: isCardAIEnabled(),
+  aiCardProvider: isGeminiCardEnabled() ? 'gemini' : isAIProviderEnabled() ? 'anthropic' : null,
   emailDrafts: isAIProviderEnabled(),
   followUpSuggestions: isAIProviderEnabled(),
   emailSending: Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM_ADDRESS),
-  voiceTranscription: false,
+  voiceTranscription: 'browser',
 }));
 
 app.get('/api/auth/csrf', async (req, res) => {
@@ -453,6 +460,12 @@ app.get('/api/workspace', requireContext, async (_req, res) => {
     user: { id: actor.id, name: actor.name },
     sampleData: !isProduction && await (hasSampleWorkspaceData(actor.id, workspace.id)),
   });
+});
+
+app.get('/api/events/accessible', requireContext, async (_req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ events: await listAccessibleEvents(actor.id, workspace.id) });
 });
 
 const onboardingSteps = ['knowledge', 'email', 'capture'] as const;
@@ -874,6 +887,22 @@ app.post('/api/contacts/:contactId/notes', requireContext, noteLimiter, async (r
   }
 });
 
+app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.contactId);
+  const parsed = z.object({ body: z.string().trim().min(1).max(4000), eventId: z.string().min(1).max(80).nullable(), clientConversationId: z.string().uuid() }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add a conversation note and choose an event, or choose no event.' });
+  try {
+    const saved = await addConversation(actor.id, workspace.id, id.data, parsed.data);
+    res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate });
+  } catch (error) {
+    if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
+    const message = error instanceof Error ? error.message : 'The conversation could not be saved.';
+    res.status(message.startsWith('You do not have access') || message.startsWith('Choose an event') ? 403 : 409)
+      .json({ code: 'conversation_not_saved', message });
+  }
+});
+
 app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const id = z.string().min(1).max(80).safeParse(req.params.contactId);
@@ -1045,7 +1074,9 @@ app.post('/api/contacts/:contactId/voice', requireContext, voiceLimiter, express
   const mime = req.header('content-type')?.split(';')[0]?.trim().toLowerCase();
   const detected = bytes ? audioMimeBySignature(bytes) : null;
   const duration = z.coerce.number().int().min(1).max(120).safeParse(req.header('x-recording-seconds'));
-  if (!contactId.success || !bytes || bytes.length < 128 || !detected || detected !== mime || !duration.success) {
+  const encounterHeader = req.header('x-encounter-id');
+  const encounterId = encounterHeader ? z.string().min(1).max(80).safeParse(encounterHeader) : null;
+  if (!contactId.success || !bytes || bytes.length < 128 || !detected || detected !== mime || !duration.success || (encounterId && !encounterId.success)) {
     return res.status(400).json({ code: 'invalid_recording', message: 'This recording could not be saved. Record up to two minutes and try again.' });
   }
   const noteId = randomUUID();
@@ -1056,7 +1087,7 @@ app.post('/api/contacts/:contactId/voice', requireContext, voiceLimiter, express
     await mkdir(directory, { recursive: true });
     const { writeFile } = await import('node:fs/promises');
     await writeFile(path, bytes, { flag: 'wx', mode: 0o600 });
-    await (addVoiceNote(actor.id, workspace.id, contactId.data, path, detected, duration.data, bytes.length, noteId));
+    await (addVoiceNote(actor.id, workspace.id, contactId.data, path, detected, duration.data, bytes.length, noteId, encounterId?.success ? encounterId.data : undefined));
     res.status(201).json({ id: noteId, playbackUrl: `/api/notes/${noteId}/audio`, durationSeconds: duration.data, transcriptStatus: 'manual' });
   } catch (error) {
     await unlink(path).catch(() => undefined);
@@ -1259,12 +1290,14 @@ app.get('/api/scans', requireContext, async (req, res) => {
 
 app.post('/api/scans/qr', scanLimiter, requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
-  const parsed = z.object({ clientScanId: z.string().uuid(), fields: CardReadOutputSchema }).safeParse(req.body);
+  const parsed = z.object({ clientScanId: z.string().uuid(), fields: CardReadOutputSchema, eventId: z.string().min(1).max(80).nullable().optional() }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_qr', message: 'This QR code did not contain contact details we could use.' });
   try {
     const event = await (getCurrentEvent(actor.id, workspace.id));
-    const result = await (createQrScan({ actorId: actor.id, workspaceId: workspace.id, eventId: event?.id ?? null, clientScanId: parsed.data.clientScanId, result: parsed.data.fields, uncertain: parsed.data.fields.uncertain }));
-    res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate });
+    const { uncertain: _uncertain, ...contactFields } = parsed.data.fields;
+    const contentHash = `qr:${createHash('sha256').update(JSON.stringify(contactFields)).digest('hex')}`;
+    const result = await (createQrScan({ actorId: actor.id, workspaceId: workspace.id, eventId: parsed.data.eventId === undefined ? event?.id ?? null : parsed.data.eventId, clientScanId: parsed.data.clientScanId, result: parsed.data.fields, uncertain: parsed.data.fields.uncertain, contentHash }));
+    res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate, duplicateQr: result.duplicate && result.scan.client_scan_id !== parsed.data.clientScanId });
   } catch (error) {
     if (error instanceof QrScanStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
     res.status(403).json({ code: 'qr_not_added', message: error instanceof Error ? error.message : 'This QR code could not be added.' });
@@ -1279,12 +1312,22 @@ app.post('/api/scans', scanLimiter, requireContext, express.raw({ type: ['image/
   const clientScanParsed = z.string().uuid().safeParse(scanIdHeader);
   const bytes = Buffer.isBuffer(req.body) ? req.body : null;
   const contentType = req.header('content-type')?.split(';')[0]?.trim().toLowerCase();
+  const eventHeader = req.header('x-event-id');
+  if (eventHeader !== undefined && eventHeader !== 'none' && !z.string().min(1).max(80).safeParse(eventHeader).success) return res.status(400).json({ code: 'invalid_event', message: 'Choose an event you can access.' });
   if (!sourceParsed.success || !clientScanParsed.success || !clientOrderParsed.success) return res.status(400).json({ code: 'invalid_scan', message: 'This photo could not be added. Choose it again.' });
   if (!bytes || bytes.length < 100) return res.status(400).json({ code: 'empty_photo', message: 'Choose a clear photo of the card.' });
   const detectedMime = imageMimeBySignature(bytes);
   if (!detectedMime || detectedMime !== contentType) return res.status(415).json({ code: 'invalid_photo', message: 'Use a JPEG, PNG or WebP photo.' });
+  const activeEvent = eventHeader === undefined ? await getCurrentEvent(actor.id, workspace.id) : null;
+  const eventId = eventHeader === undefined ? activeEvent?.id ?? null : eventHeader === 'none' ? null : eventHeader;
+  if (eventId && !activeEvent && !(await listAccessibleEvents(actor.id, workspace.id)).some((event) => event.id === eventId)) {
+    return res.status(403).json({ code: 'event_not_available', message: 'This event is no longer available. Choose another event.' });
+  }
   const existing = await (findScanByClientId(actor.id, workspace.id, clientScanParsed.data));
   if (existing) return res.status(200).json({ scan: publicScan(existing), duplicate: true });
+  const contentHash = createHash('sha256').update(bytes).digest('hex');
+  const existingImage = await findScanByContentHash(actor.id, workspace.id, contentHash);
+  if (existingImage) return res.status(200).json({ scan: publicScan(existingImage), duplicate: true, duplicateImage: true });
   const scanId = randomUUID();
   const extension = detectedMime === 'image/jpeg' ? '.jpg' : detectedMime === 'image/png' ? '.png' : '.webp';
   const uploadRoot = resolve(process.env.UPLOADS_PATH ?? 'uploads');
@@ -1294,14 +1337,13 @@ app.post('/api/scans', scanLimiter, requireContext, express.raw({ type: ['image/
     await mkdir(directory, { recursive: true });
     const { writeFile } = await import('node:fs/promises');
     await writeFile(imagePath, bytes, { flag: 'wx', mode: 0o600 });
-    const event = await (getCurrentEvent(actor.id, workspace.id));
     try {
       const result = await (createScan({
-        actorId: actor.id, workspaceId: workspace.id, eventId: event?.id ?? null,
-        clientScanId: clientScanParsed.data, clientOrder: clientOrderParsed.data, scanId, source: sourceParsed.data, imagePath, imageMime: detectedMime, imageBytes: bytes.length,
+        actorId: actor.id, workspaceId: workspace.id, eventId,
+        clientScanId: clientScanParsed.data, clientOrder: clientOrderParsed.data, scanId, source: sourceParsed.data, imagePath, imageMime: detectedMime, imageBytes: bytes.length, contentHash,
       }));
       if (result.duplicate) await unlink(imagePath).catch(() => undefined);
-      return res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate });
+      return res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate, duplicateImage: result.duplicate && result.scan.client_scan_id !== clientScanParsed.data });
     } catch (error) {
       await unlink(imagePath).catch(() => undefined);
       const raced = await (findScanByClientId(actor.id, workspace.id, clientScanParsed.data));
@@ -1341,7 +1383,11 @@ app.post('/api/scans/:scanId/qr', scanLimiter, requireContext, async (req, res) 
   if (!scanId.success || !fields.success) return res.status(400).json({ code: 'invalid_qr', message: 'This QR code did not contain contact details we could use.' });
   try {
     const applied = await (applyQrToScan(actor.id, workspace.id, scanId.data, fields.data, fields.data.uncertain));
-    if (!applied) return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    if (!applied) {
+      const scan = await getScan(actor.id, workspace.id, scanId.data);
+      if (scan?.status === 'saved') return res.json({ applied: false, alreadySaved: true });
+      return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    }
     res.json({ applied: true });
   } catch (error) { res.status(403).json({ code: 'qr_not_added', message: error instanceof Error ? error.message : 'This QR code could not be added.' }); }
 });
@@ -1352,10 +1398,46 @@ app.post('/api/scans/:scanId/ocr', scanLimiter, requireContext, async (req, res)
   const fields = CardReadOutputSchema.safeParse(req.body);
   if (!scanId.success || !fields.success) return res.status(400).json({ code: 'invalid_ocr', message: 'Those card details could not be added. Check them or type the details yourself.' });
   try {
-    const applied = await (applyQrToScan(actor.id, workspace.id, scanId.data, fields.data, fields.data.uncertain));
-    if (!applied) return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    const applied = await (applyQrToScan(actor.id, workspace.id, scanId.data, fields.data, fields.data.uncertain, req.header('x-read-source') === 'ai', true));
+    if (!applied) {
+      const scan = await getScan(actor.id, workspace.id, scanId.data);
+      if (scan?.status === 'saved') return res.json({ applied: false, alreadySaved: true });
+      return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    }
     res.json({ applied: true });
   } catch (error) { res.status(403).json({ code: 'ocr_not_added', message: error instanceof Error ? error.message : 'Those details could not be added.' }); }
+});
+
+app.post('/api/scans/:scanId/ai-read', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const scanId = z.string().uuid().safeParse(req.params.scanId);
+  if (!scanId.success) return res.status(404).json({ code: 'scan_missing', message: 'This photo is no longer available.' });
+  if (!isCardAIEnabled()) return res.status(409).json({ code: 'ai_unavailable', message: 'AI reading is not set up. Keep using the on-device reader or type the details.' });
+  try {
+    const scan = await getScan(actor.id, workspace.id, scanId.data);
+    if (!scan?.image_path || !scan.image_mime || ['saved','discarded'].includes(scan.status)) return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    const result = await readCard(scan.image_path, scan.image_mime);
+    if (!result.available) return res.status(503).json({ code: 'ai_read_failed', message: 'AI could not read this photo. Check the on-device result or type the details.' });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ fields: result.data, source: 'ai_suggestion', needsReview: true });
+  } catch {
+    res.status(503).json({ code: 'ai_read_failed', message: 'AI could not read this photo. Check the on-device result or type the details.' });
+  }
+});
+
+app.post('/api/scans/:scanId/ocr-failure', scanLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const scanId = z.string().uuid().safeParse(req.params.scanId);
+  if (!scanId.success) return res.status(404).json({ code: 'scan_missing', message: 'This photo is no longer available.' });
+  try {
+    const applied = await (markScanNeedsInputByActor(actor.id, workspace.id, scanId.data, 'We couldn’t read this photo on this try. Type the details to continue.'));
+    if (!applied) {
+      const scan = await getScan(actor.id, workspace.id, scanId.data);
+      if (scan?.status === 'ready' || scan?.status === 'saved') return res.json({ failed: false, alreadyProcessed: true });
+      return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
+    }
+    res.json({ failed: true });
+  } catch (error) { res.status(403).json({ code: 'ocr_failure_not_saved', message: error instanceof Error ? error.message : 'This photo could not be updated.' }); }
 });
 
 app.post('/api/scans/:scanId/save', requireContext, async (req, res) => {
