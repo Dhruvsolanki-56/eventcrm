@@ -18,9 +18,7 @@ test('an uploaded brochure is kept with its company without creating a person', 
   const started = page.waitForRequest((request) => request.url().includes('/api/scans') && request.method() === 'POST');
   await page.locator('#capture-gallery').setInputFiles({ name: 'acme-brochure.jpg', mimeType: 'image/jpeg', buffer: image });
   await started;
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible();
-  await expect(page.getByText('Demo reading')).toBeVisible();
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\/[^/]+$/);
   await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact');
   await page.getByRole('button', { name: 'Company brochure' }).click();
   await expect(page.getByLabel('Company name')).toHaveValue('Acme Packaging');

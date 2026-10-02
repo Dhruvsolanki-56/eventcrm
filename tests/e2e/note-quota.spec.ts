@@ -31,7 +31,7 @@ test('text-note workspace and shared-service quotas reject writes atomically', a
     await page.goto('/people/demo-ns-contact-2');
     await expect(page.getByRole('heading', { name: 'Noah Price' })).toBeVisible();
     await page.locator('#person-note').fill('b'.repeat(600));
-    await page.getByRole('button', { name: 'Save note' }).click();
+    await page.getByRole('button', { name: 'Add conversation' }).click();
     await expect(page.locator('.note-form .form-error')).toContainText('This space has reached its saved-note limit.');
     expect(state('demo-northstar', northstarContact)).toEqual(afterFirst);
     expect(state('demo-northstar', 'demo-ns-contact-2')).toEqual(otherContactBefore);

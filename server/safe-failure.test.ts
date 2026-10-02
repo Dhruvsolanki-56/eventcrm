@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeFailureCode, safeJobFailureMessage } from './safe-failure.js';
+import { safeFailureCode, safeJobFailureMessage, serverCardReaderUnavailableMessage } from './safe-failure.js';
 
 describe('safe background failure details', () => {
   it('keeps provider messages, recipients, and credentials out of stored and logged errors', () => {
@@ -12,7 +12,13 @@ describe('safe background failure details', () => {
   it('logs only allow-listed provider codes and gives each job a safe explanation', () => {
     expect(safeFailureCode(Object.assign(new Error('internal detail'), { code: 'SENSITIVE:person@example.com' }))).toBe('PROVIDER_ERROR');
     expect(safeFailureCode(new Error('contact data in provider response'))).toBe('PROVIDER_ERROR');
-    expect(safeJobFailureMessage('card_read')).toMatch(/Type the details to continue/);
+    expect(safeJobFailureMessage('card_read')).toMatch(/on-device reading/);
     expect(safeJobFailureMessage('unexpected')).toMatch(/contact your admin/);
+  });
+
+  it('explains that browser reading is still available when no server reader is configured', () => {
+    expect(serverCardReaderUnavailableMessage).toMatch(/on-device reading/);
+    expect(serverCardReaderUnavailableMessage).not.toMatch(/automatic reading is not set up/i);
+    expect(safeJobFailureMessage('card_read')).toMatch(/on-device reading/);
   });
 });

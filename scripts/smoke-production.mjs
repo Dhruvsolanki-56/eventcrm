@@ -79,8 +79,8 @@ try {
   assert.match(ocrWorker.headers.get('content-security-policy') ?? '', /wasm-unsafe-eval/);
   assert.equal(capabilities.status, 200);
   assert.deepEqual(await capabilities.json(), {
-    cardReading: 'browser', emailDrafts: false, followUpSuggestions: false,
-    emailSending: false, voiceTranscription: false,
+    cardReading: 'browser', aiCardAssist: false, aiCardProvider: null, emailDrafts: false, followUpSuggestions: false,
+    emailSending: false, voiceTranscription: 'browser',
   });
   assert.equal(demoAccounts.status, 404, 'development sample-login endpoint must not exist in production');
   console.log('Production smoke passed: built app and /scan return 200; local OCR assets and CSP are ready; health is ok; no-provider fallbacks report accurately; development demo login returns 404.');

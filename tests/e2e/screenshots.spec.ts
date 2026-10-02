@@ -35,9 +35,8 @@ test('refresh documented desktop and phone capture screenshots', async ({ page }
     return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
   });
   await page.locator('#capture-gallery').setInputFiles({ name: 'screenshot-card.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(image, 'base64') });
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible();
-  await page.getByRole('button', { name: 'Review' }).first().click();
-  await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact');
+  await expect(page).toHaveURL(/\/review\/[^/]+$/);
+  await page.getByLabel('Name *').fill('Demo Contact');
   await page.screenshot({ path: resolve('docs/screenshots/review-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

@@ -1,7 +1,21 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
+async function distinctCard(page: Page, marker: number) {
+  const image = readFileSync(resolve('public/demo/sample-card.png')).toString('base64');
+  const encoded = await page.evaluate(async ({ image, marker }) => {
+    const source = new Image(); source.src = `data:image/png;base64,${image}`; await source.decode();
+    const canvas = document.createElement('canvas'); canvas.width = source.width; canvas.height = source.height;
+    const context = canvas.getContext('2d')!; context.drawImage(source, 0, 0);
+    context.fillStyle = `rgb(${marker * 31 % 255},${marker * 53 % 255},${marker * 79 % 255})`;
+    context.fillRect(canvas.width - 12, canvas.height - 12, 7, 7);
+    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((value) => resolve(value!), 'image/png'));
+    return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
+  }, { image, marker });
+  return Buffer.from(encoded, 'base64');
+}
 
 test('production signup uses the same public response for an existing and a new email', async ({ page }) => {
   await page.goto('/');
@@ -36,21 +50,21 @@ test('a scanned demo card can be reviewed, saved, and emailed after explicit app
   expect(uploadResponse.status()).toBe(201);
   const uploadedScan = (await uploadResponse.json()) as { scan: { id: string; status: string } };
   expect(uploadedScan.scan.status).toBe('queued');
-  await expect(page.getByText('Demo reading')).toBeVisible();
-  // Reading must finish from the upload job; do not open Review to trigger it.
+  // Upload starts reading immediately; a single photo opens Review while it runs.
   await expect.poll(async () => {
     const response = await page.request.get(`/api/scans/${uploadedScan.scan.id}`);
     return ((await response.json()) as { scan: { status: string } }).scan.status;
   }, { timeout: 10_000 }).toBe('ready');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\//);
   await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact');
+  await page.getByLabel('Company').fill('Acme Packaging');
   await expect(page.getByLabel('Email')).toHaveValue('demo.contact@sample.invalid');
   const recipient = `approved-${Date.now()}@example.test`;
   await page.getByLabel('Email').fill(recipient);
-  await page.getByRole('textbox', { name: 'Phone', exact: true }).fill('');
-  await page.getByRole('button', { name: 'Save & email' }).click();
+  await page.locator('.review-form input[type="tel"]').fill('');
+  await page.getByRole('button', { name: 'Save & prepare email' }).click();
 
   const composer = page.locator('.email-compose');
   await expect(composer.getByLabel('Subject')).toHaveValue(/Following up/);
@@ -118,15 +132,15 @@ test('the edited email draft is what the configured mail server accepts', async 
   const upload = page.waitForRequest((request) => request.url().includes('/api/scans') && request.method() === 'POST');
   await page.locator('#capture-gallery').setInputFiles({ name: 'tessa-card.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(image, 'base64') });
   await upload;
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\//);
   await expect(page.getByLabel('Name *')).toBeVisible();
   await page.getByLabel('Name *').fill('Tessa Morgan');
   await page.getByLabel('Company').fill('Acme Packaging');
   await page.getByLabel('Email').fill('tessa@acmepackaging.example');
-  await page.getByRole('button', { name: 'Save & email' }).click();
+  await page.getByRole('button', { name: 'Save & prepare email' }).click();
   await expect(page.getByRole('group', { name: 'Possible existing person' })).toBeVisible();
   await page.getByRole('button', { name: 'Yes, same person' }).click();
-  await page.getByRole('button', { name: 'Save & email' }).click();
+  await page.getByRole('button', { name: 'Save & prepare email' }).click();
   await expect(page.getByLabel('Subject')).toBeVisible();
 
   const subject = 'Sample options, as promised';
@@ -246,7 +260,7 @@ test('Email now from Save & scan next sends only after approval and returns to c
   const upload = page.waitForRequest((request) => request.url().includes('/api/scans') && request.method() === 'POST');
   await page.locator('#capture-gallery').setInputFiles({ name: 'toast-contact.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(image, 'base64') });
   await upload;
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\//);
   await expect(page.getByLabel('Name *')).toBeVisible();
   const contactName = `Toast Contact ${unique}`;
   const recipient = `toast-${unique}@acmepackaging.example`;
@@ -330,27 +344,26 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
   const voiceText = 'Asked for a small-run sample and carton sizes.';
   const upload = page.waitForResponse((response) => response.url().endsWith('/api/scans') && response.request().method() === 'POST');
   await page.locator('#capture-gallery').setInputFiles({
-    name: 'sample-card.png', mimeType: 'image/png', buffer: readFileSync(resolve('public/demo/sample-card.png')),
+    name: 'sample-card-lifecycle.png', mimeType: 'image/png', buffer: await distinctCard(page, 10),
   });
   const uploaded = await upload;
   expect(uploaded.status()).toBe(201);
   const scan = (await uploaded.json() as { scan: { id: string; status: string } }).scan;
   expect(scan.status).toBe('queued');
-  await expect(page.getByText('Demo reading')).toBeVisible();
   await expect.poll(async () => (((await page.request.get(`/api/scans/${scan.id}`)).json()) as Promise<{ scan: { status: string } }>).then((value) => value.scan.status), { timeout: 10_000 }).toBe('ready');
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\//);
   await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact');
   await page.getByLabel('Name *').fill(leadName);
   await page.getByLabel('Company').fill('Acme Packaging');
   await page.getByLabel('Email').fill(recipient);
-  await page.getByRole('textbox', { name: 'Phone', exact: true }).fill('');
+  await page.locator('.review-form input[type="tel"]').fill('');
   await page.getByRole('button', { name: 'Flexible cartons' }).click();
   await page.getByRole('button', { name: 'Record voice note' }).click();
   await expect(page.getByText(/Recording ·/)).toBeVisible();
   await page.waitForTimeout(1300);
   await page.getByRole('button', { name: 'Stop recording' }).click();
   await page.getByLabel('Text you typed (optional)').fill(voiceText);
-  await page.getByRole('button', { name: 'Save & email' }).click();
+  await page.getByRole('button', { name: 'Save & prepare email' }).click();
 
   const composer = page.locator('.email-compose');
   await expect(composer.getByLabel('Subject')).toBeVisible();

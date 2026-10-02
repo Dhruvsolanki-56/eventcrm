@@ -147,7 +147,7 @@ async function exerciseReviewControls(page: Page) {
   await expect(page.getByLabel('Next follow-up date')).toHaveValue('');
   if ((page.viewportSize()?.width ?? 0) > 600) await expect(page.getByRole('button', { name: 'Save person' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Save & scan next' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Save & email' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Save & prepare email' })).toBeEnabled();
   const buttons = await buttonsOnPage(page);
   expect(buttons.filter((button) => !button.name), 'Every visible enabled review button needs a readable name').toEqual([]);
   const links = await page.locator('a[href^="/"]:visible').count();

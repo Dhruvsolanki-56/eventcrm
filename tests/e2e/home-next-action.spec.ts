@@ -12,6 +12,8 @@ test('Home points to review, due follow-ups, missing details, then capture', asy
   const actorId = 'demo-owner';
   const reviewScanId = randomUUID();
   const dueTaskId = randomUUID();
+  const originalPendingScans = database.prepare(`SELECT id,status FROM scans WHERE workspace_id=? AND status IN ('queued','reading','ready','failed')`)
+    .all(workspaceId) as Array<{ id: string; status: string }>;
   const originalDueTasks = database.prepare(`SELECT id,status,snoozed_until FROM tasks
     WHERE workspace_id=? AND kind='follow_up' AND status='open' AND date(due_at)<=date('now')
       AND (snoozed_until IS NULL OR datetime(snoozed_until)<=datetime('now'))`).all(workspaceId) as Array<{ id: string; status: string; snoozed_until: string | null }>;
@@ -19,6 +21,7 @@ test('Home points to review, due follow-ups, missing details, then capture', asy
     .get(workspaceId) as { value_json: string; updated_at: string } | undefined;
   try {
     database.transaction(() => {
+      for (const scan of originalPendingScans) database.prepare(`UPDATE scans SET status='saved' WHERE id=? AND workspace_id=?`).run(scan.id, workspaceId);
       database.prepare(`INSERT INTO scans(id,workspace_id,client_scan_id,source,status,created_by) VALUES (?,?,?,'gallery','ready',?)`)
         .run(reviewScanId, workspaceId, randomUUID(), actorId);
     })();
@@ -67,6 +70,7 @@ test('Home points to review, due follow-ups, missing details, then capture', asy
   } finally {
     database.transaction(() => {
       database.prepare(`DELETE FROM scans WHERE id=? AND workspace_id=?`).run(reviewScanId, workspaceId);
+      for (const scan of originalPendingScans) database.prepare(`UPDATE scans SET status=? WHERE id=? AND workspace_id=?`).run(scan.status, scan.id, workspaceId);
       database.prepare(`DELETE FROM tasks WHERE id=? AND workspace_id=?`).run(dueTaskId, workspaceId);
       for (const task of originalDueTasks) database.prepare(`UPDATE tasks SET status=?,snoozed_until=? WHERE id=? AND workspace_id=?`)
         .run(task.status, task.snoozed_until, task.id, workspaceId);

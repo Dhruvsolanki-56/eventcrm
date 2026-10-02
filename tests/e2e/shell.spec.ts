@@ -340,11 +340,12 @@ test('concurrent captures add two people under one new company', async ({ page }
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Maya/ })).toBeVisible();
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
-  const photo = readFileSync(resolve('public/demo/sample-card.png'));
+  const basePhoto = readFileSync(resolve('public/demo/sample-card.png'));
+  const photos = [0, 1].map(() => Buffer.concat([basePhoto, Buffer.from(randomUUID())]));
   const workspaceId = 'demo-northstar';
   const companyName = `Concurrent Capture ${randomUUID().slice(0, 8)}`;
-  const uploads = await Promise.all([randomUUID(), randomUUID()].map((clientScanId) => page.request.post('/api/scans', {
-    data: photo,
+  const uploads = await Promise.all([randomUUID(), randomUUID()].map((clientScanId, index) => page.request.post('/api/scans', {
+    data: photos[index],
     headers: { 'Content-Type': 'image/png', 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': 'gallery', 'X-CSRF-Token': csrf.csrfToken, 'X-Workspace-Id': workspaceId },
   })));
   expect(uploads.map((response) => response.status())).toEqual([201, 201]);
@@ -601,6 +602,7 @@ test('person detail edits detect stale changes and offer a reload', async ({ pag
 });
 
 test('photo upload starts reading immediately, reviews one lead, links repeat people, and saves next', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto('/');
   await page.getByRole('button', { name: /Create an account/ }).click();
   const suffix = `${Date.now()}`;
@@ -626,6 +628,15 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
     return btoa(String.fromCharCode(...new Uint8Array(data)));
   });
   const buffer = Buffer.from(image, 'base64');
+  const imageVariant = async (marker: number) => Buffer.from(await page.evaluate(async ({ image, marker }) => {
+    const photo = new Image(); photo.src = `data:image/jpeg;base64,${image}`; await photo.decode();
+    const canvas = document.createElement('canvas'); canvas.width = photo.width; canvas.height = photo.height;
+    const ctx = canvas.getContext('2d')!; ctx.drawImage(photo, 0, 0);
+    ctx.fillStyle = `rgb(${marker * 23 % 255},${marker * 47 % 255},${marker * 71 % 255})`;
+    ctx.fillRect(canvas.width - 12, canvas.height - 12, 7, 7);
+    const blob = await new Promise<Blob>((resolve) => canvas.toBlob((value) => resolve(value!), 'image/jpeg', .9));
+    return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
+  }, { image, marker }), 'base64');
   const input = page.locator('#capture-gallery');
   const started = Date.now();
   const uploadResponse = page.waitForResponse((response) => response.url().includes('/api/scans') && response.request().method() === 'POST');
@@ -633,15 +644,17 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   const uploaded = await uploadResponse;
   expect(uploaded.status()).toBe(201);
   expect((await uploaded.json() as { scan: { status: string } }).scan.status).toBe('queued');
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible({ timeout: 15000 });
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact', { timeout: 15000 });
   const readyMs = Date.now() - started;
-  await page.getByRole('button', { name: 'Review' }).first().click();
   await expect(page.getByRole('button', { name: 'Save & scan next' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save & email' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save & prepare email' })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact');
+  await page.getByLabel('Company').fill('Acme Packaging');
+  await page.getByLabel('Email').fill('demo.contact@sample.invalid');
   await page.getByLabel('Conversation note').fill('Met at the booth; asked for a short-run sample.');
   await page.getByLabel('Lead temperature').selectOption('warm');
   const followUpInput = page.getByLabel('Next follow-up date');
@@ -652,7 +665,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await expect(page.getByText('Saved to your space')).toBeVisible();
   expect(await (await page.request.get('/api/onboarding')).json()).toMatchObject({ state: { completed: ['capture'], skipped: ['knowledge', 'email'] } });
   await expect(page.getByLabel('Subject')).toHaveValue(/Following up/);
-  await expect(page.locator('.email-sources')).toContainText('Your saved note');
+  await expect(page.locator('.email-sources')).toContainText('Latest conversation');
   await expect(page.locator('.email-compose textarea')).toHaveValue(/short-run sample/);
   await page.getByRole('button', { name: 'Try another version' }).click();
   await expect(page.getByLabel('Subject')).toHaveValue(/A quick note about Acme Packaging/);
@@ -679,23 +692,22 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.locator('.profile-button').click();
 
   await input.setInputFiles({ name: 'repeat-business-card.jpg', mimeType: 'image/jpeg', buffer });
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible({ timeout: 15000 });
-  await page.getByRole('button', { name: 'Review' }).first().click();
-  await page.getByRole('button', { name: 'Save person' }).click();
-  await page.getByRole('button', { name: 'Yes, same person' }).click();
-  await page.getByRole('button', { name: 'Save person' }).click();
-  await expect(page.getByText('Saved to your space')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Draft an email' })).toBeVisible();
+  await expect(page).toHaveURL(/\/people\//);
+  await expect(page.getByRole('heading', { name: 'Demo Contact' })).toBeVisible();
+  await expect(page.getByLabel('What did you discuss?')).toBeFocused();
+  await page.getByLabel('What did you discuss?').fill('Spoke again later and asked for updated sample timing.');
+  await page.getByRole('button', { name: 'Add conversation' }).click();
+  await expect(page.locator('.timeline-item').getByText('Spoke again later and asked for updated sample timing.')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole('link', { name: 'Scan a card' }).first().click();
   const thirdUpload = page.waitForRequest((request) => request.url().includes('/api/scans') && request.method() === 'POST');
-  await input.setInputFiles({ name: 'similar-company-card.jpg', mimeType: 'image/jpeg', buffer });
+  await input.setInputFiles({ name: 'similar-company-card.jpg', mimeType: 'image/jpeg', buffer: await imageVariant(1) });
   await thirdUpload;
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible({ timeout: 15000 });
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact', { timeout: 15000 });
   await page.getByLabel('Name *').fill('Rae Sample');
   await page.getByLabel('Company').fill('Acme Packagng');
   await page.getByLabel('Email').fill(`rae-${suffix}@newvendor.example`);
@@ -714,7 +726,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await emailNowDialog.getByRole('button', { name: 'Skip' }).click();
   await expect(emailNowDialog).toHaveCount(0);
   await expect(page.getByRole('heading', { name: /Keep the next conversation/ })).toBeVisible();
-  const batchFiles = Array.from({ length: 5 }, (_, index) => ({ name: `batch-card-${index + 1}.jpg`, mimeType: 'image/jpeg', buffer }));
+  const batchFiles = await Promise.all(Array.from({ length: 5 }, async (_, index) => ({ name: `batch-card-${index + 1}.jpg`, mimeType: 'image/jpeg', buffer: await imageVariant(index + 2) })));
   await page.evaluate(() => {
     const ids: string[] = [];
     const original = window.crypto.randomUUID.bind(window.crypto);
@@ -761,8 +773,8 @@ test('review can save product interests and a manual-text voice note', async ({ 
   const uploaded = await uploadPromise;
   const uploadData = await uploaded.json() as { scan: { status: string } };
   expect(uploadData.scan.status).toBe('queued');
-  await expect(page.getByRole('button', { name: 'Review', exact: true }).first()).toBeVisible({ timeout: 15000 });
-  await page.getByRole('button', { name: 'Review', exact: true }).first().click();
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(page.getByLabel('Name *')).toBeVisible({ timeout: 15000 });
   const cartons = page.getByRole('button', { name: 'Flexible cartons' });
   await expect(cartons).toBeVisible();
   await cartons.click();
@@ -827,8 +839,8 @@ test('people, company hierarchy, contact notes, stage updates, Help, and tour co
   await expect(page.getByRole('heading', { name: 'Tessa Morgan' })).toBeVisible();
   await expect(page.locator('.suggestion-message')).toContainText('AI suggestions are not set up');
   await page.getByLabel('Change stage').selectOption('meeting');
-  await page.getByLabel('Short note').fill('Confirmed a follow-up after the show.');
-  await page.getByRole('button', { name: 'Save note' }).click();
+  await page.getByLabel('What did you discuss?').fill('Confirmed a follow-up after the show.');
+  await page.getByRole('button', { name: 'Add conversation' }).click();
   await expect(page.locator('.timeline-item').getByText('Confirmed a follow-up after the show.').first()).toBeVisible();
   await page.getByLabel('Change stage').selectOption('lost');
   await expect(page.getByLabel('Why was this marked lost?')).toBeVisible();

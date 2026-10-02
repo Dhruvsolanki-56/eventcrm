@@ -30,9 +30,7 @@ test('an attendee privately scans a card, keeps the conversation, and follows up
   const uploadRequest = page.waitForRequest((request) => request.url().includes('/api/scans') && request.method() === 'POST');
   await page.locator('#capture-gallery').setInputFiles({ name: 'supplier-card.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(image, 'base64') });
   await uploadRequest;
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible();
-  await expect(page.getByText('Demo reading')).toBeVisible();
-  await page.getByRole('button', { name: 'Review' }).first().click();
+  await expect(page).toHaveURL(/\/review\/[^/]+$/);
   await page.getByLabel('Conversation note').fill('Supplier said the minimum order is 500 pieces and will send a sample.');
   await page.getByRole('button', { name: 'Save & scan next' }).click();
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
