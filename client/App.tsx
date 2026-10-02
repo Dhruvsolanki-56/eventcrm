@@ -1329,7 +1329,7 @@ function ScanPage() {
               try {
                 const ai = await request<{ fields: ReviewLead }>(`/api/scans/${uploaded.id}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
                 if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
-                fields = { ...ai.fields, uncertain: [...new Set([...ai.fields.uncertain, ...(['name','title','company','email','phone','website'] as const).filter((key) => Boolean(ai.fields[key]))])] };
+                fields = ai.fields;
                 usedGemini = true;
               } catch { /* The local reader is the fallback when the free tier is unavailable. */ }
             }
@@ -1649,7 +1649,7 @@ function ReviewPage() {
   useEffect(() => {
     setScan(null);
     setLead({ name: '', title: '', company: '', email: '', phone: '', website: '', products: [], topics: [], uncertain: [] });
-    setNote(''); setQuality(''); setSelectedProductIds([]); setBrochureItems(''); setCompanyChoice(''); setCompanySuggestions([]);
+    setNote(''); setQuality(''); setSelectedProductIds([]); setBrochureItems(''); setCompanyChoice(''); setCompanySuggestions([]); setAiReadMessage('');
     setDecision(null); setSamePersonContactId(''); setDifferentPerson(false); setFollowUpDate(''); setAutoEmailAfterSave(false); setEmailDismissed(false); setPhotoExpanded(false);
     followUpDateInitialized.current = false;
   }, [scanId]);
@@ -1713,9 +1713,9 @@ function ReviewPage() {
             setOcrStage('Reading this photo with Gemini…');
             const ai = await request<{ fields: ReviewLead }>(`/api/scans/${scanId}/ai-read`, { method: 'POST' }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
             if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
-            fields = { ...ai.fields, uncertain: [...new Set([...ai.fields.uncertain, ...(['name','title','company','email','phone','website'] as const).filter((key) => Boolean(ai.fields[key]))])] };
+            fields = ai.fields;
             usedGemini = true;
-            setAiReadMessage('Gemini suggested these details. Check every marked field against the photo.');
+            setAiReadMessage('Gemini suggested these details. Compare them with the photo before saving.');
           } catch { setOcrStage('Gemini was unavailable. Reading on this device…'); }
         }
         if (!fields) {
@@ -1787,12 +1787,12 @@ function ReviewPage() {
         for (const key of keys) {
           if (fields[key]?.trim() && (!current[key].trim() || current.uncertain.includes(key))) {
             next[key] = fields[key].trim();
-            if (!next.uncertain.includes(key)) next.uncertain.push(key);
+            if (fields.uncertain.includes(key) && !next.uncertain.includes(key)) next.uncertain.push(key);
           }
         }
         return next;
       });
-      setAiReadMessage('AI suggested details are marked for review. Compare them with the photo before saving.');
+      setAiReadMessage('AI suggested details. Compare them with the photo before saving.');
     } catch (issue) { setAiReadMessage((issue as Error).message); }
     finally { setAiReading(false); }
   }
@@ -1876,26 +1876,27 @@ function ReviewPage() {
     finally { setBusy(false); }
   }
   const status = String(scan?.status ?? 'loading');
-  const extracted = scan?.extracted && typeof scan.extracted === 'object' ? scan.extracted as Record<string, unknown> : null;
   const materialAlreadySaved = typeof scan?.materialCompanyId === 'string' && !!scan.materialCompanyId;
   const fieldsDisabled = status === 'saved' && (reviewMode === 'person' || materialAlreadySaved);
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
   return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title">
-    <div className="page-heading-row"><div><p className="eyebrow">CHECK BEFORE SAVING</p><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : 'One item at a time.'}</h1><p className="page-lede">We only keep details you confirm. Anything uncertain is marked for a closer look.</p></div><Link className="button secondary" to="/scan">{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
+    <div className="page-heading-row"><div><p className="eyebrow">CHECK BEFORE SAVING</p><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : reviewMode === 'brochure' ? 'Review this brochure' : 'Review this card'}</h1><p className="page-lede">Compare the details with the photo. Nothing is saved until you confirm.</p></div><Link className="button secondary review-close" to="/scan"><X size={16} aria-hidden="true" />{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
     {error && <p className="form-error review-error" role="alert">{error}</p>}
     {(status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning) ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>{ocrRunning && !useGeminiCards ? 'Reading your card on this device…' : 'Reading this photo…'}</strong><p>{ocrRunning ? ocrStage : 'The photo was uploaded. You can review it as soon as the details are ready.'}</p>{ocrRunning && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="Card reading progress" />}</div> :
     <div className="review-layout">
       <aside className="surface-card review-source">
+        <div className="review-source-heading"><strong>Source photo</strong><span>Tap to enlarge</span></div>
         {Boolean(scan?.mimeType) && <button type="button" className="review-photo-button" onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
-        {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <div className="ai-card-assist"><p className="subtle">If details are missing, you can send this photo to the configured AI provider for another suggestion. {aiCardProvider === 'gemini' ? 'On Gemini’s free tier, Google may use the photo to improve its products. ' : ''}Check every suggestion before saving.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? 'Checking with AI…' : 'Ask AI to check this photo'}</button>{aiReadMessage && <p role="status">{aiReadMessage}</p>}</div>}
+        {aiReadMessage && <p className="review-read-message" role="status">{aiReadMessage}</p>}
+        {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <details className="ai-card-assist"><summary>Need another read?</summary><p>If details are missing, ask AI to try again. {aiCardProvider === 'gemini' ? 'This sends the photo to Google again; on its free tier, Google may use it to improve products. ' : ''}Check its suggestion against the photo.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? 'Checking with AI…' : 'Ask AI to check this photo'}</button></details>}
         {status === 'failed' && !ocrRunning && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
-        {extracted && <p className="subtle review-honesty">Check spelling, company names, and any visible contact details against the {reviewMode === 'brochure' ? 'brochure' : 'card'}.</p>}
       </aside>
       <form id="review-save-form" className="surface-card review-form" onSubmit={(event) => reviewMode === 'brochure' ? void saveMaterial(event) : void submit(event)}>
         {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
         <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
+        {(status === 'ready' || status === 'failed') && <p className="review-check-note"><CircleCheck size={17} aria-hidden="true" /><span>These are suggestions, not a saved contact. Check them against the photo; only unclear fields carry a <strong>Verify</strong> marker.</span></p>}
         {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key) => <Fragment key={key}><label className={lead.uncertain.includes(key) ? 'uncertain-field' : ''}>
-          <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}{lead.uncertain.includes(key) && <em>Check this detail</em>}</span>
+          <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}{lead.uncertain.includes(key) && <em>Verify</em>}</span>
           <input value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
         </label>{key === 'company' && companyMatches()}</Fragment>)}
         {reviewMode === 'brochure' && <><label>Company name<input value={lead.company} onChange={(event) => update('company', event.target.value)} maxLength={160} required disabled={fieldsDisabled} /></label>{companyMatches()}<label>Website<input value={lead.website} onChange={(event) => update('website', event.target.value)} type="text" inputMode="url" maxLength={300} placeholder="example.com" disabled={fieldsDisabled} /></label><label>Products or topics shown <span className="optional-label">one per line; check the words against the photo</span><textarea rows={3} value={brochureItems} maxLength={1500} onChange={(event) => setBrochureItems(event.target.value)} placeholder="Recyclable cartons" disabled={fieldsDisabled} /></label><p className="subtle">This photo and the details you confirm will be saved under the company, not as a person. Similar company names are shown for confirmation.</p></>}
