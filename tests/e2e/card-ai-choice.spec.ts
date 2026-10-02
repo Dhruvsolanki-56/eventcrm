@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 test.skip(process.env.GATHER_TEST_CARD_AI_CHOICE !== '1', 'Run this mocked-provider flow with --manual-reading so the demo fixture worker cannot race it.');
 
-test('an opted-in photo uses the card API at upload and still needs review', async ({ page }) => {
+test('a new photo uses Gemini automatically at upload and still needs review', async ({ page }) => {
   let aiReads = 0;
   await page.route('**/api/capabilities', async (route) => {
     const response = await route.fetch();
@@ -19,10 +19,9 @@ test('an opted-in photo uses the card API at upload and still needs review', asy
   });
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  const choice = page.getByRole('checkbox', { name: /Read new photos with Gemini automatically/ });
-  await expect(choice).toBeVisible();
-  await expect(choice).not.toBeChecked();
-  await choice.check();
+  await expect(page.getByText('Gemini reads first, automatically')).toBeVisible();
+  await expect(page.getByText(/photo is sent to Google/)).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /Gemini/ })).toHaveCount(0);
   const source = readFileSync(resolve('public/demo/sample-card.png'));
   const variant = await page.evaluate(async (base64) => {
     const photo = new Image(); photo.src = `data:image/png;base64,${base64}`; await photo.decode();
@@ -43,4 +42,27 @@ test('an opted-in photo uses the card API at upload and still needs review', asy
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.goto('/scan');
   await page.getByRole('button', { name: 'Discard Avery Chen' }).click();
+});
+
+test('on-device reading takes over when Gemini is unavailable', async ({ page }) => {
+  test.setTimeout(120_000);
+  let aiReads = 0;
+  await page.route('**/api/capabilities', async (route) => {
+    const response = await route.fetch();
+    const capabilities = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...capabilities, aiCardAssist: true, aiCardProvider: 'gemini' } });
+  });
+  await page.route('**/api/scans/*/ai-read', async (route) => {
+    aiReads++;
+    await route.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: 'Free-tier limit reached.' }) });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await expect(page.getByText('Gemini reads first, automatically')).toBeVisible();
+  await page.locator('#capture-gallery').setInputFiles({
+    name: 'sample-card.png', mimeType: 'image/png', buffer: readFileSync(resolve('public/demo/sample-card.png')),
+  });
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact', { timeout: 90_000 });
+  expect(aiReads).toBe(1);
 });
