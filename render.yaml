@@ -24,6 +24,10 @@ services:
         value: gemini
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
+      # Browser transcription uses onnxruntime-web. The server does not need
+      # the extra Linux CUDA binaries downloaded by onnxruntime-node at install.
+      - key: ONNXRUNTIME_NODE_INSTALL
+        value: skip
       - key: REQUIRE_EMAIL_VERIFICATION
         value: "false"
       - key: DEMO_PASSWORD
