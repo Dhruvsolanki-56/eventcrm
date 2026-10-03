@@ -734,7 +734,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
     (window as unknown as { gatherTestScanOrder: string[] }).gatherTestScanOrder = ids;
   });
   const batchStarted = Date.now();
-  const batchResponses = Array.from({ length: batchFiles.length }, () => page.waitForResponse((response) => response.url().includes('/api/scans') && response.request().method() === 'POST'));
+  const batchResponses = Array.from({ length: batchFiles.length }, () => page.waitForResponse((response) => response.url().includes('/api/scans') && response.request().method() === 'POST' && response.status() === 201));
   await input.setInputFiles(batchFiles);
   const expectedBatchOrder = await page.evaluate(() => (window as unknown as { gatherTestScanOrder: string[] }).gatherTestScanOrder);
   expect(expectedBatchOrder).toHaveLength(5);
@@ -1079,7 +1079,7 @@ test('private-space data deletion requires confirmation and removes its searchab
   expect((await companies.json() as { companies: unknown[] }).companies).toHaveLength(0);
   expect((await scans.json() as { scans: unknown[] }).scans).toHaveLength(0);
   expect((await tasks.json() as { tasks: unknown[] }).tasks).toHaveLength(0);
-  expect(await settings.json()).toEqual({ knowledge: null, aboutMe: null, email: null, capture: null, reminders: null, onboarding: null });
+  expect(await settings.json()).toEqual({ knowledge: null, aboutMe: null, email: null, capture: null, reminders: null, onboarding: null, draftAutomation: null });
   expect(exported.data.auditEvents.map((entry) => entry.action)).toEqual(['data_deleted']);
   expect(exported.media).toHaveLength(0);
   expect(playback.status()).toBe(404);
