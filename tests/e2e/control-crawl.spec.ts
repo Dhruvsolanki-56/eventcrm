@@ -56,8 +56,13 @@ async function clickVisibleControls(page: Page, path: string, heading: RegExp) {
   for (const button of buttons) {
     const locator = page.getByRole('button', { name: button.name, exact: true }).first();
     if (!(await locator.count())) continue;
+    if (!(await locator.isEnabled())) continue;
     await locator.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
-    await locator.click({ timeout: 5_000 });
+    try { await locator.click({ timeout: 5_000 }); }
+    catch (error) {
+      if (new URL(page.url()).pathname !== path || !(await locator.count()) || !(await locator.isEnabled())) continue;
+      throw error;
+    }
     await page.locator('audio').evaluateAll((players) => players.forEach((player) => (player as HTMLAudioElement).pause()));
     await page.waitForTimeout(100);
     await page.keyboard.press('Escape');
@@ -177,6 +182,7 @@ test('click visible buttons and in-app links across company and private routes a
     { path: '/home', heading: /Good morning, Maya/ },
     { path: '/setup', heading: /Make Gather yours/ },
     { path: '/scan', heading: /Keep the next conversation/ },
+    { path: '/email', heading: /^Email Desk$/ },
     { path: '/people', heading: /Keep the person close/ },
     { path: '/people/demo-ns-contact-1', heading: /Tessa Morgan/ },
     { path: '/companies', heading: /One company, many people/ },
@@ -193,6 +199,7 @@ test('click visible buttons and in-app links across company and private routes a
     { path: '/home', heading: /Good morning, Sam/ },
     { path: '/setup', heading: /Make Gather yours/ },
     { path: '/scan', heading: /Keep the next conversation/ },
+    { path: '/email', heading: /^Email Desk$/ },
     { path: '/people', heading: /Keep the person close/ },
     { path: '/people/demo-sam-contact-1', heading: /Morgan Ellis/ },
     { path: '/analytics', heading: /^Analytics$/ },

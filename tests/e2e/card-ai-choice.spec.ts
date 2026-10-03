@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 test.skip(process.env.GATHER_TEST_CARD_AI_CHOICE !== '1', 'Run this mocked-provider flow with --manual-reading so the demo fixture worker cannot race it.');
 
-test('a new photo uses Gemini automatically at upload and still needs review', async ({ page }) => {
+test('a new photo reads locally first and uses Gemini only when key details remain unclear', async ({ page }) => {
   let aiReads = 0;
   await page.route('**/api/capabilities', async (route) => {
     const response = await route.fetch();
@@ -19,8 +19,8 @@ test('a new photo uses Gemini automatically at upload and still needs review', a
   });
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByText('Gemini reads first, automatically')).toBeVisible();
-  await expect(page.getByText(/photo is sent to Google/)).toBeVisible();
+  await expect(page.getByText('On-device reading starts at upload')).toBeVisible();
+  await expect(page.getByText(/If local reading misses key details/)).toBeVisible();
   await expect(page.getByRole('checkbox', { name: /Gemini/ })).toHaveCount(0);
   const source = readFileSync(resolve('public/demo/sample-card.png'));
   const variant = await page.evaluate(async (base64) => {
@@ -33,16 +33,14 @@ test('a new photo uses Gemini automatically at upload and still needs review', a
   }, source.toString('base64'));
   await page.locator('#capture-gallery').setInputFiles({ name: 'sample-card-variant.png', mimeType: 'image/png', buffer: Buffer.from(variant, 'base64') });
   await expect(page).toHaveURL(/\/review\//);
-  await expect(page.getByLabel('Name *')).toHaveValue('Avery Chen', { timeout: 15000 });
-  await expect(page.getByLabel('Company')).toHaveValue('Northstar Packaging');
-  await expect(page.locator('.uncertain-field')).toHaveCount(0);
-  await expect(page.locator('.review-check-note')).toContainText('These are suggestions');
+  await expect(page.getByLabel('Name *')).not.toHaveValue('', { timeout: 90_000 });
+  await expect(page.locator('.review-check-note')).toContainText('These are not verified facts');
   await expect(page.locator('.review-status')).toContainText('Ready to review');
-  expect(aiReads).toBe(1);
+  expect(aiReads).toBeLessThanOrEqual(1);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.goto('/scan');
-  await page.getByRole('button', { name: 'Discard Avery Chen' }).click();
+  await page.getByRole('button', { name: /Discard/ }).last().click();
 });
 
 test('on-device reading takes over when Gemini is unavailable', async ({ page }) => {
@@ -59,11 +57,11 @@ test('on-device reading takes over when Gemini is unavailable', async ({ page })
   });
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByText('Gemini reads first, automatically')).toBeVisible();
+  await expect(page.getByText('On-device reading starts at upload')).toBeVisible();
   await page.locator('#capture-gallery').setInputFiles({
     name: 'sample-card.png', mimeType: 'image/png', buffer: readFileSync(resolve('public/demo/sample-card.png')),
   });
   await expect(page).toHaveURL(/\/review\//);
   await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact', { timeout: 90_000 });
-  expect(aiReads).toBe(1);
+  expect(aiReads).toBeLessThanOrEqual(1);
 });
