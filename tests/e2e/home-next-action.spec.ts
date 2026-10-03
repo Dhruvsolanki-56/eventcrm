@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
-test('Home points to review, due follow-ups, missing details, then capture', async ({ page }) => {
+test('Home points to review, ready drafts, due follow-ups, missing details, then capture', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
 
@@ -19,6 +19,8 @@ test('Home points to review, due follow-ups, missing details, then capture', asy
       AND (snoozed_until IS NULL OR datetime(snoozed_until)<=datetime('now'))`).all(workspaceId) as Array<{ id: string; status: string; snoozed_until: string | null }>;
   const originalKnowledge = database.prepare(`SELECT value_json,updated_at FROM workspace_settings WHERE workspace_id=? AND key='knowledge'`)
     .get(workspaceId) as { value_json: string; updated_at: string } | undefined;
+  const originalDrafts = database.prepare(`SELECT id,status FROM emails WHERE workspace_id=? AND status='draft'`)
+    .all(workspaceId) as Array<{ id: string; status: string }>;
   try {
     database.transaction(() => {
       for (const scan of originalPendingScans) database.prepare(`UPDATE scans SET status='saved' WHERE id=? AND workspace_id=?`).run(scan.id, workspaceId);
@@ -39,6 +41,11 @@ test('Home points to review, due follow-ups, missing details, then capture', asy
         VALUES (?,?,?,'follow_up','open',?,'UTC','Call about samples','Check sample options',?)`)
         .run(dueTaskId, workspaceId, 'demo-ns-contact-1', new Date(Date.now() - 60_000).toISOString(), actorId);
     })();
+    if (originalDrafts.length) {
+      await page.goto('/home');
+      await expect(actionCard.getByRole('link', { name: 'Review drafts' })).toBeVisible();
+      database.prepare(`UPDATE emails SET status='outbox' WHERE workspace_id=? AND status='draft'`).run(workspaceId);
+    }
     await page.goto('/home');
     const dueDashboard = await (await page.request.get('/api/dashboard')).json() as { counts: { follow_ups_due: number } };
     expect(dueDashboard.counts.follow_ups_due).toBeGreaterThan(0);
@@ -74,6 +81,7 @@ test('Home points to review, due follow-ups, missing details, then capture', asy
       database.prepare(`DELETE FROM tasks WHERE id=? AND workspace_id=?`).run(dueTaskId, workspaceId);
       for (const task of originalDueTasks) database.prepare(`UPDATE tasks SET status=?,snoozed_until=? WHERE id=? AND workspace_id=?`)
         .run(task.status, task.snoozed_until, task.id, workspaceId);
+      for (const draft of originalDrafts) database.prepare(`UPDATE emails SET status=? WHERE id=? AND workspace_id=?`).run(draft.status, draft.id, workspaceId);
       if (originalKnowledge) {
         database.prepare(`INSERT INTO workspace_settings(workspace_id,key,value_json,updated_at) VALUES (?,'knowledge',?,?)
           ON CONFLICT(workspace_id,key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`)

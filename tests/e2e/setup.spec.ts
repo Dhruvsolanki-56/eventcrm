@@ -1,5 +1,20 @@
 import { expect, test } from '@playwright/test';
 
+test('assisted company setup validates source text and never saves an unreviewed AI suggestion', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await expect.poll(async () => (await (await page.request.get('/api/auth/me')).json() as { user?: { name?: string } }).user?.name).toBe('Maya Chen');
+  const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
+  const headers = { 'X-CSRF-Token': csrf.csrfToken, 'X-Workspace-Id': 'demo-northstar' };
+  const before = await (await page.request.get('/api/settings', { headers })).json() as { knowledge: unknown };
+  const invalid = await page.request.post('/api/setup/profile-suggestion', { headers, data: { sourceText: 'Short' } });
+  expect(invalid.status()).toBe(400);
+  const unavailable = await page.request.post('/api/setup/profile-suggestion', { headers, data: { sourceText: 'We make reusable transit packaging and returnable crates for small production teams.' } });
+  expect(unavailable.status()).toBe(503);
+  const after = await (await page.request.get('/api/settings', { headers })).json() as { knowledge: unknown };
+  expect(after.knowledge).toEqual(before.knowledge);
+});
+
 test('first-time setup saves resumable progress and offers honest no-mail fallback', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
@@ -9,8 +24,11 @@ test('first-time setup saves resumable progress and offers honest no-mail fallba
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.getByLabel('What does your team sell?').fill('Reusable transit packaging and returnable crates.');
+  await page.getByLabel('Our role in client conversations').fill('We supply packaging options for client review.');
   await page.getByRole('button', { name: 'Save and continue' }).click();
   await expect(page.getByRole('heading', { name: 'Sending email' })).toBeVisible();
+  const settings = await (await page.request.get('/api/settings')).json() as { knowledge: { ourRole: string } };
+  expect(settings.knowledge.ourRole).toBe('We supply packaging options for client review.');
   await page.getByRole('button', { name: 'Send me a test email' }).click();
   await expect(page.getByRole('alert')).toContainText('No test email was sent');
   expect(await (await page.request.get('/api/onboarding')).json()).toMatchObject({ state: { completed: ['knowledge'], skipped: [] } });

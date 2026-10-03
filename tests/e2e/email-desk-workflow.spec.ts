@@ -3,6 +3,26 @@ import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { resolve } from 'node:path';
 
+test('Email Desk approval is explicit and stays in outbox when sending is unavailable', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await expect.poll(async () => (await (await page.request.get('/api/auth/me')).json() as { user?: { name?: string } }).user?.name).toBe('Maya Chen');
+  const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
+  const headers = { 'X-CSRF-Token': csrf.csrfToken, 'X-Workspace-Id': 'demo-northstar' };
+  const response = await page.request.post('/api/contacts/demo-ns-contact-1/email-draft', { headers });
+  expect(response.status(), await response.text()).toBe(201);
+  const draft = await response.json() as { id: string };
+  await page.goto('/email');
+  await page.locator(`.email-desk-row[data-draft-id="${draft.id}"]`).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('button', { name: 'Approve email' }).click();
+  await expect(page.getByText('Approved for outbox. No mail server sent this message.')).toBeVisible();
+  const status = await (await page.request.get(`/api/emails/${draft.id}`, { headers })).json() as { status: string };
+  expect(status.status).toBe('outbox');
+});
+
 test('checked conversation context becomes a saved draft, appears in Email Desk, and counts in event analytics', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();

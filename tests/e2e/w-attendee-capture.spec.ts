@@ -6,7 +6,8 @@ test('an attendee privately scans a card, keeps the conversation, and follows up
   page.on('pageerror', (error) => browserErrors.push(error.message));
   await page.goto('/');
   await page.getByRole('button', { name: /Sam Patel/ }).click();
-  await expect(page.getByText('Private. Only you can see this.').first()).toBeVisible();
+  await expect(page.getByText('Private space', { exact: true })).toBeVisible();
+  await expect(page.getByText('Only you can see this', { exact: true })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Pipeline' })).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Reports' })).toHaveCount(0);
   expect((await page.request.get('/api/reports')).status()).toBe(403);

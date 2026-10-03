@@ -13,6 +13,7 @@ describe('safe background failure details', () => {
     expect(safeFailureCode(Object.assign(new Error('internal detail'), { code: 'SENSITIVE:person@example.com' }))).toBe('PROVIDER_ERROR');
     expect(safeFailureCode(new Error('contact data in provider response'))).toBe('PROVIDER_ERROR');
     expect(safeJobFailureMessage('card_read')).toMatch(/on-device reading/);
+    expect(safeJobFailureMessage('email_draft')).toMatch(/saved and unsent/);
     expect(safeJobFailureMessage('unexpected')).toMatch(/contact your admin/);
   });
 
