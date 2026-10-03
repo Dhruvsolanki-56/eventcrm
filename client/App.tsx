@@ -4,7 +4,7 @@ import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Chec
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
-import { readCardInBrowser } from './card-ocr.js';
+import { needsCardAiFallback, readCardInBrowser } from './card-ocr.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
@@ -1396,7 +1396,7 @@ function ScanPage() {
             let fields: ReviewLead | null = null;
             let usedGemini = false;
             try { const read = await readCardInBrowser(photo, () => undefined); if (read.confidence >= 20) fields = read.fields; } catch { /* AI may still help with a difficult photo. */ }
-            const needsHelp = !fields || !fields.name || !fields.email && !fields.phone || fields.uncertain.length > 0;
+            const needsHelp = needsCardAiFallback(fields);
             if (geminiReady && needsHelp) {
               try { const ai = await request<{ fields: ReviewLead }>(`/api/scans/${uploaded.id}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id }); if (Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) { fields = ai.fields; usedGemini = true; } }
               catch { /* Keep the local reading if the provider is unavailable. */ }
@@ -1570,6 +1570,14 @@ function CameraPreview({ stream, onClose, onCapture, onQr }: { stream: MediaStre
 }
 
 type ReviewLead = { name: string; title: string; company: string; email: string; phone: string; website: string; products: string[]; topics: string[]; uncertain: string[] };
+const reviewTextFields = ['name', 'title', 'company', 'email', 'phone', 'website'] as const;
+
+function mergeReadLead(current: ReviewLead, incoming: ReviewLead, edited: ReadonlySet<string>): ReviewLead {
+  const next = { ...incoming };
+  for (const key of reviewTextFields) if (edited.has(key)) next[key] = current[key];
+  next.uncertain = incoming.uncertain.filter((key) => !edited.has(key));
+  return next;
+}
 type ProductChoice = { id: string; name: string; description: string };
 type ReviewVoiceNoteHandle = { attach: (contactId: string, encounterId?: string) => Promise<boolean | null> };
 
@@ -1700,6 +1708,9 @@ function ReviewPage() {
   const [aiCardProvider, setAiCardProvider] = useState<string | null>(null);
   const [aiReading, setAiReading] = useState(false);
   const [aiReadMessage, setAiReadMessage] = useState('');
+  const editedFields = useRef(new Set<string>());
+  const brochureEdited = useRef(false);
+  const reviewModeChanged = useRef(false);
   const ocrStartedFor = useRef('');
   const ocrAuth = useRef({ csrfToken, workspaceId: session.workspace.id });
   ocrAuth.current = { csrfToken, workspaceId: session.workspace.id };
@@ -1712,6 +1723,9 @@ function ReviewPage() {
   }, []);
 
   useEffect(() => {
+    editedFields.current.clear();
+    brochureEdited.current = false;
+    reviewModeChanged.current = false;
     setScan(null);
     setLead({ name: '', title: '', company: '', email: '', phone: '', website: '', products: [], topics: [], uncertain: [] });
     setNote(''); setQuality(''); setSelectedProductIds([]); setBrochureItems(''); setCompanyChoice(''); setCompanySuggestions([]); setAiReadMessage('');
@@ -1733,19 +1747,20 @@ function ReviewPage() {
           setFollowUpDate(dateInTimeZoneDays(timeZone, 1));
           followUpDateInitialized.current = true;
         }
-        setReviewMode(typeof next.materialCompanyId === 'string' && next.materialCompanyId ? 'brochure' : 'person');
+        if (!reviewModeChanged.current) setReviewMode(typeof next.materialCompanyId === 'string' && next.materialCompanyId ? 'brochure' : 'person');
         const extracted = next.extracted && typeof next.extracted === 'object' ? next.extracted as Record<string, unknown> : {};
         const materialItems = [...(Array.isArray(extracted.products) ? extracted.products : []), ...(Array.isArray(extracted.topics) ? extracted.topics : [])]
           .filter((item): item is string => typeof item === 'string' && !!item.trim());
-        setBrochureItems([...new Set(materialItems)].join('\n'));
-        setLead({
+        if (!brochureEdited.current) setBrochureItems([...new Set(materialItems)].join('\n'));
+        const readLead: ReviewLead = {
           name: String(extracted.name ?? ''), title: String(extracted.title ?? ''),
           company: String(extracted.company ?? ''), email: String(extracted.email ?? ''),
           phone: String(extracted.phone ?? ''), website: String(extracted.website ?? ''),
           products: Array.isArray(extracted.products) ? extracted.products.map(String) : [],
           topics: Array.isArray(extracted.topics) ? extracted.topics.map(String) : [],
           uncertain: Array.isArray(next.uncertain) ? next.uncertain.map(String) : [],
-        });
+        };
+        setLead((current) => mergeReadLead(current, readLead, editedFields.current));
         if (next.status === 'queued' || next.status === 'reading') timer = window.setTimeout(() => void load(), 800);
       } catch (issue) { if (active) setError((issue as Error).message); }
     }
@@ -1775,7 +1790,7 @@ function ReviewPage() {
         let usedGemini = false;
         try { const result = await readCardInBrowser(photo, (progress, stage) => { setOcrProgress(progress); setOcrStage(stage || 'Reading the card…'); }); if (result.confidence >= 20) fields = result.fields; }
         catch { setOcrStage('Local reading could not finish. Checking another option…'); }
-        const needsHelp = !fields || !fields.name || !fields.email && !fields.phone || fields.uncertain.length > 0;
+        const needsHelp = needsCardAiFallback(fields);
         if (useGeminiCards && needsHelp) {
           try {
             setOcrStage('Checking unclear details with Gemini…');
@@ -1788,7 +1803,7 @@ function ReviewPage() {
         if (!applied.applied) return;
         const latest = await request<{ scan: { extracted: ReviewLead | null; uncertain: string[] } }>(`/api/scans/${scanId}`, {}, { workspaceId: ocrAuth.current.workspaceId });
         const confirmed = latest.scan.extracted ?? fields;
-        setLead((current) => ({ ...current, ...confirmed }));
+        setLead((current) => mergeReadLead(current, confirmed, editedFields.current));
         setScan((current) => current ? { ...current, status: 'ready', extracted: confirmed, uncertain: latest.scan.uncertain, error: null } : current);
         setOcrProgress(100);
         setOcrStage('Reading complete. Check every detail against the photo.');
@@ -1824,10 +1839,12 @@ function ReviewPage() {
   }, [lead.company, lead.website, lead.email, session.workspace.id]);
 
   function update(key: keyof ReviewLead, value: string) {
+    editedFields.current.add(key);
     if (key === 'company' || key === 'website' || key === 'email') { setCompanyChoice(''); setDecision(null); }
     setLead((current) => ({ ...current, [key]: value, uncertain: current.uncertain.filter((field) => field !== key) }));
   }
   function chooseSuggestedCompany(company: CompanySuggestion) {
+    editedFields.current.add('company');
     setDecision(null);
     if (company.reason === 'similar name') setCompanyChoice(company.id);
     else { setLead((current) => ({ ...current, company: company.name })); setCompanyChoice(''); }
@@ -1842,7 +1859,7 @@ function ReviewPage() {
       setLead((current) => {
         const next = { ...current, uncertain: [...current.uncertain] };
         for (const key of keys) {
-          if (fields[key]?.trim() && (!current[key].trim() || current.uncertain.includes(key))) {
+          if (!editedFields.current.has(key) && fields[key]?.trim() && (!current[key].trim() || current.uncertain.includes(key))) {
             next[key] = fields[key].trim();
             if (fields.uncertain.includes(key) && !next.uncertain.includes(key)) next.uncertain.push(key);
           }
@@ -1933,13 +1950,14 @@ function ReviewPage() {
     finally { setBusy(false); }
   }
   const status = String(scan?.status ?? 'loading');
+  const reviewPending = status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning;
   const materialAlreadySaved = typeof scan?.materialCompanyId === 'string' && !!scan.materialCompanyId;
   const fieldsDisabled = status === 'saved' && (reviewMode === 'person' || materialAlreadySaved);
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
   return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title">
     <div className="page-heading-row"><div><p className="eyebrow">CHECK BEFORE SAVING</p><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : reviewMode === 'brochure' ? 'Review this brochure' : 'Review this card'}</h1><p className="page-lede">Compare the details with the photo. Nothing is saved until you confirm.</p></div><Link className="button secondary review-close" to="/scan"><X size={16} aria-hidden="true" />{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
     {error && <p className="form-error review-error" role="alert">{error}</p>}
-    {(status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning) ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>{ocrRunning && !useGeminiCards ? 'Reading your card on this device…' : 'Reading this photo…'}</strong><p>{ocrRunning ? ocrStage : 'The photo was uploaded. You can review it as soon as the details are ready.'}</p>{ocrRunning && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="Card reading progress" />}</div> :
+    {!scan ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>Opening your photo…</strong><p>Review will appear as soon as the upload is ready.</p></div> :
     <div className="review-layout">
       <aside className="surface-card review-source">
         <div className="review-source-heading"><strong>Source photo</strong><span>Tap to enlarge</span></div>
@@ -1950,14 +1968,15 @@ function ReviewPage() {
         {status === 'failed' && !ocrRunning && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
       </aside>
       <form id="review-save-form" className="surface-card review-form" onSubmit={(event) => reviewMode === 'brochure' ? void saveMaterial(event) : void submit(event)}>
-        {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
+        {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { reviewModeChanged.current = true; setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { reviewModeChanged.current = true; setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
         <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
+        {reviewPending && <div className="review-reading-note" role="status"><RotateCw size={17} aria-hidden="true" /><div><strong>Start checking the photo now.</strong><span>{ocrRunning ? ocrStage : 'Reading is starting.'} You can type while it finishes; your edits will stay. Save becomes available when reading ends.</span>{ocrRunning && !ocrStage.includes('Gemini') && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="On-device reading progress" />}</div></div>}
         {(status === 'ready' || status === 'failed') && <p className="review-check-note"><CircleCheck size={17} aria-hidden="true" /><span>Each field shows what the reader found: suggested, uncertain, or missing. These are not verified facts. Check them against the photo before saving.</span></p>}
         {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key) => <Fragment key={key}><label className={lead.uncertain.includes(key) ? 'uncertain-field' : ''}>
-          <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}<em className={lead.uncertain.includes(key) ? '' : 'field-evidence'}>{lead.uncertain.includes(key) ? 'Check this' : lead[key]?.trim() ? 'Suggested' : 'Not found'}</em></span>
+          <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}<em className={lead.uncertain.includes(key) ? '' : 'field-evidence'}>{lead.uncertain.includes(key) ? 'Check this' : lead[key]?.trim() ? 'Suggested' : reviewPending ? 'Reading' : 'Not found'}</em></span>
           <input value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
         </label>{key === 'company' && companyMatches()}</Fragment>)}
-        {reviewMode === 'brochure' && <><label>Company name<input value={lead.company} onChange={(event) => update('company', event.target.value)} maxLength={160} required disabled={fieldsDisabled} /></label>{companyMatches()}<label>Website<input value={lead.website} onChange={(event) => update('website', event.target.value)} type="text" inputMode="url" maxLength={300} placeholder="example.com" disabled={fieldsDisabled} /></label><label>Products or topics shown <span className="optional-label">one per line; check the words against the photo</span><textarea rows={3} value={brochureItems} maxLength={1500} onChange={(event) => setBrochureItems(event.target.value)} placeholder="Recyclable cartons" disabled={fieldsDisabled} /></label><p className="subtle">This photo and the details you confirm will be saved under the company, not as a person. Similar company names are shown for confirmation.</p></>}
+        {reviewMode === 'brochure' && <><label>Company name<input value={lead.company} onChange={(event) => update('company', event.target.value)} maxLength={160} required disabled={fieldsDisabled} /></label>{companyMatches()}<label>Website<input value={lead.website} onChange={(event) => update('website', event.target.value)} type="text" inputMode="url" maxLength={300} placeholder="example.com" disabled={fieldsDisabled} /></label><label>Products or topics shown <span className="optional-label">one per line; check the words against the photo</span><textarea rows={3} value={brochureItems} maxLength={1500} onChange={(event) => { brochureEdited.current = true; setBrochureItems(event.target.value); }} placeholder="Recyclable cartons" disabled={fieldsDisabled} /></label><p className="subtle">This photo and the details you confirm will be saved under the company, not as a person. Similar company names are shown for confirmation.</p></>}
         {reviewMode === 'person' && (lead.products.length + lead.topics.length > 0) && <div className="extracted-context"><strong>Other details spotted — check before using</strong><p>{[...lead.products, ...lead.topics].join(' · ')}</p></div>}
         {reviewMode === 'person' && productChoices.length > 0 && <fieldset className="product-interest" disabled={fieldsDisabled}><legend>Products of interest <span className="optional-label">tap any they asked about</span></legend><div className="product-interest-options">{productChoices.map((product) => { const selected = selectedProductIds.includes(product.id); return <button type="button" key={product.id} className={`product-interest-chip${selected ? ' selected' : ''}`} aria-pressed={selected} title={product.description} onClick={() => setSelectedProductIds((current) => selected ? current.filter((id) => id !== product.id) : current.length < 12 ? [...current, product.id] : current)}>{selected && <Check size={14} />}{product.name}</button>; })}</div>{selectedProductIds.length === 12 && <small>Up to 12 products can be selected.</small>}</fieldset>}
         {reviewMode === 'person' && <div className="review-voice-field"><span>Voice note <em>optional</em></span><InlineVoiceNote ref={reviewVoiceRef} contactId={typeof scan?.contactId === 'string' ? scan.contactId : undefined} /></div>}
@@ -1971,13 +1990,13 @@ function ReviewPage() {
             <button type="button" className="button primary" onClick={() => void saveAndNext()}>Next item <ScanLine size={17} /></button>
           </> : reviewMode === 'brochure' ? <>
             <p>This photo will be kept with the company. It won’t create a person record.</p>
-            <button className="button primary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save brochure'}</button>
+            <button className="button primary" disabled={busy || reviewPending}>{busy ? 'Saving…' : 'Save brochure'}</button>
           </> : <>
             <p>Save once, then review a personal email draft. Nothing sends without your approval.</p>
             <div className="review-save-actions">
-              <button type="submit" data-save-action="stay" className="button secondary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save person'}</button>
-              <button type="submit" data-save-action="email" className="button primary" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save & prepare email'}</button>
-              <button type="submit" data-save-action="next" className="button secondary review-next-action" disabled={busy || status === 'queued' || status === 'reading'}>{busy ? 'Saving…' : 'Save & scan next'} <ScanLine size={17} /></button>
+              <button type="submit" data-save-action="stay" className="button secondary" disabled={busy || reviewPending}>{busy ? 'Saving…' : 'Save person'}</button>
+              <button type="submit" data-save-action="email" className="button primary" disabled={busy || reviewPending}>{busy ? 'Saving…' : 'Save & prepare email'}</button>
+              <button type="submit" data-save-action="next" className="button secondary review-next-action" disabled={busy || reviewPending}>{busy ? 'Saving…' : 'Save & scan next'} <ScanLine size={17} /></button>
             </div>
           </>}
         </div>

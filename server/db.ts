@@ -1603,11 +1603,13 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const productNames = [...new Set(productsText.split(/\r?\n/).map((line) => line.split(/[—–-]/, 1)[0]?.trim()).filter((name): name is string => Boolean(name)).map((name) => name.slice(0, 100)))].slice(0, 6);
   const whatYouSell = typeof settings.whatYouSell === 'string' ? settings.whatYouSell.trim().slice(0, 500) : '';
   const lookingFor = typeof settings.lookingFor === 'string' ? settings.lookingFor.trim().slice(0, 200) : '';
+  const senderRole = typeof settings.ourRole === 'string' ? settings.ourRole.trim().slice(0, 240) : typeof settings.role === 'string' ? settings.role.trim().slice(0, 100) : '';
+  const senderOrganization = workspace?.kind === 'personal' && typeof settings.company === 'string' && settings.company.trim() ? settings.company.trim().slice(0, 120) : workspace?.name ?? '';
   const profileSignature = typeof settings.signature === 'string' ? settings.signature.trim().slice(0, 600) : '';
   const noteAccess = await (noteScope(actorId, workspaceId));
   const recentConversations = await (db.prepare(`SELECT n.created_at AS date,e.name AS event_name,en.id AS encounter_id,
       en.summary,en.open_question,en.promised_next_step,en.changed_since_last,
-      CASE WHEN n.kind='audio' THEN CASE WHEN n.summary<>'' THEN n.summary ELSE n.transcript END ELSE n.body END AS text
+      CASE WHEN n.kind='audio' THEN n.transcript ELSE n.body END AS text
     FROM notes n LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
     LEFT JOIN events e ON e.workspace_id=en.workspace_id AND e.id=en.event_id
     WHERE n.workspace_id=? AND n.contact_id=? AND ((n.kind='text' AND n.body<>'') OR (n.kind='audio' AND n.transcript<>''))
@@ -1615,55 +1617,39 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
       AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
     ORDER BY n.created_at DESC,n.id DESC LIMIT 6`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ date: string; event_name: string | null; encounter_id: string | null; text: string; summary: string | null; open_question: string | null; promised_next_step: string | null; changed_since_last: string | null }>;
   const latest = recentConversations[0];
-  const note = (latest?.summary || latest?.text || '').trim().slice(0, 1000);
   const emailEventName = recentConversations.length ? recentConversations[0].event_name : contact.event_name;
   const emailEncounterId = recentConversations.length ? recentConversations[0].encounter_id : contact.encounter_id;
   const interestedProducts = await (db.prepare(`SELECT p.name FROM contact_products cp JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id
     WHERE cp.workspace_id=? AND cp.contact_id=? AND p.archived_at IS NULL ORDER BY p.name`).all(workspaceId, contactId)) as Array<{ name: string }>;
   const interestedProductNames = interestedProducts.map((product) => product.name);
   const greeting = contact.name.split(/\s+/)[0] || 'there';
-  const event = emailEventName ? ` at ${emailEventName}` : '';
-  const subject = variant === 'alternate' ? `A quick note about ${contact.company_name}` : `Following up${event}`;
-  const opening = variant === 'alternate'
-    ? tone === 'Professional'
-      ? `I wanted to send a brief follow-up about ${contact.company_name} after speaking with you${event}.`
-      : tone === 'Short'
-        ? `A quick follow-up about ${contact.company_name}${event}.`
-        : `One more thing I wanted to share after our conversation${event}.`
-    : tone === 'Professional'
-      ? `Thank you for speaking with me${event}. I would be glad to continue our conversation about ${contact.company_name}.`
-      : tone === 'Short'
-        ? `Thanks for speaking with me${event}. I’d be glad to follow up about ${contact.company_name}.`
-        : `It was nice speaking with you${event}. I’d be glad to continue our conversation about ${contact.company_name}.`;
-  const personalContext = [
-    note ? `You noted: “${note}”` : '',
-    latest?.promised_next_step ? `As discussed, ${latest.promised_next_step.trim().slice(0, 300)}` : '',
-    interestedProductNames.length ? `I’ll follow up about ${interestedProductNames.join(', ')}.` : '',
-    productNames.length ? `If helpful, I can share a little more about ${productNames.join(', ')}.` : whatYouSell ? `If helpful, I can share a little more about ${whatYouSell}` : '',
-    lookingFor ? `I’m also looking for ${lookingFor}.` : '',
-  ].filter(Boolean);
-  const closing = variant === 'alternate' ? 'Would it be helpful if I checked back next week?' : tone === 'Short' ? 'Would a quick follow-up next week help?' : 'Would a short follow-up next week be useful?';
-  const body = `Hi ${greeting},\n\n${opening}${personalContext.length ? `\n\n${personalContext.join('\n\n')}` : ''}\n\n${closing}\n\n${profileSignature || await (getActorName(actorId))}`;
+  const subject = variant === 'alternate' ? 'A quick follow-up' : 'Following up on our conversation';
+  const opening = tone === 'Professional' ? 'Thank you for speaking with me.' : 'Thanks for speaking with me.';
+  const requestForClarity = variant === 'alternate'
+    ? 'I want to make sure my next message covers what you need. Could you confirm the main point you would like us to address?'
+    : 'I want to make sure I follow up on the right details. Could you confirm what you need from us next?';
+  const body = `Hi ${greeting},\n\n${opening} ${requestForClarity}\n\n${profileSignature || await (getActorName(actorId))}`;
   const sourcesUsed = [
     ...(emailEventName ? [{ label: 'Event', excerpt: emailEventName }] : []),
-    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} conversation${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: (item.summary || item.text).trim().slice(0, 180) })),
+    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} conversation${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: item.text.trim().slice(0, 180) })),
     ...(latest?.open_question ? [{ label: 'Open question', excerpt: latest.open_question.slice(0, 180) }] : []),
     ...(latest?.promised_next_step ? [{ label: 'Agreed next step', excerpt: latest.promised_next_step.slice(0, 180) }] : []),
     ...(latest?.changed_since_last ? [{ label: 'What changed', excerpt: latest.changed_since_last.slice(0, 180) }] : []),
     ...(interestedProductNames.length ? [{ label: 'Products of interest', excerpt: interestedProductNames.join(', ') }] : []),
     ...(productNames.length ? [{ label: 'Your product list', excerpt: productNames.join(', ') }] : whatYouSell ? [{ label: 'What you sell', excerpt: whatYouSell.slice(0, 180) }] : []),
+    ...(senderRole ? [{ label: 'Your role', excerpt: senderRole }] : []),
     ...(lookingFor ? [{ label: 'About me', excerpt: lookingFor }] : []),
   ];
   return {
     recipient: contact.email, subject, body, sourcesUsed, encounterId: emailEncounterId,
     aiContext: {
       firstName: greeting, companyName: contact.company_name, eventName: emailEventName,
-      productsOfInterest: interestedProductNames, companyProducts: productNames, latestNote: note,
-      recentConversations: recentConversations.map((item) => ({ date: item.date, eventName: item.event_name, note: [item.summary || item.text, item.open_question ? `Open question: ${item.open_question}` : '', item.promised_next_step ? `Agreed next step: ${item.promised_next_step}` : '', item.changed_since_last ? `What changed: ${item.changed_since_last}` : ''].filter(Boolean).join(' | ').slice(0, 700) })),
+      senderOrganization, senderRole, senderOfferings: whatYouSell, senderGoal: lookingFor,
+      productsOfInterest: interestedProductNames, companyProducts: productNames,
+      recentConversations: recentConversations.slice(0, 4).map((item) => ({ date: item.date, eventName: item.event_name, rawNote: item.text.trim().slice(0, 600), checkedSummary: (item.summary || '').trim().slice(0, 500), openQuestion: (item.open_question || '').trim().slice(0, 300), promisedNextStep: (item.promised_next_step || '').trim().slice(0, 300), changedSinceLast: (item.changed_since_last || '').trim().slice(0, 300) })),
       tone: tone as 'Friendly' | 'Professional' | 'Short',
       signature: profileSignature || await (getActorName(actorId)),
       neverPromise: typeof settings.neverPromise === 'string' ? settings.neverPromise.trim().slice(0, 500) : '',
-      aboutMe: [whatYouSell, lookingFor].filter(Boolean).join(' · ').slice(0, 600),
     },
   };
 }

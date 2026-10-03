@@ -646,6 +646,12 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; letter-s
 .review-form input:disabled, .review-form select:disabled, .review-form textarea:disabled { background: #f7f6f3; color: #69655e; }
 .review-form-heading, .review-form > label:nth-of-type(3), .review-form > label:nth-of-type(6), .review-form > label:nth-of-type(7), .review-form > label:nth-of-type(8), .review-form > .field-grid, .review-form > .match-decision, .review-form > .form-footer { grid-column: 1 / -1; }
 .review-check-note { display: flex; align-items: flex-start; gap: 9px; grid-column: 1 / -1; margin: -2px 0 2px; padding: 11px 12px; border-left: 3px solid #7a9b80; border-radius: 0 6px 6px 0; background: #f3f7f3; color: #536456; font-size: .77rem; line-height: 1.5; }
+.review-reading-note { display: flex; align-items: flex-start; gap: 10px; grid-column: 1 / -1; padding: 12px 14px; border: 1px solid #d9e6dc; border-radius: 8px; background: #f4f8f5; color: #466253; }
+.review-reading-note > svg { flex: none; margin-top: 2px; }
+.review-reading-note > div { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.review-reading-note strong { font-size: .84rem; }
+.review-reading-note span { font-size: .78rem; line-height: 1.45; }
+.review-reading-note .ocr-progress { width: min(240px, 100%); margin-top: 4px; }
 .review-check-note svg { flex: none; margin-top: 1px; color: #477a55; }
 .review-check-note strong { color: #805923; font-weight: 700; }
 .review-form > .review-voice-field { display: grid; gap: 7px; grid-column: 1 / -1; }

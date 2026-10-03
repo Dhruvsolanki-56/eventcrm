@@ -49,8 +49,10 @@ test('repeat cards reuse the stored scan; later conversations stay on one person
 
     const draftResponse = await page.request.post('/api/contacts/demo-ns-contact-1/email-draft', { headers });
     expect(draftResponse.status(), await draftResponse.text()).toBe(201);
-    const draft = await draftResponse.json() as { status: string; sourcesUsed: Array<{ label: string; excerpt: string }> };
+    const draft = await draftResponse.json() as { status: string; body: string; sourcesUsed: Array<{ label: string; excerpt: string }> };
     expect(draft.status).toBe('draft');
+    expect(draft.body).not.toContain('You noted:');
+    expect(draft.body).not.toContain('The customer\'s stated need');
     const conversationSources = draft.sourcesUsed.filter((source) => source.label.includes('conversation'));
     expect(conversationSources[0]?.excerpt).toContain('Later at a physical meeting');
     expect(conversationSources[1]?.excerpt).toContain('Asked about carton samples');

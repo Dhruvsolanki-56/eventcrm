@@ -33,6 +33,8 @@ test('a new photo reads locally first and uses Gemini only when key details rema
   }, source.toString('base64'));
   await page.locator('#capture-gallery').setInputFiles({ name: 'sample-card-variant.png', mimeType: 'image/png', buffer: Buffer.from(variant, 'base64') });
   await expect(page).toHaveURL(/\/review\//);
+  await expect(page.getByRole('button', { name: 'Enlarge uploaded photo' })).toBeVisible();
+  await expect(page.getByLabel('Name *')).toBeVisible();
   await expect(page.getByLabel('Name *')).not.toHaveValue('', { timeout: 90_000 });
   await expect(page.locator('.review-check-note')).toContainText('These are not verified facts');
   await expect(page.locator('.review-status')).toContainText('Ready to review');

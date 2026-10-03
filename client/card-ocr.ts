@@ -100,6 +100,12 @@ export function extractCardFields(text: string): CardReadOutput {
   return { ...fields, products: [], topics: [], uncertain: Object.entries(fields).filter(([, value]) => Boolean(value)).map(([key]) => key) as CardReadOutput['uncertain'] };
 }
 
+// OCR suggestions always need a human check. That alone is not a reason to
+// delay review with a second, remote read.
+export function needsCardAiFallback(fields: Pick<CardReadOutput, 'name' | 'email' | 'phone'> | null) {
+  return !fields || !fields.name.trim() || (!fields.email.trim() && !fields.phone.trim());
+}
+
 async function cropCardFooter(image: Blob): Promise<Blob | null> {
   if (typeof createImageBitmap !== 'function') return null;
   let bitmap: ImageBitmap;

@@ -27,7 +27,7 @@ export async function readCardWithGemini(imagePath: string, mediaType: string) {
       ] }],
       generationConfig: { temperature: 0, responseMimeType: 'application/json' },
     }),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(12_000),
   }).catch((error: unknown) => {
     if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw new Error('Request timed out.');
     throw new Error('AI card reading is unavailable.');
