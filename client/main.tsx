@@ -8,6 +8,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.js';
 import './styles.css';
 import './workspace-design.css';
+import './redesign.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

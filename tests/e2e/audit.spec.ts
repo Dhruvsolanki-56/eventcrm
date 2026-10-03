@@ -110,8 +110,12 @@ test('implemented route and accessible-button audit at desktop and phone widths'
     { label: 'Pipeline', heading: /Move the conversation forward/ },
     { label: 'Reports', heading: /See the work at a glance/ },
   ]) {
-    if (item.label === 'Follow-ups' || item.label === 'Pipeline' || item.label === 'Reports') await page.getByRole('button', { name: 'Open navigation' }).click();
-    await page.getByRole('link', { name: item.label === 'Scan' ? /^Scan/ : item.label, exact: item.label !== 'Scan' }).last().click();
+    const phoneLink = page.getByRole('navigation', { name: 'Phone navigation' }).getByRole('link', { name: item.label, exact: true });
+    if (await phoneLink.count() && await phoneLink.isVisible()) await phoneLink.click();
+    else {
+      await page.getByRole('button', { name: 'Open navigation' }).click();
+      await page.locator('.sidebar').getByRole('link', { name: item.label, exact: true }).click();
+    }
     await expect(page.getByRole('heading', { name: item.heading })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
