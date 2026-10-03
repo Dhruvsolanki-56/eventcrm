@@ -59,6 +59,7 @@ import {
   getFollowUpSuggestionContext,
   addPersonNote,
   addConversation,
+  updateConversationMemory,
   updatePersonStage,
   updatePersonDetails,
   setPersonArchived,
@@ -81,6 +82,7 @@ import {
   createAlternateEmailDraft,
   deletePerson,
   updateEmailDraft,
+  listEmailDesk,
   approveEmailDraft,
   unsubscribeByToken,
   getEmailStatus,
@@ -906,7 +908,7 @@ app.post('/api/contacts/:contactId/notes', requireContext, noteLimiter, async (r
 app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const id = z.string().min(1).max(80).safeParse(req.params.contactId);
-  const parsed = z.object({ body: z.string().trim().min(1).max(4000), eventId: z.string().min(1).max(80).nullable(), clientConversationId: z.string().uuid() }).strict().safeParse(req.body);
+  const parsed = z.object({ body: z.string().trim().min(1).max(4000), eventId: z.string().min(1).max(80).nullable(), clientConversationId: z.string().uuid(), summary: z.string().trim().max(700).optional(), openQuestion: z.string().trim().max(400).optional(), promisedNextStep: z.string().trim().max(400).optional(), changedSinceLast: z.string().trim().max(400).optional() }).strict().safeParse(req.body);
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add a conversation note and choose an event, or choose no event.' });
   try {
     const saved = await addConversation(actor.id, workspace.id, id.data, parsed.data);
@@ -930,6 +932,28 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
     res.status(message.startsWith('You do not have access') || message.startsWith('Choose an event') ? 403 : 409)
       .json({ code: 'conversation_not_saved', message });
   }
+});
+
+app.post('/api/contacts/:contactId/conversation-summary-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.contactId);
+  const parsed = z.object({ text: z.string().trim().min(1).max(4000) }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add what you discussed first.' });
+  if (!await getPersonDetail(actor.id, workspace.id, id.data)) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
+  try { res.json({ summary: await summarizeCheckedTranscript(parsed.data.text) }); }
+  catch (error) { res.status(503).json({ code: 'summary_unavailable', message: error instanceof Error ? error.message : 'A summary could not be prepared.' }); }
+});
+
+app.put('/api/contacts/:contactId/conversations/:encounterId/context', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const contactId = z.string().min(1).max(80).safeParse(req.params.contactId);
+  const encounterId = z.string().min(1).max(80).safeParse(req.params.encounterId);
+  const parsed = z.object({ summary: z.string().trim().max(700), openQuestion: z.string().trim().max(400), promisedNextStep: z.string().trim().max(400), changedSinceLast: z.string().trim().max(400) }).strict().safeParse(req.body);
+  if (!contactId.success || !encounterId.success || !parsed.success) return res.status(400).json({ code: 'invalid_context', message: 'Check the conversation details and try again.' });
+  try {
+    if (!await updateConversationMemory(actor.id, workspace.id, contactId.data, encounterId.data, parsed.data)) return res.status(404).json({ code: 'conversation_missing', message: 'This conversation is no longer available.' });
+    res.json({ saved: true });
+  } catch (error) { res.status(403).json({ code: 'context_not_saved', message: error instanceof Error ? error.message : 'This context could not be saved.' }); }
 });
 
 app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -964,6 +988,12 @@ app.post('/api/contacts/:contactId/follow-up-suggestion', aiSuggestionLimiter, r
     console.error(JSON.stringify({ event: 'ai_follow_up_suggestion_unavailable', workspaceId: workspace.id }));
     res.status(503).json({ code: 'follow_up_suggestion_unavailable', message: 'A suggestion could not be prepared. Choose a date and write the next step yourself.' });
   }
+});
+
+app.get('/api/email-desk', requireContext, async (_req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json(await listEmailDesk(actor.id, workspace.id));
 });
 
 app.post('/api/emails/:emailId/alternate', requireContext, async (req, res) => {

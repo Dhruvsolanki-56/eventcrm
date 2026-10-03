@@ -1,0 +1,1 @@
+ALTER TABLE emails ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]';

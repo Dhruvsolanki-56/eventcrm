@@ -155,7 +155,11 @@ CREATE TABLE IF NOT EXISTS encounters (
   event_id text REFERENCES events(id),
   scan_id text REFERENCES scans(id) ON DELETE SET NULL UNIQUE,
   occurred_at text NOT NULL DEFAULT to_char(timezone('utc', now()), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  client_conversation_id text
+  client_conversation_id text,
+  summary text NOT NULL DEFAULT '',
+  open_question text NOT NULL DEFAULT '',
+  promised_next_step text NOT NULL DEFAULT '',
+  changed_since_last text NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS notes (
   id text PRIMARY KEY,
@@ -196,7 +200,9 @@ CREATE TABLE IF NOT EXISTS emails (
   approved_at text,
   sent_to_server_at text,
   created_at text NOT NULL DEFAULT to_char(timezone('utc', now()), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  created_by text REFERENCES users(id) ON DELETE SET NULL
+  created_by text REFERENCES users(id) ON DELETE SET NULL,
+  reply_recorded_at text,
+  sources_json text NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS tasks (
   id text PRIMARY KEY,

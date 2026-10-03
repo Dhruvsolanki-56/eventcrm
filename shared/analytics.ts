@@ -8,4 +8,5 @@ export type AnalyticsData = {
   quality: Array<{ quality: string; people: number }>;
   sources: Array<{ id: string; name: string; people: number; conversations: number }>;
   recent: Array<{ id: string; name: string; company: string; stage: string; quality: string | null; lastEncounter: string }>;
+  workflow: { captured: number; reviewed: number; draftsPrepared: number; userApproved: number; serverAccepted: number; repliesRecorded: number; medianCaptureToReviewMinutes: number | null; medianConversationToDraftMinutes: number | null; events: Array<{ id: string; name: string; captured: number; reviewed: number; draftsPrepared: number; userApproved: number; serverAccepted: number; repliesRecorded: number }> };
 };

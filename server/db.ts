@@ -776,6 +776,30 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
       deal_status: string | null; deal_value_minor: number | null; encounter_id: string; event_id: string | null; occurred_at: string; event_name: string | null;
     }>;
   const current = rows.filter((row) => row.occurred_at >= start);
+  const workflowScans = await db.prepare(`SELECT s.event_id,s.queued_at,s.saved_at,e.name AS event_name FROM scans s
+    LEFT JOIN events e ON e.id=s.event_id AND e.workspace_id=s.workspace_id
+    WHERE s.workspace_id=? AND s.status<>'discarded' AND (?='' OR s.event_id=?)
+      AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))
+      AND ((s.queued_at>=? AND s.queued_at<?) OR (s.saved_at>=? AND s.saved_at<?))`).all(workspaceId, eventId, eventId, actorId, actorId, start, end, start, end) as Array<{ event_id: string | null; queued_at: string; saved_at: string | null; event_name: string | null }>;
+  const workflowEmails = await db.prepare(`SELECT linked.event_id,e.name AS event_name,linked.occurred_at,m.created_at,m.approved_at,m.sent_to_server_at,m.reply_recorded_at FROM emails m
+    JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
+    JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
+    LEFT JOIN encounters linked ON linked.id=m.encounter_id AND linked.workspace_id=m.workspace_id
+    LEFT JOIN events e ON e.id=linked.event_id AND e.workspace_id=linked.workspace_id
+    WHERE m.workspace_id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${emailAccessSql()}
+      AND (?='' OR linked.event_id=?)
+      AND ((m.created_at>=? AND m.created_at<?) OR (m.approved_at>=? AND m.approved_at<?) OR (m.sent_to_server_at>=? AND m.sent_to_server_at<?) OR (m.reply_recorded_at>=? AND m.reply_recorded_at<?))`)
+    .all(actorId, workspaceId, actorId, actorId, actorId, eventId, eventId, start, end, start, end, start, end, start, end) as Array<{ event_id: string | null; event_name: string | null; occurred_at: string | null; created_at: string; approved_at: string | null; sent_to_server_at: string | null; reply_recorded_at: string | null }>;
+  const inPeriod = (date: string | null) => Boolean(date && date >= start && date < end);
+  const medianMinutes = (pairs: Array<[string | null, string | null]>) => {
+    const values = pairs.flatMap(([fromDate, toDate]) => fromDate && toDate ? [Math.max(0, (Date.parse(toDate) - Date.parse(fromDate)) / 60000)] : []).filter(Number.isFinite).sort((a, b) => a - b);
+    return values.length ? Math.round((values[Math.floor((values.length - 1) / 2)] + values[Math.floor(values.length / 2)]) / 2) : null;
+  };
+  const workflowByEvent = new Map<string, { id: string; name: string; captured: number; reviewed: number; draftsPrepared: number; userApproved: number; serverAccepted: number; repliesRecorded: number }>();
+  const eventRow = (id: string | null, name: string | null) => { const key = id ?? 'unassigned'; const value = workflowByEvent.get(key) ?? { id: key, name: name ?? 'No event assigned', captured: 0, reviewed: 0, draftsPrepared: 0, userApproved: 0, serverAccepted: 0, repliesRecorded: 0 }; workflowByEvent.set(key, value); return value; };
+  for (const scan of workflowScans) { const value = eventRow(scan.event_id, scan.event_name); if (inPeriod(scan.queued_at)) value.captured++; if (inPeriod(scan.saved_at)) value.reviewed++; }
+  for (const email of workflowEmails) { const value = eventRow(email.event_id, email.event_name); if (inPeriod(email.created_at)) value.draftsPrepared++; if (inPeriod(email.approved_at)) value.userApproved++; if (inPeriod(email.sent_to_server_at)) value.serverAccepted++; if (inPeriod(email.reply_recorded_at)) value.repliesRecorded++; }
+  const workflowEvents = [...workflowByEvent.values()].sort((a, b) => b.captured - a.captured);
   const people = [...new Map(current.map((row) => [row.id, row])).values()];
   const companies = [...new Map(people.map((row) => [row.company_id, row])).values()];
   const dayMap = new Map(Array.from({ length: days }, (_, index) => [shiftDay(index + 1 - days), { people: new Set<string>(), conversations: 0 }]));
@@ -803,6 +827,7 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
     sources: [...sourceMap.values()].map((source) => ({ ...source, people: source.people.size })).sort((a,b) => b.people-a.people),
     recent: [...new Map([...current].reverse().map((row) => [row.id, row])).values()].sort((a,b) => b.occurred_at.localeCompare(a.occurred_at)).slice(0,8)
       .map((row) => ({ id: row.id, name: row.name, company: row.company, stage: row.stage, quality: row.quality, lastEncounter: row.occurred_at })),
+    workflow: { captured: workflowEvents.reduce((sum, row) => sum + row.captured, 0), reviewed: workflowEvents.reduce((sum, row) => sum + row.reviewed, 0), draftsPrepared: workflowEvents.reduce((sum, row) => sum + row.draftsPrepared, 0), userApproved: workflowEvents.reduce((sum, row) => sum + row.userApproved, 0), serverAccepted: workflowEvents.reduce((sum, row) => sum + row.serverAccepted, 0), repliesRecorded: workflowEvents.reduce((sum, row) => sum + row.repliesRecorded, 0), medianCaptureToReviewMinutes: medianMinutes(workflowScans.filter((scan) => inPeriod(scan.saved_at)).map((scan) => [scan.queued_at, scan.saved_at])), medianConversationToDraftMinutes: medianMinutes(workflowEmails.filter((email) => inPeriod(email.created_at)).map((email) => [email.occurred_at, email.created_at])), events: workflowEvents },
   };
 }
 
@@ -837,9 +862,9 @@ export async function getWorkspaceExport(actorId: string, workspaceId: string) {
     contacts: await (db.prepare(`SELECT id,company_id,name,title,email,phone,website,quality,stage,lost_reason,do_not_contact,owner_user_id,version,archived_at,deleted_at,created_at,updated_at FROM contacts WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)),
     contactProducts: await (db.prepare(`SELECT contact_id,product_id FROM contact_products WHERE workspace_id=?`).all(workspaceId)),
     scans,
-    encounters: await (db.prepare(`SELECT id,contact_id,event_id,scan_id,occurred_at FROM encounters WHERE workspace_id=? ORDER BY occurred_at`).all(workspaceId)),
+    encounters: await (db.prepare(`SELECT id,contact_id,event_id,scan_id,occurred_at,summary,open_question,promised_next_step,changed_since_last FROM encounters WHERE workspace_id=? ORDER BY occurred_at`).all(workspaceId)),
     notes,
-    emails: await (db.prepare(`SELECT id,contact_id,encounter_id,recipient,subject,body,status,provider_message_id,approved_at,sent_to_server_at,created_at FROM emails WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)),
+    emails: await (db.prepare(`SELECT id,contact_id,encounter_id,recipient,subject,body,status,provider_message_id,approved_at,sent_to_server_at,reply_recorded_at,sources_json,created_at FROM emails WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)),
     tasks: await (db.prepare(`SELECT id,contact_id,event_id,kind,status,due_at,time_zone,title,note,snoozed_until,created_by,created_at FROM tasks WHERE workspace_id=? ORDER BY due_at`).all(workspaceId)),
     settings: (await (db.prepare(`SELECT key,value_json,updated_at FROM workspace_settings WHERE workspace_id=? ORDER BY key`).all(workspaceId)) as Array<{ key: string; value_json: string; updated_at: string }>).map((setting) => ({ key: setting.key, value: parseJson(setting.value_json), updated_at: setting.updated_at })),
     notifications: await (db.prepare(`SELECT id,user_id,kind,message,read_at,created_at FROM notifications WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)),
@@ -1207,7 +1232,13 @@ export async function getPersonDetail(actorId: string, workspaceId: string, cont
       AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
     ORDER BY n.created_at DESC`)
     .all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>;
-  return { person, timeline, products, voiceNotes };
+  const conversationMemories = await db.prepare(`SELECT en.id,en.summary,en.open_question,en.promised_next_step,en.changed_since_last,en.occurred_at,e.name AS event_name
+    FROM encounters en LEFT JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id
+    WHERE en.workspace_id=? AND en.contact_id=? AND (en.event_id IS NULL OR EXISTS (
+      SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
+      AND (en.summary<>'' OR en.open_question<>'' OR en.promised_next_step<>'' OR en.changed_since_last<>'')
+    ORDER BY en.occurred_at DESC LIMIT 20`).all(workspaceId, contactId, actorId);
+  return { person, timeline, products, voiceNotes, conversationMemories };
 }
 
 export async function setPersonArchived(actorId: string, workspaceId: string, contactId: string, archived: boolean) {
@@ -1292,7 +1323,7 @@ export async function deletePerson(actorId: string, workspaceId: string, contact
   return { mediaPaths, counts: result };
 }
 
-export async function addConversation(actorId: string, workspaceId: string, contactId: string, input: { eventId: string | null; body: string; clientConversationId: string }) {
+export async function addConversation(actorId: string, workspaceId: string, contactId: string, input: { eventId: string | null; body: string; clientConversationId: string; summary?: string; openQuestion?: string; promisedNextStep?: string; changedSinceLast?: string }) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   await (assertContactAccess(actorId, workspaceId, contactId));
   const body = input.body.trim();
@@ -1314,8 +1345,8 @@ export async function addConversation(actorId: string, workspaceId: string, cont
     if (workspaceBytes + noteBytes > configuredStorageLimit('NOTE_STORAGE_WORKSPACE_LIMIT_BYTES', 16777216) || workspaceCount >= configuredStorageLimit('NOTE_COUNT_WORKSPACE_LIMIT', 100000)) throw new NoteStorageLimitError('workspace');
     if (totalBytes + noteBytes > configuredStorageLimit('NOTE_STORAGE_TOTAL_LIMIT_BYTES', 536870912) || totalCount >= configuredStorageLimit('NOTE_COUNT_TOTAL_LIMIT', 500000)) throw new NoteStorageLimitError('service');
     const id = randomUUID();
-    const created = await (db.prepare(`INSERT INTO encounters(id,workspace_id,contact_id,event_id,client_conversation_id) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`)
-      .run(id, workspaceId, contactId, input.eventId, input.clientConversationId));
+    const created = await (db.prepare(`INSERT INTO encounters(id,workspace_id,contact_id,event_id,client_conversation_id,summary,open_question,promised_next_step,changed_since_last) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`)
+      .run(id, workspaceId, contactId, input.eventId, input.clientConversationId, input.summary?.trim() ?? '', input.openQuestion?.trim() ?? '', input.promisedNextStep?.trim() ?? '', input.changedSinceLast?.trim() ?? ''));
     if (!created.changes) {
       const raced = await (db.prepare(`SELECT id,contact_id,event_id FROM encounters WHERE workspace_id=? AND client_conversation_id=?`)
         .get(workspaceId, input.clientConversationId)) as { id: string; contact_id: string; event_id: string | null } | undefined;
@@ -1329,6 +1360,22 @@ export async function addConversation(actorId: string, workspaceId: string, cont
       .run(randomUUID(), workspaceId, actorId, contactId, JSON.stringify({ eventId: input.eventId, encounterId: id })));
     return { id, duplicate: false };
   })());
+}
+
+export async function updateConversationMemory(actorId: string, workspaceId: string, contactId: string, encounterId: string, memory: { summary: string; openQuestion: string; promisedNextStep: string; changedSinceLast: string }) {
+  await assertWorkspaceAccess(actorId, workspaceId);
+  await assertContactAccess(actorId, workspaceId, contactId);
+  return db.transaction(async () => {
+    const changed = await db.prepare(`UPDATE encounters SET summary=?,open_question=?,promised_next_step=?,changed_since_last=?
+      WHERE workspace_id=? AND contact_id=? AND id=? AND (event_id IS NULL OR EXISTS (
+        SELECT 1 FROM event_access ea WHERE ea.workspace_id=encounters.workspace_id AND ea.event_id=encounters.event_id AND ea.user_id=?))`)
+      .run(memory.summary.trim(), memory.openQuestion.trim(), memory.promisedNextStep.trim(), memory.changedSinceLast.trim(), workspaceId, contactId, encounterId, actorId);
+    if (!changed.changes) return false;
+    await db.prepare(`UPDATE contacts SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),version=version+1 WHERE workspace_id=? AND id=?`).run(workspaceId, contactId);
+    await db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'conversation_context_updated','encounter',?,?)`)
+      .run(randomUUID(), workspaceId, actorId, encounterId, JSON.stringify({ contactId }));
+    return true;
+  })();
 }
 
 export async function addPersonNote(actorId: string, workspaceId: string, contactId: string, body: string) {
@@ -1526,7 +1573,7 @@ export async function markContactReplied(actorId: string, workspaceId: string, c
         WHERE workspace_id=? AND id=? AND deleted_at IS NULL AND archived_at IS NULL`).run(workspaceId, contactId));
     }
     if (latestSentEmail) {
-      await (db.prepare(`UPDATE emails SET status='replied' WHERE workspace_id=? AND contact_id=? AND id=? AND status='sent'`)
+      await (db.prepare(`UPDATE emails SET status='replied',reply_recorded_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND contact_id=? AND id=? AND status='sent'`)
         .run(workspaceId, contactId, latestSentEmail.id));
     }
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id) VALUES (?,?,?,'contact_replied','contact',?)`)
@@ -1559,14 +1606,16 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const profileSignature = typeof settings.signature === 'string' ? settings.signature.trim().slice(0, 600) : '';
   const noteAccess = await (noteScope(actorId, workspaceId));
   const recentConversations = await (db.prepare(`SELECT n.created_at AS date,e.name AS event_name,en.id AS encounter_id,
+      en.summary,en.open_question,en.promised_next_step,en.changed_since_last,
       CASE WHEN n.kind='audio' THEN CASE WHEN n.summary<>'' THEN n.summary ELSE n.transcript END ELSE n.body END AS text
     FROM notes n LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
     LEFT JOIN events e ON e.workspace_id=en.workspace_id AND e.id=en.event_id
     WHERE n.workspace_id=? AND n.contact_id=? AND ((n.kind='text' AND n.body<>'') OR (n.kind='audio' AND n.transcript<>''))
       AND ${visibleNoteSql('n')}
       AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
-    ORDER BY n.created_at DESC,n.id DESC LIMIT 6`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ date: string; event_name: string | null; encounter_id: string | null; text: string }>;
-  const note = recentConversations[0]?.text.trim().slice(0, 1000) ?? '';
+    ORDER BY n.created_at DESC,n.id DESC LIMIT 6`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ date: string; event_name: string | null; encounter_id: string | null; text: string; summary: string | null; open_question: string | null; promised_next_step: string | null; changed_since_last: string | null }>;
+  const latest = recentConversations[0];
+  const note = (latest?.summary || latest?.text || '').trim().slice(0, 1000);
   const emailEventName = recentConversations.length ? recentConversations[0].event_name : contact.event_name;
   const emailEncounterId = recentConversations.length ? recentConversations[0].encounter_id : contact.encounter_id;
   const interestedProducts = await (db.prepare(`SELECT p.name FROM contact_products cp JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id
@@ -1588,6 +1637,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
         : `It was nice speaking with you${event}. I’d be glad to continue our conversation about ${contact.company_name}.`;
   const personalContext = [
     note ? `You noted: “${note}”` : '',
+    latest?.promised_next_step ? `As discussed, ${latest.promised_next_step.trim().slice(0, 300)}` : '',
     interestedProductNames.length ? `I’ll follow up about ${interestedProductNames.join(', ')}.` : '',
     productNames.length ? `If helpful, I can share a little more about ${productNames.join(', ')}.` : whatYouSell ? `If helpful, I can share a little more about ${whatYouSell}` : '',
     lookingFor ? `I’m also looking for ${lookingFor}.` : '',
@@ -1596,7 +1646,10 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const body = `Hi ${greeting},\n\n${opening}${personalContext.length ? `\n\n${personalContext.join('\n\n')}` : ''}\n\n${closing}\n\n${profileSignature || await (getActorName(actorId))}`;
   const sourcesUsed = [
     ...(emailEventName ? [{ label: 'Event', excerpt: emailEventName }] : []),
-    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} conversation${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: item.text.trim().slice(0, 180) })),
+    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} conversation${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: (item.summary || item.text).trim().slice(0, 180) })),
+    ...(latest?.open_question ? [{ label: 'Open question', excerpt: latest.open_question.slice(0, 180) }] : []),
+    ...(latest?.promised_next_step ? [{ label: 'Agreed next step', excerpt: latest.promised_next_step.slice(0, 180) }] : []),
+    ...(latest?.changed_since_last ? [{ label: 'What changed', excerpt: latest.changed_since_last.slice(0, 180) }] : []),
     ...(interestedProductNames.length ? [{ label: 'Products of interest', excerpt: interestedProductNames.join(', ') }] : []),
     ...(productNames.length ? [{ label: 'Your product list', excerpt: productNames.join(', ') }] : whatYouSell ? [{ label: 'What you sell', excerpt: whatYouSell.slice(0, 180) }] : []),
     ...(lookingFor ? [{ label: 'About me', excerpt: lookingFor }] : []),
@@ -1606,7 +1659,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
     aiContext: {
       firstName: greeting, companyName: contact.company_name, eventName: emailEventName,
       productsOfInterest: interestedProductNames, companyProducts: productNames, latestNote: note,
-      recentConversations: recentConversations.map((item) => ({ date: item.date, eventName: item.event_name, note: item.text.trim().slice(0, 700) })),
+      recentConversations: recentConversations.map((item) => ({ date: item.date, eventName: item.event_name, note: [item.summary || item.text, item.open_question ? `Open question: ${item.open_question}` : '', item.promised_next_step ? `Agreed next step: ${item.promised_next_step}` : '', item.changed_since_last ? `What changed: ${item.changed_since_last}` : ''].filter(Boolean).join(' | ').slice(0, 700) })),
       tone: tone as 'Friendly' | 'Professional' | 'Short',
       signature: profileSignature || await (getActorName(actorId)),
       neverPromise: typeof settings.neverPromise === 'string' ? settings.neverPromise.trim().slice(0, 500) : '',
@@ -1624,8 +1677,8 @@ export async function createEmailDraft(actorId: string, workspaceId: string, con
   const suggestion = await (buildEmailSuggestion(actorId, workspaceId, contactId));
   const draft = generated ? { ...suggestion, subject: generated.subject, body: generated.body } : suggestion;
   const id = randomUUID();
-  await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by) VALUES (?,?,?,?,?,?,?,'draft',?)`)
-    .run(id, workspaceId, contactId, draft.encounterId, draft.recipient, draft.subject, draft.body, actorId));
+  await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by,sources_json) VALUES (?,?,?,?,?,?,?,'draft',?,?)`)
+    .run(id, workspaceId, contactId, draft.encounterId, draft.recipient, draft.subject, draft.body, actorId, JSON.stringify(draft.sourcesUsed)));
   const { aiContext: _aiContext, encounterId: _encounterId, ...publicDraft } = draft;
   const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
   const generation = generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const;
@@ -1661,9 +1714,9 @@ export async function getAlternateEmailDraftSuggestion(actorId: string, workspac
 export async function createAlternateEmailDraft(actorId: string, workspaceId: string, emailId: string, generated?: { subject: string; body: string }) {
   const suggestion = await getAlternateEmailDraftSuggestion(actorId, workspaceId, emailId);
   if (!suggestion) return undefined;
-  const updated = await (db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft' AND contact_id IN (
+  const updated = await (db.prepare(`UPDATE emails SET subject=?,body=?,sources_json=? WHERE workspace_id=? AND id=? AND status='draft' AND contact_id IN (
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL AND archived_at IS NULL)`)
-    .run(generated?.subject ?? suggestion.subject, generated?.body ?? suggestion.body, workspaceId, emailId, workspaceId));
+    .run(generated?.subject ?? suggestion.subject, generated?.body ?? suggestion.body, JSON.stringify(suggestion.sourcesUsed), workspaceId, emailId, workspaceId));
   const { aiContext: _aiContext, ...publicSuggestion } = suggestion;
   const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
   return updated.changes ? { id: emailId, ...publicSuggestion, subject: generated?.subject ?? suggestion.subject, body: generated?.body ?? suggestion.body, generation: generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const, status: 'draft' as const } : undefined;
@@ -1682,6 +1735,30 @@ export async function updateEmailDraft(actorId: string, workspaceId: string, ema
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL)`)
     .run(subject.trim(), body.trim(), workspaceId, emailId, workspaceId));
   return changed.changes > 0;
+}
+
+export async function listEmailDesk(actorId: string, workspaceId: string) {
+  await assertWorkspaceAccess(actorId, workspaceId);
+  const drafts = await db.prepare(`SELECT m.id,m.contact_id,m.recipient,m.subject,m.body,m.status,m.created_at,m.approved_at,m.sent_to_server_at,m.sources_json,
+      c.name AS person_name,co.name AS company_name,e.name AS event_name,
+      linked.summary,linked.open_question,linked.promised_next_step,linked.changed_since_last
+    FROM emails m JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
+    JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
+    JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
+    LEFT JOIN encounters linked ON linked.id=m.encounter_id AND linked.workspace_id=m.workspace_id
+    LEFT JOIN events e ON e.id=linked.event_id AND e.workspace_id=linked.workspace_id
+    WHERE m.workspace_id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${emailAccessSql()}
+    ORDER BY m.created_at DESC LIMIT 150`).all(actorId, workspaceId, actorId, actorId, actorId) as Array<Record<string, unknown>>;
+  const blocked = new Set((await db.prepare(`SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=1`).all(workspaceId) as Array<{ id: string }>).map((row) => row.id));
+  const noteAccess = await noteScope(actorId, workspaceId);
+  const withContext = new Set((await db.prepare(`SELECT DISTINCT n.contact_id FROM notes n LEFT JOIN encounters en ON en.id=n.encounter_id AND en.workspace_id=n.workspace_id
+    WHERE n.workspace_id=? AND ((n.kind='text' AND n.body<>'') OR (n.kind='audio' AND (n.summary<>'' OR n.transcript<>'')))
+      AND ${visibleNoteSql('n')} AND (en.event_id IS NULL OR ?=1 OR EXISTS (
+        SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))`)
+    .all(workspaceId, noteAccess.all, actorId, actorId, noteAccess.all, actorId) as Array<{ contact_id: string }>).map((row) => row.contact_id));
+  const people = (await listPeople(actorId, workspaceId)).filter((person) => Boolean(person.email) && !blocked.has(String(person.id)) && !drafts.some((draft) => draft.contact_id === person.id && draft.status === 'draft')).slice(0, 100)
+    .map((person) => ({ ...person, hasContext: withContext.has(String(person.id)) }));
+  return { drafts, people };
 }
 
 export async function approveEmailDraft(actorId: string, workspaceId: string, emailId: string, smtpReady: boolean, publicBaseUrl: string) {
