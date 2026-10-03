@@ -34,6 +34,6 @@ export async function draftEmailWithGemini(context: EmailDraftContext, alternate
   const envelope = JSON.parse(raw) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
   const content = envelope.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('').trim() || '';
   const draft = GeminiEmailSchema.parse(JSON.parse(content));
-  rejectInternalNoteLanguage(draft.body);
+  rejectInternalNoteLanguage(draft.body, context);
   return draft;
 }

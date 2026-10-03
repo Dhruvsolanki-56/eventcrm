@@ -1623,9 +1623,12 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
     WHERE cp.workspace_id=? AND cp.contact_id=? AND p.archived_at IS NULL ORDER BY p.name`).all(workspaceId, contactId)) as Array<{ name: string }>;
   const interestedProductNames = interestedProducts.map((product) => product.name);
   const greeting = contact.name.split(/\s+/)[0] || 'there';
-  const subject = variant === 'alternate' ? 'A quick follow-up' : 'Following up on our conversation';
+  const requestedWrittenFollowUp = /\b(?:official|formal) email\b|\bfollow[ -]?up (?:email|message)\b/i.test(latest?.text || '');
+  const subject = requestedWrittenFollowUp ? 'Following up on your project request' : variant === 'alternate' ? 'A quick follow-up' : 'Following up on our conversation';
   const opening = tone === 'Professional' ? 'Thank you for speaking with me.' : 'Thanks for speaking with me.';
-  const requestForClarity = variant === 'alternate'
+  const requestForClarity = requestedWrittenFollowUp
+    ? 'I’m following up in writing as requested. Could you confirm the scope you would like us to cover and any questions you want addressed?'
+    : variant === 'alternate'
     ? 'I want to make sure my next message covers what you need. Could you confirm the main point you would like us to address?'
     : 'I want to make sure I follow up on the right details. Could you confirm what you need from us next?';
   const body = `Hi ${greeting},\n\n${opening} ${requestForClarity}\n\n${profileSignature || await (getActorName(actorId))}`;

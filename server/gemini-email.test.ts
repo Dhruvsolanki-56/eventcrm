@@ -62,4 +62,10 @@ describe('Gemini email drafts', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ subject: 'Following up', body: "Hi Olivia,\n\nThe customer's stated need was an offer.\n\nMaya" }) }] } }] }), { status: 200 })));
     await expect(draftEmailWithGemini(context)).rejects.toThrow('repeated internal note language');
   });
+
+  it('does not show an AI draft that assigns our ambiguous offer to the recipient', async () => {
+    vi.stubEnv('AI_MODE', 'provider'); vi.stubEnv('AI_PROVIDER', 'gemini'); vi.stubEnv('GEMINI_API_KEY', 'test-only-key');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ subject: 'Following up', body: 'Hi Olivia, could you clarify the offer you mentioned? Maya' }) }] } }] }), { status: 200 })));
+    await expect(draftEmailWithGemini({ ...context, recentConversations: [{ ...context.recentConversations[0], rawNote: 'We have got the offer for both projects.' }] })).rejects.toThrow('unclear offer');
+  });
 });

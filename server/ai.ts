@@ -79,7 +79,7 @@ export async function draftEmail(context: EmailDraftContext, alternate = false) 
   });
   const raw = response.content.filter((part) => part.type === 'text').map((part) => part.text).join('\n');
   const draft = parseModelJson(raw, EmailDraftOutputSchema);
-  rejectInternalNoteLanguage(draft.body);
+  rejectInternalNoteLanguage(draft.body, context);
   return draft;
 }
 
