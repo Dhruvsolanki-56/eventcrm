@@ -13,6 +13,7 @@ const CaptureChart = lazy(() => import('./CaptureChart.js'));
 const SettingsRoute = lazy(() => import('./SettingsPage.js'));
 const OnboardingRoute = lazy(() => import('./OnboardingPage.js'));
 const AnalyticsRoute = lazy(() => import('./AnalyticsPage.js'));
+const EmailDeskRoute = lazy(() => import('./EmailDeskPage.js'));
 const OverviewActivity = lazy(() => import('./AnalyticsPage.js').then((module) => ({ default: module.OverviewActivity })));
 const TOUR_STEPS = [
   { title: 'Capture one card at a time.', body: 'Take a picture or choose a card photo. Upload starts reading right away, while you can keep adding the next card.' },
@@ -22,6 +23,25 @@ const TOUR_STEPS = [
   { title: 'Make a clear next step.', body: 'Choose a follow-up date or meeting. You can change, snooze, complete, or cancel it later.' },
   { title: 'Keep each space separate.', body: 'Company leads stay with the company team. Your private attendee space is visible only to you.' },
 ] as const;
+
+function photoQualityHint(image: HTMLImageElement): string | null {
+  if (Math.min(image.naturalWidth, image.naturalHeight) < 640) return 'This photo is small. Retake it closer to the card if text looks hard to read.';
+  try {
+    const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
+    const context = canvas.getContext('2d', { willReadFrequently: true }); if (!context) return null;
+    context.drawImage(image, 0, 0, 128, 128);
+    const data = context.getImageData(0, 0, 128, 128).data;
+    const gray = new Float32Array(128 * 128);
+    for (let i = 0; i < gray.length; i++) gray[i] = .299 * data[i * 4] + .587 * data[i * 4 + 1] + .114 * data[i * 4 + 2];
+    let energy = 0;
+    for (let y = 1; y < 127; y++) for (let x = 1; x < 127; x++) { const i = y * 128 + x; energy += Math.abs(4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - 128] - gray[i + 128]); }
+    if (energy / (126 * 126) < 8) return 'This photo may be soft or low contrast. Check the small text, or retake it.';
+    let darkEdge = 0;
+    for (let i = 0; i < 128; i++) for (const index of [i, 127 * 128 + i, i * 128, i * 128 + 127]) if (gray[index] < 85) darkEdge++;
+    if (darkEdge > 24 && darkEdge < 180) return 'Dark details reach the photo edge. Check that no text or part of the card was cropped.';
+  } catch { /* The visual check is optional; review remains available. */ }
+  return null;
+}
 
 export default function App() {
   const location = useLocation();
@@ -315,6 +335,7 @@ function WorkspaceShell() {
   const companyLinks = [
     { to: '/home', label: 'Home', icon: Home },
     { to: '/scan', label: 'Scan', icon: ScanLine },
+    { to: '/email', label: 'Email Desk', icon: Mail },
     { to: '/follow-ups', label: 'Follow-ups', icon: Clock3 },
     { to: '/people', label: 'People', icon: Users },
     { to: '/companies', label: 'Companies', icon: Building2 },
@@ -324,6 +345,7 @@ function WorkspaceShell() {
   const links = company ? companyLinks : [
     { to: '/home', label: 'Home', icon: Home },
     { to: '/scan', label: 'Scan', icon: ScanLine },
+    { to: '/email', label: 'Email Desk', icon: Mail },
     { to: '/people', label: 'People', icon: Users },
     { to: '/follow-ups', label: 'Follow-ups', icon: Clock3 },
     { to: '/analytics', label: 'Analytics', icon: BarChart3 },
@@ -382,6 +404,7 @@ function WorkspaceShell() {
           <Route path="/home" element={<HomePage onShowTour={() => { setTourStep(0); setTourOpen(true); }} />} />
           <Route path="/setup" element={<Suspense fallback={<div className="surface-card records-empty">Opening setup…</div>}><OnboardingRoute /></Suspense>} />
           <Route path="/scan" element={<ScanPage />} />
+          <Route path="/email" element={<Suspense fallback={<div className="surface-card records-empty">Opening email desk…</div>}><EmailDeskRoute /></Suspense>} />
           <Route path="/review/:scanId" element={<ReviewPage />} />
           <Route path="/people" element={<PeoplePage />} />
           <Route path="/people/:contactId" element={<PersonPage />} />
@@ -396,7 +419,7 @@ function WorkspaceShell() {
         </Routes>
       </main>
     </div>
-    <nav className="phone-tabs" aria-label="Phone navigation">{[...links.filter((link) => link.to === '/home' || link.to === '/follow-ups'), ...links.filter((link) => link.to === '/scan'), ...links.filter((link) => link.to === '/people' || link.to === '/companies' || (link.to === '/analytics' && !company))].slice(0, 5).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => `phone-tab${to === '/scan' ? ' phone-capture' : ''}${isActive ? ' active' : ''}`}><Icon size={19} /><span>{label}</span></NavLink>)}</nav>
+    <nav className="phone-tabs" aria-label="Phone navigation">{['/home','/email','/scan','/people','/follow-ups'].map((path) => links.find((link) => link.to === path)!).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => `phone-tab${to === '/scan' ? ' phone-capture' : ''}${isActive ? ' active' : ''}`}><Icon size={19} /><span>{to === '/email' ? 'Email' : label}</span></NavLink>)}</nav>
     {helpOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHelpOpen(false); }}><section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close help" onClick={() => setHelpOpen(false)}><X size={19} /></button><p className="eyebrow">GATHER HELP</p><h2 id="help-dialog-title">Keep the next conversation.</h2><p>Short answers to the words you see in Gather.</p><dl className="help-terms"><div><dt>Scan</dt><dd>Choose a photo or take one; reading starts when it uploads.</dd></div><div><dt>Company and person</dt><dd>One company can have many people. Each person keeps their own conversations.</dd></div><div><dt>Follow-up</dt><dd>A reminder date you choose. Gather does not contact anyone by itself.</dd></div><div><dt>Saved, not sent</dt><dd>Your email is stored as a draft. Copy it or open it in your email app.</dd></div><div><dt>Private space</dt><dd>Only you can see the people and notes saved in your attendee space.</dd></div></dl><div className="help-actions"><button className="button secondary" onClick={() => setHelpOpen(false)}>Close</button><Link className="button primary" to="/scan" onClick={() => setHelpOpen(false)}>Open Capture <ScanLine size={16} /></Link></div></section></div>}
     {tourOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTourOpen(false); }}><section className="help-dialog tour-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close tour" onClick={() => setTourOpen(false)}><X size={19} /></button><p className="eyebrow">A QUICK TOUR · {tourStep + 1} OF {TOUR_STEPS.length}</p><h2 id="help-dialog-title">{TOUR_STEPS[tourStep].title}</h2><p>{TOUR_STEPS[tourStep].body}</p><div className="tour-progress" aria-label={`Step ${tourStep + 1} of ${TOUR_STEPS.length}`}>{TOUR_STEPS.map((step, index) => <span key={step.title} className={index <= tourStep ? 'active' : ''} />)}</div><div className="help-actions">{tourStep > 0 && <button className="button secondary" onClick={() => setTourStep((step) => Math.max(0, step - 1))}>Previous</button>}{tourStep < TOUR_STEPS.length - 1 ? <button className="button primary" onClick={() => setTourStep((step) => Math.min(TOUR_STEPS.length - 1, step + 1))}>Next step <ArrowRight size={16} /></button> : <><button className="button secondary" onClick={() => setTourOpen(false)}>Done</button><Link className="button primary" to="/scan" onClick={() => setTourOpen(false)}>Open Scan <ScanLine size={16} /></Link></>}</div></section></div>}
   </div>;
@@ -697,8 +720,10 @@ function PersonPage() {
   const requestedConversation = new URLSearchParams(location.search).get('newConversation') === '1';
   const requestedEventId = new URLSearchParams(location.search).get('event');
   const { session, csrfToken, notify } = useWorkspace();
-  const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }> } | null>(null);
+  const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>; conversationMemories: Array<{ id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }> } | null>(null);
   const [note, setNote] = useState('');
+  const [conversationMemory, setConversationMemory] = useState({ summary: '', openQuestion: '', promisedNextStep: '', changedSinceLast: '' });
+  const [suggestingMemory, setSuggestingMemory] = useState(false);
   const [conversationEvents, setConversationEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
   const [conversationEventId, setConversationEventId] = useState('');
   const conversationRequestId = useRef(crypto.randomUUID());
@@ -779,7 +804,7 @@ function PersonPage() {
     const prepareEmail = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.dataset.action === 'email';
     if (emailHasOpenDraft && !window.confirm('Saving this conversation may prepare a new email draft. The draft currently open here will remain saved and unsent, but will close on this page. Continue?')) return;
     setSaving(true); setError('');
-    try { const result = await request<{ autoDraft: EmailDraftView | null }>(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); await load(); setConversationDraft(result.autoDraft); if (prepareEmail || result.autoDraft) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail || result.autoDraft ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
+    try { const result = await request<{ autoDraft: EmailDraftView | null }>(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current, ...conversationMemory }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); setConversationMemory({ summary: '', openQuestion: '', promisedNextStep: '', changedSinceLast: '' }); await load(); setConversationDraft(result.autoDraft); if (prepareEmail || result.autoDraft) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail || result.autoDraft ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
     catch (issue) { setError((issue as Error).message); } finally { setSaving(false); }
   }
   async function saveCompanyDeal(event: FormEvent<HTMLFormElement>) {
@@ -806,7 +831,7 @@ function PersonPage() {
       {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deal-value">Deal value</a>}
     </nav>
     <div className="person-layout"><div className="person-main"><article className="surface-card person-card"><div className="section-head"><div><p className="eyebrow">CONTACT DETAILS</p><h2>{String(person.company_name)}</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{String(person.quality || 'Not set')}</dd><dt>Event conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}<label>Change stage<select value={stageDraft || String(person.stage)} onChange={(event) => { const stage = event.target.value; if (stage === 'lost') { setStageDraft('lost'); setLostReason(''); } else { setStageDraft(''); void changeStage(stage); } }}><option value="new">New</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="meeting">Meeting</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{stageDraft === 'lost' && <div className="lost-reason-form"><label htmlFor="lost-reason">Why was this marked lost?<textarea id="lost-reason" rows={2} maxLength={500} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="A short reason" /></label><button type="button" className="button primary" disabled={!lostReason.trim()} onClick={() => void changeStage('lost', lostReason)}>Save as lost</button><button type="button" className="text-button" onClick={() => { setStageDraft(''); setLostReason(''); }}>Cancel</button></div>}{person.stage === 'lost' && Boolean(person.lost_reason) && <p className="lost-reason-display">Lost because: {String(person.lost_reason)}</p>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}</article>
-    <article className="surface-card timeline-card"><p className="eyebrow">HISTORY</p><h2>Conversations and notes</h2>{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
+    <article className="surface-card timeline-card"><p className="eyebrow">HISTORY</p><h2>Conversations and notes</h2>{detail.conversationMemories.length > 0 && <div className="memory-history"><strong>Checked email context</strong>{detail.conversationMemories.map((item) => <ConversationMemoryCard key={item.id} item={item} contactId={contactId} onSaved={() => void load()} />)}</div>}{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
     <div className="person-side">
       {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><p className="eyebrow">PIPELINE · COMPANY VALUE</p><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (USD)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(person.deal_value_minor) / 100)} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
       <form id="person-conversation" className="surface-card note-form" onSubmit={(event) => void addNote(event)}>
@@ -819,6 +844,7 @@ function PersonPage() {
         </select>
         <label htmlFor="person-note">What did you discuss?</label>
         <textarea id="person-note" rows={4} maxLength={4000} value={note} onChange={(event) => { setNote(event.target.value); conversationRequestId.current = crypto.randomUUID(); }} placeholder="Their question, current need, or next step — in your own words" required />
+        <div className="conversation-memory"><div className="section-head"><div><strong>Email context</strong><p className="subtle">Check these facts before preparing a draft. Leave unknown details blank.</p></div><button type="button" className="button secondary" disabled={suggestingMemory || !note.trim()} onClick={() => { setSuggestingMemory(true); void request<{ summary: string }>(`/api/contacts/${contactId}/conversation-summary-suggestion`, { method: 'POST', body: JSON.stringify({ text: note }) }, { csrfToken, workspaceId: session.workspace.id }).then(({ summary }) => { setConversationMemory((current) => ({ ...current, summary })); notify('AI suggested a summary. Check it before saving.'); }).catch((issue) => notify((issue as Error).message)).finally(() => setSuggestingMemory(false)); }}>{suggestingMemory ? 'Suggesting…' : 'Suggest summary'}</button></div><p className="subtle">Suggest summary sends this note to the configured AI provider. You can leave it off and write these fields yourself.</p><label>What matters most<textarea rows={2} maxLength={700} value={conversationMemory.summary} onChange={(event) => setConversationMemory({ ...conversationMemory, summary: event.target.value })} placeholder="A checked summary in your words" /></label><label>Open question<input maxLength={400} value={conversationMemory.openQuestion} onChange={(event) => setConversationMemory({ ...conversationMemory, openQuestion: event.target.value })} placeholder="What still needs an answer?" /></label><label>Agreed next step<input maxLength={400} value={conversationMemory.promisedNextStep} onChange={(event) => setConversationMemory({ ...conversationMemory, promisedNextStep: event.target.value })} placeholder="Only something you actually agreed to do" /></label><label>What changed since last time<input maxLength={400} value={conversationMemory.changedSinceLast} onChange={(event) => setConversationMemory({ ...conversationMemory, changedSinceLast: event.target.value })} placeholder="New need, decision or timing" /></label></div>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button primary" data-action="email" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add & prepare email'}</button>
         <button className="button secondary" data-action="note" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add conversation'}</button>
@@ -830,6 +856,20 @@ function PersonPage() {
       {(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}
       <Link className="button secondary" to="/scan"><ScanLine size={16} /> Capture another conversation</Link>
     </div></div></section>;
+}
+
+function ConversationMemoryCard({ item, contactId, onSaved }: { item: { id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }; contactId: string; onSaved: () => void }) {
+  const { csrfToken, session, notify } = useWorkspace();
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState({ summary: item.summary, openQuestion: item.open_question, promisedNextStep: item.promised_next_step, changedSinceLast: item.changed_since_last });
+  async function save() {
+    setBusy(true);
+    try { await request(`/api/contacts/${contactId}/conversations/${item.id}/context`, { method: 'PUT', body: JSON.stringify(draft) }, { csrfToken, workspaceId: session.workspace.id }); setEditing(false); onSaved(); notify('Conversation context updated. New drafts can use it. Existing drafts are unchanged.'); }
+    catch (issue) { notify((issue as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <div className="memory-history-item"><div className="memory-history-heading"><small>{new Date(item.occurred_at).toLocaleDateString()}{item.event_name ? ` · ${item.event_name}` : ''}</small><button type="button" className="text-button" onClick={() => { setDraft({ summary: item.summary, openQuestion: item.open_question, promisedNextStep: item.promised_next_step, changedSinceLast: item.changed_since_last }); setEditing(!editing); }}>{editing ? 'Cancel' : 'Correct context'}</button></div>{editing ? <div className="memory-edit"><label>Checked summary<textarea rows={2} maxLength={700} value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label><label>Open question<input maxLength={400} value={draft.openQuestion} onChange={(event) => setDraft({ ...draft, openQuestion: event.target.value })} /></label><label>Agreed next step<input maxLength={400} value={draft.promisedNextStep} onChange={(event) => setDraft({ ...draft, promisedNextStep: event.target.value })} /></label><label>What changed<input maxLength={400} value={draft.changedSinceLast} onChange={(event) => setDraft({ ...draft, changedSinceLast: event.target.value })} /></label><button type="button" className="button secondary" disabled={busy} onClick={() => void save()}>{busy ? 'Saving…' : 'Save correction'}</button></div> : <>{item.summary && <p>{item.summary}</p>}{item.open_question && <p><b>Open question:</b> {item.open_question}</p>}{item.promised_next_step && <p><b>Agreed next step:</b> {item.promised_next_step}</p>}{item.changed_since_last && <p><b>What changed:</b> {item.changed_since_last}</p>}</>}</div>;
 }
 
 function ArchivePersonPanel({ contactId }: { contactId: string }) {
@@ -1355,19 +1395,13 @@ function ScanPage() {
           try {
             let fields: ReviewLead | null = null;
             let usedGemini = false;
-            if (geminiReady) {
-              try {
-                const ai = await request<{ fields: ReviewLead }>(`/api/scans/${uploaded.id}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
-                if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
-                fields = ai.fields;
-                usedGemini = true;
-              } catch { /* The local reader is the fallback when the free tier is unavailable. */ }
+            try { const read = await readCardInBrowser(photo, () => undefined); if (read.confidence >= 20) fields = read.fields; } catch { /* AI may still help with a difficult photo. */ }
+            const needsHelp = !fields || !fields.name || !fields.email && !fields.phone || fields.uncertain.length > 0;
+            if (geminiReady && needsHelp) {
+              try { const ai = await request<{ fields: ReviewLead }>(`/api/scans/${uploaded.id}/ai-read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id }); if (Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) { fields = ai.fields; usedGemini = true; } }
+              catch { /* Keep the local reading if the provider is unavailable. */ }
             }
-            if (!fields) {
-              const read = await readCardInBrowser(photo, () => undefined);
-              if (read.confidence < 20 || !Object.values(read.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details during review.');
-              fields = read.fields;
-            }
+            if (!fields || !Object.values(fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details during review.');
             await request(`/api/scans/${uploaded.id}/ocr`, { method: 'POST', headers: usedGemini ? { 'X-Read-Source': 'ai' } : undefined, body: JSON.stringify(fields) }, { csrfToken, workspaceId: session.workspace.id });
             setScans((items) => items.map((item) => item.id === uploaded.id ? { ...item, status: 'ready', extracted: fields, uncertain: fields.uncertain, error: null } : item));
           } catch (issue) {
@@ -1439,7 +1473,7 @@ function ScanPage() {
       <section className="surface-card viewfinder-card">
         {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>
           <div className="viewfinder-graphic"><div className="viewfinder-corner tl"></div><div className="viewfinder-corner tr"></div><div className="viewfinder-corner bl"></div><div className="viewfinder-corner br"></div><div className="viewfinder-center"><span className="viewfinder-index">01 / CAPTURE</span><ScanLine size={30} /><strong>Card, brochure, or QR</strong><span>Place it in the frame or choose a photo below.</span></div></div>
-          <div className="capture-readiness" role="status"><CircleCheck size={16} aria-hidden="true" /><div><strong>{geminiCardsAvailable ? 'Gemini reads first, automatically' : geminiCardsAvailable === null ? 'Checking reading service…' : 'On-device reading is ready'}</strong><span>{geminiCardsAvailable ? 'After upload, the photo is sent to Google. On its free tier, Google may use it to improve products. If reading fails, on-device OCR takes over.' : 'Reading starts after upload. You check every detail before saving.'}</span></div></div>
+          <div className="capture-readiness" role="status"><CircleCheck size={16} aria-hidden="true" /><div><strong>{geminiCardsAvailable === null ? 'Checking reading service…' : 'On-device reading starts at upload'}</strong><span>{geminiCardsAvailable ? 'If local reading misses key details, the photo is sent to Gemini for another suggestion. Google may use free-tier data to improve its products. Check everything before saving.' : 'If reading misses details, type or correct them during review. Nothing is saved until you confirm.'}</span></div></div>
           <div className="capture-actions"><button className="button primary open-live-camera" onClick={() => void openCamera()}><ScanLine size={18} /> Open camera</button><label htmlFor={cameraInputId} className="button secondary capture-camera-action">Take photo</label><input id={cameraInputId} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => { void addFiles(Array.from(event.target.files ?? []), 'camera'); event.currentTarget.value = ''; }} /><label htmlFor={inputId} className="button secondary"><ImagePlus size={18} /> Choose photos</label><input id={inputId} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { void addFiles(Array.from(event.target.files ?? []), 'gallery'); event.currentTarget.value = ''; }} /></div>
           {cameraError && <p className="form-error" role="status">{cameraError}</p>}
           {trayError && <p className="form-error" role="alert">{trayError}</p>}
@@ -1658,6 +1692,7 @@ function ReviewPage() {
   const [autoEmailAfterSave, setAutoEmailAfterSave] = useState(false);
   const [emailDismissed, setEmailDismissed] = useState(false);
   const [photoExpanded, setPhotoExpanded] = useState(false);
+  const [photoWarning, setPhotoWarning] = useState<string | null>(null);
   const [ocrRunning, setOcrRunning] = useState(Boolean(singleCapture && captureFile));
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStage, setOcrStage] = useState('Starting the on-device reader…');
@@ -1738,25 +1773,17 @@ function ReviewPage() {
         }
         let fields: ReviewLead | null = null;
         let usedGemini = false;
-        if (useGeminiCards) {
+        try { const result = await readCardInBrowser(photo, (progress, stage) => { setOcrProgress(progress); setOcrStage(stage || 'Reading the card…'); }); if (result.confidence >= 20) fields = result.fields; }
+        catch { setOcrStage('Local reading could not finish. Checking another option…'); }
+        const needsHelp = !fields || !fields.name || !fields.email && !fields.phone || fields.uncertain.length > 0;
+        if (useGeminiCards && needsHelp) {
           try {
-            setOcrStage('Reading this photo with Gemini…');
+            setOcrStage('Checking unclear details with Gemini…');
             const ai = await request<{ fields: ReviewLead }>(`/api/scans/${scanId}/ai-read`, { method: 'POST' }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
-            if (!Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('AI returned no details.');
-            fields = ai.fields;
-            usedGemini = true;
-            setAiReadMessage('Gemini suggested these details. Compare them with the photo before saving.');
-          } catch { setOcrStage('Gemini was unavailable. Reading on this device…'); }
+            if (Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) { fields = ai.fields; usedGemini = true; setAiReadMessage('Gemini suggested these details. Compare them with the photo before saving.'); }
+          } catch { setOcrStage('Gemini was unavailable. Check the local reading yourself.'); }
         }
-        if (!fields) {
-          const result = await readCardInBrowser(photo, (progress, stage) => {
-            setOcrProgress(progress); setOcrStage(stage || 'Reading the card…');
-          });
-          if (result.confidence < 20 || !Object.values(result.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) {
-            throw new Error('We couldn’t make out enough text. Type the details you can see.');
-          }
-          fields = result.fields;
-        }
+        if (!fields || !Object.values(fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details you can see.');
         const applied = await request<{ applied: boolean }>(`/api/scans/${scanId}/ocr`, { method: 'POST', headers: usedGemini ? { 'X-Read-Source': 'ai' } : undefined, body: JSON.stringify(fields) }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
         if (!applied.applied) return;
         const latest = await request<{ scan: { extracted: ReviewLead | null; uncertain: string[] } }>(`/api/scans/${scanId}`, {}, { workspaceId: ocrAuth.current.workspaceId });
@@ -1916,7 +1943,8 @@ function ReviewPage() {
     <div className="review-layout">
       <aside className="surface-card review-source">
         <div className="review-source-heading"><strong>Source photo</strong><span>Tap to enlarge</span></div>
-        {Boolean(scan?.mimeType) && <button type="button" className="review-photo-button" onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
+        {Boolean(scan?.mimeType) && <button type="button" className="review-photo-button" onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} onLoad={(event) => setPhotoWarning(photoQualityHint(event.currentTarget))} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
+        {photoWarning && <p className="review-quality-warning" role="status"><AlertCircle size={16} />{photoWarning}</p>}
         {aiReadMessage && <p className="review-read-message" role="status">{aiReadMessage}</p>}
         {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <details className="ai-card-assist"><summary>Need another read?</summary><p>If details are missing, ask AI to try again. {aiCardProvider === 'gemini' ? 'This sends the photo to Google again; on its free tier, Google may use it to improve products. ' : ''}Check its suggestion against the photo.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? 'Checking with AI…' : 'Ask AI to check this photo'}</button></details>}
         {status === 'failed' && !ocrRunning && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
@@ -1924,9 +1952,9 @@ function ReviewPage() {
       <form id="review-save-form" className="surface-card review-form" onSubmit={(event) => reviewMode === 'brochure' ? void saveMaterial(event) : void submit(event)}>
         {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
         <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
-        {(status === 'ready' || status === 'failed') && <p className="review-check-note"><CircleCheck size={17} aria-hidden="true" /><span>These are suggestions, not a saved contact. Check them against the photo; only unclear fields carry a <strong>Verify</strong> marker.</span></p>}
+        {(status === 'ready' || status === 'failed') && <p className="review-check-note"><CircleCheck size={17} aria-hidden="true" /><span>Each field shows what the reader found: suggested, uncertain, or missing. These are not verified facts. Check them against the photo before saving.</span></p>}
         {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key) => <Fragment key={key}><label className={lead.uncertain.includes(key) ? 'uncertain-field' : ''}>
-          <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}{lead.uncertain.includes(key) && <em>Verify</em>}</span>
+          <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}<em className={lead.uncertain.includes(key) ? '' : 'field-evidence'}>{lead.uncertain.includes(key) ? 'Check this' : lead[key]?.trim() ? 'Suggested' : 'Not found'}</em></span>
           <input value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
         </label>{key === 'company' && companyMatches()}</Fragment>)}
         {reviewMode === 'brochure' && <><label>Company name<input value={lead.company} onChange={(event) => update('company', event.target.value)} maxLength={160} required disabled={fieldsDisabled} /></label>{companyMatches()}<label>Website<input value={lead.website} onChange={(event) => update('website', event.target.value)} type="text" inputMode="url" maxLength={300} placeholder="example.com" disabled={fieldsDisabled} /></label><label>Products or topics shown <span className="optional-label">one per line; check the words against the photo</span><textarea rows={3} value={brochureItems} maxLength={1500} onChange={(event) => setBrochureItems(event.target.value)} placeholder="Recyclable cartons" disabled={fieldsDisabled} /></label><p className="subtle">This photo and the details you confirm will be saved under the company, not as a person. Similar company names are shown for confirmation.</p></>}
@@ -2017,6 +2045,13 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
   }
+  async function saveOnly() {
+    if (!draft) return;
+    setBusy(true); setError('');
+    try { await request(`/api/emails/${draft.id}`, { method: 'PUT', body: JSON.stringify({ subject: draft.subject, body: draft.body }) }, { csrfToken, workspaceId: session.workspace.id }); setMessage('Draft saved. Nothing was sent. Find it in Email Desk.'); }
+    catch (issue) { setError((issue as Error).message); }
+    finally { setBusy(false); }
+  }
   async function retry() {
     if (!draft) return;
     setBusy(true); setError('');
@@ -2033,6 +2068,6 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   return <div id="person-email" className="email-compose"><div className="section-head"><div><p className="eyebrow">OPTIONAL FOLLOW-UP</p><h2>Email</h2></div>{!draft && !autoOpen && <button type="button" className="button secondary" disabled={busy} onClick={() => void create()}><Mail size={16} />{busy ? 'Preparing…' : 'Draft an email'}</button>}</div>
     {error && !missingEmail && <p className="form-error" role="alert">{error}</p>}
     {autoOpen && missingEmail && <div className="email-state" role="status"><p>There’s no email address on this person yet. Nothing was sent.</p><button type="button" className="text-button" onClick={onSkip}>Skip email</button></div>}
-    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Send email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
+    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Send email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
   </div>;
 }
