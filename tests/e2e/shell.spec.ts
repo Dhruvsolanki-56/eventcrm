@@ -649,6 +649,13 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   const readyMs = Date.now() - started;
   await expect(page.getByRole('button', { name: 'Save & scan next' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save & prepare email' })).toBeVisible();
+  const reviewSurface = await page.locator('.review-dialog-page').evaluate((dialog) => {
+    const background = getComputedStyle(dialog).backgroundColor;
+    const footer = dialog.querySelector('.review-footer');
+    return { background, footerPosition: footer ? getComputedStyle(footer).position : '' };
+  });
+  expect(reviewSurface.background).toBe('rgb(245, 244, 240)');
+  expect(reviewSurface.footerPosition).toBe('static');
   const reviewActionsStayTogether = async () => {
     const layout = await page.locator('.review-save-actions').evaluate((group) => {
       const groupBox = group.getBoundingClientRect();
@@ -667,6 +674,13 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await reviewActionsStayTogether();
   await page.locator('.review-footer--choice').screenshot({ path: testInfo.outputPath('review-actions-compact.png') });
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.review-footer')).toBeVisible();
+  await expect(page.locator('.mobile-review-actions')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Save & scan next' })).toHaveCount(1);
+  await page.locator('.review-dialog-page').evaluate((dialog) => { dialog.scrollTop = 0; });
+  expect(await page.locator('.review-footer').evaluate((footer) => footer.getBoundingClientRect().top)).toBeGreaterThan(844);
+  await page.locator('.review-footer').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('review-phone-actions-inline.png') });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(page.getByLabel('Name *')).toHaveValue('Demo Contact');

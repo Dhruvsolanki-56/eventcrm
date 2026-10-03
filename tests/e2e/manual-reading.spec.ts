@@ -100,7 +100,8 @@ test('a failed saved photo retries the on-device reader when opened from Review'
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByLabel('Name *')).toBeVisible();
-  await expect(page.locator('.mobile-review-actions')).toBeVisible();
+  await expect(page.locator('.review-footer')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save & scan next' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 

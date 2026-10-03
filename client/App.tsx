@@ -1958,7 +1958,6 @@ function ReviewPage() {
       </form>
     </div>}
     {Boolean(scan?.mimeType) && photoExpanded && <div className="review-photo-overlay" role="dialog" aria-modal="true" aria-label="Uploaded photo" onKeyDown={(event) => { if (event.key === 'Escape') setPhotoExpanded(false); }}><button type="button" className="button secondary" autoFocus onClick={() => setPhotoExpanded(false)}>Close photo</button><img src={`/api/scans/${scanId}/image`} alt={reviewMode === 'brochure' ? 'Uploaded brochure enlarged' : 'Uploaded business card enlarged'} /></div>}
-    {(status === 'ready' || status === 'failed') && <div className="mobile-review-actions">{reviewMode === 'person' && <button type="submit" form="review-save-form" data-save-action="email" className="button primary" disabled={busy}>{busy ? 'Saving…' : 'Save & prepare email'}</button>}<button type="submit" form="review-save-form" data-save-action="next" className={reviewMode === 'person' ? 'button secondary' : 'button primary'} disabled={busy}>{busy ? 'Saving…' : reviewMode === 'brochure' ? 'Save brochure' : 'Save & scan next'}</button></div>}
   </section>;
 }
 
