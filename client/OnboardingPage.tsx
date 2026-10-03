@@ -29,6 +29,8 @@ export default function OnboardingPage() {
   const [data, setData] = useState<SetupData | null>(null);
   const [selected, setSelected] = useState<StepId | null>(null);
   const [knowledge, setKnowledge] = useState<Record<string, string>>({ whatYouSell: '' });
+  const [sourceText, setSourceText] = useState('');
+  const [suggestingProfile, setSuggestingProfile] = useState(false);
   const [emailSettings, setEmailSettings] = useState({ fromName: 'Gather', fromAddress: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -83,12 +85,21 @@ export default function OnboardingPage() {
       const key = personal ? 'aboutMe' : 'knowledge';
       const value = personal
         ? { name: knowledge.name ?? session.user.name, role: knowledge.role ?? '', company: knowledge.company ?? '', lookingFor: knowledge.lookingFor ?? '', signature: knowledge.signature ?? '' }
-        : { whatYouSell: knowledge.whatYouSell ?? '', tone: knowledge.tone ?? 'Friendly', signature: knowledge.signature ?? '', neverPromise: knowledge.neverPromise ?? '', productsText: knowledge.productsText ?? '' };
+        : { whatYouSell: knowledge.whatYouSell ?? '', ourRole: knowledge.ourRole ?? '', tone: knowledge.tone ?? 'Friendly', signature: knowledge.signature ?? '', neverPromise: knowledge.neverPromise ?? '', productsText: knowledge.productsText ?? '' };
       await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key, value }) }, { csrfToken, workspaceId: session.workspace.id });
       await finishStep('knowledge', true);
       setStatus('Saved. You can change these details any time in Settings.');
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
+  }
+  async function suggestProfile() {
+    setSuggestingProfile(true); setError(''); setStatus('');
+    try {
+      const suggestion = await request<{ whatYouSell: string; ourRole: string; productsText: string }>('/api/setup/profile-suggestion', { method: 'POST', body: JSON.stringify({ sourceText }) }, { csrfToken, workspaceId: session.workspace.id });
+      setKnowledge((current) => ({ ...current, ...suggestion }));
+      setStatus('Suggestions are filled in below. Check every detail, then save.');
+    } catch (issue) { setError((issue as Error).message); }
+    finally { setSuggestingProfile(false); }
   }
   async function sendTestEmail() {
     setBusy(true); setError(''); setStatus('');
@@ -151,8 +162,11 @@ export default function OnboardingPage() {
               <label>What are you looking for?<input value={knowledge.lookingFor ?? ''} onChange={(event) => setKnowledge({ ...knowledge, lookingFor: event.target.value })} maxLength={200} placeholder="One short line" /></label>
               <label>Email signature<textarea rows={2} value={knowledge.signature ?? ''} onChange={(event) => setKnowledge({ ...knowledge, signature: event.target.value })} maxLength={600} /></label>
             </> : <>
-              <p>Keep this short. Gather uses it to shape editable email drafts.</p>
+              <p>Set this up once. Gather uses these checked details to shape editable email drafts.</p>
+              <details className="setup-assist"><summary>Use website or brochure copy to suggest details</summary><p className="subtle">Paste public business copy. This text is sent to the configured AI provider for suggestions and is not saved. Check its output before saving.</p><label>Business copy<textarea rows={4} maxLength={8000} value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="Paste your About page or brochure text" /></label><button type="button" className="button secondary" disabled={suggestingProfile || sourceText.trim().length < 30} onClick={() => void suggestProfile()}>{suggestingProfile ? 'Suggesting…' : 'Suggest my business details'}</button></details>
               <label>What does your team sell?<textarea rows={4} value={knowledge.whatYouSell ?? ''} onChange={(event) => setKnowledge({ ...knowledge, whatYouSell: event.target.value })} maxLength={500} placeholder="Products, services, or the kind of work you do" /></label>
+              <label>Our role in client conversations<input value={knowledge.ourRole ?? ''} onChange={(event) => setKnowledge({ ...knowledge, ourRole: event.target.value })} maxLength={240} placeholder="For example, we are their development partner" /></label>
+              <label>Products or services <span className="optional-label">optional, one per line</span><textarea rows={3} value={knowledge.productsText ?? ''} onChange={(event) => setKnowledge({ ...knowledge, productsText: event.target.value })} maxLength={2000} placeholder="Product name — short description" /></label>
             </>}
             <div className="onboarding-actions"><button className="button primary" type="button" disabled={busy} onClick={() => void saveKnowledge()}>{busy ? 'Saving…' : 'Save and continue'} <ArrowRight size={16} /></button><button className="text-button" type="button" disabled={busy} onClick={() => void skipStep('knowledge')}><SkipForward size={15} /> Skip for now</button></div>
           </div> : <div className="onboarding-form"><p>Your company admin looks after shared product details, so your drafts stay consistent.</p><div className="onboarding-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => void skipStep('knowledge')}>Continue <ArrowRight size={16} /></button></div></div>)}

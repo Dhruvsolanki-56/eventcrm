@@ -131,17 +131,31 @@ async function cropCardFooter(image: Blob): Promise<Blob | null> {
   }
 }
 
-export async function readCardInBrowser(image: Blob, onProgress: (progress: number, label: string) => void) {
-  const worker = await Tesseract.createWorker('eng', 1, {
+let ocrWorker: Promise<Awaited<ReturnType<typeof Tesseract.createWorker>>> | null = null;
+let progressListener: ((progress: number, label: string) => void) | null = null;
+let ocrQueue: Promise<unknown> = Promise.resolve();
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function warmCardReader() {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  if (!ocrWorker) ocrWorker = Tesseract.createWorker('eng', 1, {
     workerPath: '/ocr/worker.min.js',
     corePath: '/ocr',
     langPath: '/ocr',
     workerBlobURL: false,
     cachePath: 'gather-ocr-v1',
-    logger: (message) => onProgress(Math.max(0, Math.min(100, Math.round(message.progress * 100))), message.status),
-  });
-  try {
-    await worker.setParameters({ preserve_interword_spaces: '1', user_defined_dpi: '300' });
+    logger: (message) => progressListener?.(Math.max(0, Math.min(100, Math.round(message.progress * 100))), message.status),
+  }).catch((error) => { ocrWorker = null; throw error; });
+  if (!progressListener) idleTimer = setTimeout(() => { const old = ocrWorker; ocrWorker = null; if (old) void old.then((ready) => ready.terminate()).catch(() => undefined); }, 90_000);
+  return ocrWorker;
+}
+
+export async function readCardInBrowser(image: Blob, onProgress: (progress: number, label: string) => void) {
+  const run = async () => {
+    progressListener = onProgress;
+    const worker = await warmCardReader();
+    try {
+    await worker.setParameters({ preserve_interword_spaces: '1', user_defined_dpi: '300', tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK });
     const { data } = await worker.recognize(image);
     let fields = extractCardFields(data.text);
     let text = data.text;
@@ -177,7 +191,18 @@ export async function readCardInBrowser(image: Blob, onProgress: (progress: numb
       }
     }
     return { fields, confidence: data.confidence, text };
-  } finally {
-    await worker.terminate();
-  }
+    } catch (error) {
+      const broken = ocrWorker;
+      ocrWorker = null;
+      if (broken) void broken.then((ready) => ready.terminate()).catch(() => undefined);
+      throw error;
+    } finally {
+      progressListener = null;
+      if (idleTimer) clearTimeout(idleTimer);
+      if (ocrWorker) idleTimer = setTimeout(() => { const old = ocrWorker; ocrWorker = null; if (old) void old.then((ready) => ready.terminate()).catch(() => undefined); }, 90_000);
+    }
+  };
+  const result = ocrQueue.then(run, run);
+  ocrQueue = result.catch(() => undefined);
+  return result;
 }

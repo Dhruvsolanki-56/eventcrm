@@ -4,7 +4,7 @@ import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Chec
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
-import { needsCardAiFallback, readCardInBrowser } from './card-ocr.js';
+import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-ocr.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
@@ -499,12 +499,14 @@ function NotificationsMenu() {
 function HomePage({ onShowTour }: { onShowTour: () => void }) {
   const { session, notify } = useWorkspace();
   const isPersonal = session.workspace.kind === 'personal';
-  const [dashboard, setDashboard] = useState<{ counts: { captured_today: number; waiting_review: number; follow_ups_due: number; replies: number }; due: Array<{ id: string; title: string; due_at: string; time_zone: string; kind: string; contact_id: string; contact_name: string; company_name: string }>; nextReviewScanId: string | null; hasPersonalizationDetails: boolean; timeZone: string } | null>(null);
+  const [dashboard, setDashboard] = useState<{ counts: { captured_today: number; waiting_review: number; drafts_ready: number; follow_ups_due: number; replies: number }; due: Array<{ id: string; title: string; due_at: string; time_zone: string; kind: string; contact_id: string; contact_name: string; company_name: string }>; nextReviewScanId: string | null; hasPersonalizationDetails: boolean; timeZone: string } | null>(null);
   useEffect(() => { void request<NonNullable<typeof dashboard>>('/api/dashboard', {}, { workspaceId: session.workspace.id }).then(setDashboard).catch((error) => notify((error as Error).message)); }, [session.workspace.id, notify]);
   const nextAction = dashboard?.counts.waiting_review
     ? dashboard.nextReviewScanId
       ? { title: `${dashboard.counts.waiting_review} ${dashboard.counts.waiting_review === 1 ? 'card is' : 'cards are'} waiting for review.`, body: 'Check each detail before you save it.', label: 'Review next card', href: `/review/${dashboard.nextReviewScanId}` }
       : { title: 'Your card is being read now.', body: 'You can keep capturing while it finishes.', label: 'Open Capture', href: '/scan' }
+    : dashboard?.counts.drafts_ready
+      ? { title: `${dashboard.counts.drafts_ready} ${dashboard.counts.drafts_ready === 1 ? 'email draft is' : 'email drafts are'} ready to review.`, body: 'Check the conversation and message before you decide whether to send.', label: 'Review drafts', href: '/email-desk' }
     : dashboard?.counts.follow_ups_due
       ? { title: `${dashboard.counts.follow_ups_due} ${dashboard.counts.follow_ups_due === 1 ? 'follow-up needs' : 'follow-ups need'} attention.`, body: 'Today’s and overdue conversations are ready for you.', label: 'Open follow-ups', href: '/follow-ups' }
       : dashboard && !dashboard.hasPersonalizationDetails
@@ -521,7 +523,7 @@ function HomePage({ onShowTour }: { onShowTour: () => void }) {
       <article className="metric-card"><span>{isPersonal ? 'People saved today' : 'Leads captured today'}</span><strong className="metric-number">{dashboard?.counts.captured_today ?? '—'}</strong><small>In your event’s time zone</small></article>
       <article className="metric-card"><span>Waiting for review</span><strong className="metric-number">{dashboard?.counts.waiting_review ?? '—'}</strong><small>Each one checked by you</small></article>
       <article className="metric-card"><span>Follow-ups due</span><strong className="metric-number">{dashboard?.counts.follow_ups_due ?? '—'}</strong><small>Today and overdue</small></article>
-      <article className="metric-card"><span>Replies</span><strong className="metric-number">{dashboard?.counts.replies ?? '—'}</strong><small>Replies recorded in Gather</small></article>
+      <article className="metric-card"><span>Drafts to review</span><strong className="metric-number">{dashboard?.counts.drafts_ready ?? '—'}</strong><small>Nothing sends on its own</small></article>
     </section>
     {(isPersonal || ['admin','manager'].includes(session.workspace.role)) && <Suspense fallback={<div className="analytics-loading">Loading activity…</div>}><OverviewActivity /></Suspense>}
     <section className="home-lower-grid">
@@ -844,7 +846,7 @@ function PersonPage() {
         </select>
         <label htmlFor="person-note">What did you discuss?</label>
         <textarea id="person-note" rows={4} maxLength={4000} value={note} onChange={(event) => { setNote(event.target.value); conversationRequestId.current = crypto.randomUUID(); }} placeholder="Their question, current need, or next step — in your own words" required />
-        <div className="conversation-memory"><div className="section-head"><div><strong>Email context</strong><p className="subtle">Check these facts before preparing a draft. Leave unknown details blank.</p></div><button type="button" className="button secondary" disabled={suggestingMemory || !note.trim()} onClick={() => { setSuggestingMemory(true); void request<{ summary: string }>(`/api/contacts/${contactId}/conversation-summary-suggestion`, { method: 'POST', body: JSON.stringify({ text: note }) }, { csrfToken, workspaceId: session.workspace.id }).then(({ summary }) => { setConversationMemory((current) => ({ ...current, summary })); notify('AI suggested a summary. Check it before saving.'); }).catch((issue) => notify((issue as Error).message)).finally(() => setSuggestingMemory(false)); }}>{suggestingMemory ? 'Suggesting…' : 'Suggest summary'}</button></div><p className="subtle">Suggest summary sends this note to the configured AI provider. You can leave it off and write these fields yourself.</p><label>What matters most<textarea rows={2} maxLength={700} value={conversationMemory.summary} onChange={(event) => setConversationMemory({ ...conversationMemory, summary: event.target.value })} placeholder="A checked summary in your words" /></label><label>Open question<input maxLength={400} value={conversationMemory.openQuestion} onChange={(event) => setConversationMemory({ ...conversationMemory, openQuestion: event.target.value })} placeholder="What still needs an answer?" /></label><label>Agreed next step<input maxLength={400} value={conversationMemory.promisedNextStep} onChange={(event) => setConversationMemory({ ...conversationMemory, promisedNextStep: event.target.value })} placeholder="Only something you actually agreed to do" /></label><label>What changed since last time<input maxLength={400} value={conversationMemory.changedSinceLast} onChange={(event) => setConversationMemory({ ...conversationMemory, changedSinceLast: event.target.value })} placeholder="New need, decision or timing" /></label></div>
+        <details className="conversation-memory"><summary>Add checked details (optional)</summary><p className="subtle">Your note alone is enough to prepare a draft. Add only facts you want to explicitly confirm.</p><button type="button" className="button secondary" disabled={suggestingMemory || !note.trim()} onClick={() => { setSuggestingMemory(true); void request<typeof conversationMemory>(`/api/contacts/${contactId}/conversation-context-suggestion`, { method: 'POST', body: JSON.stringify({ text: note }) }, { csrfToken, workspaceId: session.workspace.id }).then((suggestion) => { setConversationMemory(suggestion); notify('AI suggested conversation context. Check every field before saving.'); }).catch((issue) => notify((issue as Error).message)).finally(() => setSuggestingMemory(false)); }}>{suggestingMemory ? 'Understanding…' : 'Suggest conversation context'}</button><p className="subtle">Suggestions send this note and limited workspace context to the configured AI provider. Check anything suggested before saving. It may misunderstand who promised what.</p><label>What matters most<textarea rows={2} maxLength={700} value={conversationMemory.summary} onChange={(event) => setConversationMemory({ ...conversationMemory, summary: event.target.value })} placeholder="A checked summary in your words" /></label><label>Open question<input maxLength={400} value={conversationMemory.openQuestion} onChange={(event) => setConversationMemory({ ...conversationMemory, openQuestion: event.target.value })} placeholder="What still needs an answer?" /></label><label>Agreed next step<input maxLength={400} value={conversationMemory.promisedNextStep} onChange={(event) => setConversationMemory({ ...conversationMemory, promisedNextStep: event.target.value })} placeholder="Only something you actually agreed to do" /></label><label>What changed since last time<input maxLength={400} value={conversationMemory.changedSinceLast} onChange={(event) => setConversationMemory({ ...conversationMemory, changedSinceLast: event.target.value })} placeholder="New need, decision or timing" /></label></details>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button primary" data-action="email" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add & prepare email'}</button>
         <button className="button secondary" data-action="note" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add conversation'}</button>
@@ -1065,12 +1067,12 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
       const mime = clip.type.split(';')[0] || 'audio/webm';
       await request(`/api/contacts/${contactId}/voice`, { method: 'POST', headers: { 'Content-Type': mime, 'X-Recording-Seconds': String(Math.max(1, seconds)) }, body: clip }, { csrfToken, workspaceId: session.workspace.id });
       if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(''); setClip(null); onChange();
-      setError('Recording saved. No automatic transcript was made. Transcribe on this device or add text yourself.');
+      setError('Recording saved. No automatic transcript was made. Check a device transcript or type a note; that text can inform future drafts.');
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
   }
   async function saveText(noteId: string, text: string) {
-    try { await request(`/api/notes/${noteId}/text`, { method: 'PUT', body: JSON.stringify({ text }) }, { csrfToken, workspaceId: session.workspace.id }); setTranscriptSuggestions((current) => { const next = { ...current }; delete next[noteId]; return next; }); onChange(); }
+    try { await request(`/api/notes/${noteId}/text`, { method: 'PUT', body: JSON.stringify({ text }) }, { csrfToken, workspaceId: session.workspace.id }); setTranscriptSuggestions((current) => { const next = { ...current }; delete next[noteId]; return next; }); setError('Checked text saved. Future email drafts can use it directly.'); onChange(); }
     catch (issue) { setError((issue as Error).message); }
   }
   async function transcribeSavedNote(noteId: string) {
@@ -1275,6 +1277,7 @@ function ScanPage() {
   const [scans, setScans] = useState<ScanView[]>([]);
   const [cameraError, setCameraError] = useState('');
   const [readingMode, setReadingMode] = useState<'demo' | 'provider' | 'browser' | 'manual' | null>(null);
+  useEffect(() => { if (readingMode !== 'browser') return; const timer = window.setTimeout(() => { void warmCardReader().catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [readingMode]);
   const [geminiCardsAvailable, setGeminiCardsAvailable] = useState<boolean | null>(null);
   const [captureEvents, setCaptureEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
   const [captureEventId, setCaptureEventId] = useState<string | null>(null);
@@ -2007,7 +2010,7 @@ function ReviewPage() {
   </section>;
 }
 
-type EmailDraftView = { id: string; recipient: string; subject: string; body: string; status: 'draft' | 'queued' | 'outbox' | 'sent' | 'failed'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> };
+type EmailDraftView = { id: string; recipient: string; subject: string; body: string; status: 'draft' | 'queued' | 'outbox' | 'sent' | 'failed'; generation: 'ai' | 'template' | 'fallback' | 'pending'; sourcesUsed: Array<{ label: string; excerpt: string }> };
 function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, onSkip, onComplete, onDraftStateChange }: { contactId: string; autoOpen?: boolean; initialDraft?: EmailDraftView | null; onSkip?: () => void; onComplete?: (message: string) => void; onDraftStateChange?: (open: boolean) => void }) {
   const { session, csrfToken } = useWorkspace();
   const [draft, setDraft] = useState<EmailDraftView | null>(initialDraft);
@@ -2016,7 +2019,23 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   const [error, setError] = useState('');
   const autoOpenStarted = useRef(false);
   const suggestedDraft = useRef<{ subject: string; body: string } | null>(null);
+  const locallyEdited = useRef(false);
+  useEffect(() => { if (initialDraft) suggestedDraft.current = { subject: initialDraft.subject, body: initialDraft.body }; }, [initialDraft?.id]);
   useEffect(() => { onDraftStateChange?.(draft?.status === 'draft'); }, [draft?.status, onDraftStateChange]);
+  useEffect(() => {
+    if (!draft || draft.generation !== 'pending' || draft.status !== 'draft') return;
+    let active = true;
+    const timer = window.setInterval(() => void request<{ status: string; generation: 'pending' | 'ai' | 'fallback'; subject: string; body: string }>(`/api/emails/${draft.id}`, {}, { workspaceId: session.workspace.id }).then((value) => {
+      if (!active || value.generation === 'pending') return;
+      setDraft((current) => {
+        if (!current || current.id !== draft.id) return current;
+        if (locallyEdited.current) return { ...current, generation: value.generation };
+        suggestedDraft.current = { subject: value.subject, body: value.body };
+        return { ...current, subject: value.subject, body: value.body, generation: value.generation };
+      });
+    }).catch(() => undefined), 1200);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [draft?.id, draft?.generation, draft?.status, session.workspace.id]);
   useEffect(() => {
     if (draft?.status !== 'queued') return;
     let active = true;
@@ -2030,8 +2049,9 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   async function create() {
     setBusy(true); setError('');
     try {
-      const next = await request<{ id: string; recipient: string; subject: string; body: string; status: 'draft'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> }>(`/api/contacts/${contactId}/email-draft`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
+      const next = await request<EmailDraftView>(`/api/contacts/${contactId}/email-draft`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
       suggestedDraft.current = { subject: next.subject, body: next.body };
+      locallyEdited.current = false;
       setDraft(next);
     }
     catch (issue) { setError((issue as Error).message); }
@@ -2050,7 +2070,7 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
     try {
       const next = await request<{ id: string; recipient: string; subject: string; body: string; status: 'draft'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> }>(`/api/emails/${draft.id}/alternate`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
       suggestedDraft.current = { subject: next.subject, body: next.body };
-      setDraft(next); setMessage('Another suggested version. Check it before sending.');
+      locallyEdited.current = false; setDraft(next); setMessage('Another suggested version. Check it before sending.');
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
   }
@@ -2087,6 +2107,6 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   return <div id="person-email" className="email-compose"><div className="section-head"><div><p className="eyebrow">OPTIONAL FOLLOW-UP</p><h2>Email</h2></div>{!draft && !autoOpen && <button type="button" className="button secondary" disabled={busy} onClick={() => void create()}><Mail size={16} />{busy ? 'Preparing…' : 'Draft an email'}</button>}</div>
     {error && !missingEmail && <p className="form-error" role="alert">{error}</p>}
     {autoOpen && missingEmail && <div className="email-state" role="status"><p>There’s no email address on this person yet. Nothing was sent.</p><button type="button" className="text-button" onClick={onSkip}>Skip email</button></div>}
-    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => setDraft({ ...draft, body: event.target.value })} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Send email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
+    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, subject: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, body: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'pending' ? 'Draft ready now. AI is preparing another suggestion; your edits will stay yours.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Send email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
   </div>;
 }

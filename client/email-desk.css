@@ -29,6 +29,9 @@ button.email-desk-row:hover, .email-desk-row.is-selected { background: #f1f7f2; 
 .email-desk-editor input, .email-desk-editor textarea { width: 100%; border: 1px solid #d9e4da; border-radius: .55rem; background: #fff; padding: .8rem .9rem; color: #243b2c; font: inherit; line-height: 1.5; resize: vertical; }
 .email-desk-editor input:focus, .email-desk-editor textarea:focus { outline: 2px solid #8db7a1; outline-offset: 1px; }
 .email-desk-editor-footer { display: flex; align-items: center; justify-content: space-between; color: #6e7d73; font-size: .85rem; }
+.email-desk-review-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .55rem; }
+.email-desk-generation { margin: 0; padding: .65rem .75rem; border-radius: 7px; background: #edf5ef; color: #275e49; font-size: .84rem; line-height: 1.45; }
+@media (max-width: 550px) { .email-desk-editor-footer { align-items: stretch; flex-direction: column; gap: .75rem; } .email-desk-review-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .email-desk-review-actions .button { justify-content: center; } }
 .email-desk-placeholder, .email-desk-empty { padding: 2.5rem 1.5rem; color: #627268; text-align: center; }
 .email-desk-placeholder svg, .email-desk-empty svg { color: #6f9a81; }
 .email-desk-placeholder h2 { color: #264234; }

@@ -21,6 +21,10 @@
 .onboarding-form label { display: grid; gap: 7px; margin: 14px 0; font-size: 13px; font-weight: 600; }
 .onboarding-form input, .onboarding-form textarea { width: 100%; min-height: 46px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font: 400 14px Inter, sans-serif; }
 .onboarding-form textarea { min-height: 105px; resize: vertical; }
+.setup-assist { margin: 0 0 20px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #f7faf7; }
+.setup-assist summary { cursor: pointer; color: #245e49; font-weight: 650; }
+.setup-assist p { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.setup-assist .button { min-height: 42px; }
 .onboarding-form input:focus-visible, .onboarding-form textarea:focus-visible { outline: 3px solid #bddbc5; border-color: #69a881; }
 .onboarding-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
 .onboarding-actions .text-button { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
