@@ -54,7 +54,6 @@ import {
   getWorkspaceExport,
   recordWorkspaceExport,
   getPersonDetail,
-  getEmailDraftSuggestion,
   getAlternateEmailDraftSuggestion,
   getFollowUpSuggestionContext,
   addPersonNote,
@@ -77,6 +76,7 @@ import {
   getVoiceNote,
   deleteVoiceNote,
   createEmailDraft,
+  queueEmailDraftImprovement,
   EmailSendRateLimitError,
   NoteStorageLimitError,
   createAlternateEmailDraft,
@@ -119,7 +119,8 @@ import {
 } from './db.js';
 import { draftEmail, isAIProviderEnabled, isCardAIEnabled, isEmailDraftAIEnabled, readCard, suggestFollowUp } from './ai.js';
 import { isGeminiCardEnabled } from './gemini-card.js';
-import { summarizeCheckedTranscript } from './gemini-conversation.js';
+import { suggestConversationContext, summarizeCheckedTranscript } from './gemini-conversation.js';
+import { suggestBusinessProfile } from './gemini-profile.js';
 import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
@@ -913,15 +914,16 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
   try {
     const saved = await addConversation(actor.id, workspace.id, id.data, parsed.data);
     const draftSettings = await getWorkspaceSetting(actor.id, workspace.id, 'draftAutomation') as { autoDraftAfterConversation?: boolean } | undefined;
-    let autoDraft = null;
+    let autoDraft: (Omit<Awaited<ReturnType<typeof createEmailDraft>>, 'generation'> & { generation: string }) | null = null;
     if (draftSettings?.autoDraftAfterConversation && !saved.duplicate) {
       try {
-        let generated: { subject: string; body: string } | null = null;
+        autoDraft = await createEmailDraft(actor.id, workspace.id, id.data);
         if (isEmailDraftAIEnabled()) {
-          try { generated = await draftEmail((await getEmailDraftSuggestion(actor.id, workspace.id, id.data)).aiContext); }
-          catch { console.error(JSON.stringify({ event: 'ai_email_suggestion_unavailable', workspaceId: workspace.id })); }
+          try {
+            await queueEmailDraftImprovement(workspace.id, autoDraft.id, autoDraft.subject, autoDraft.body);
+            autoDraft = { ...autoDraft, generation: 'pending' };
+          } catch { console.error(JSON.stringify({ event: 'draft_improvement_not_queued', workspaceId: workspace.id })); }
         }
-        autoDraft = await createEmailDraft(actor.id, workspace.id, id.data, generated ?? undefined);
       }
       catch { console.error(JSON.stringify({ event: 'automatic_draft_unavailable', workspaceId: workspace.id })); }
     }
@@ -944,6 +946,22 @@ app.post('/api/contacts/:contactId/conversation-summary-suggestion', aiSuggestio
   catch (error) { res.status(503).json({ code: 'summary_unavailable', message: error instanceof Error ? error.message : 'A summary could not be prepared.' }); }
 });
 
+app.post('/api/contacts/:contactId/conversation-context-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.contactId);
+  const parsed = z.object({ text: z.string().trim().min(1).max(4000) }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add what you discussed first.' });
+  const detail = await getPersonDetail(actor.id, workspace.id, id.data);
+  if (!detail) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
+  const settings = await getWorkspaceSetting(actor.id, workspace.id, workspace.kind === 'personal' ? 'aboutMe' : 'knowledge') as Record<string, unknown> | undefined;
+  const previous = detail.conversationMemories as Array<{ summary?: string }>;
+  try {
+    res.json(await suggestConversationContext({ note: parsed.data.text, personName: String(detail.person.name ?? ''),
+      ourRole: String(settings?.ourRole ?? settings?.role ?? ''), whatWeSell: String(settings?.whatYouSell ?? settings?.lookingFor ?? ''),
+      previousSummary: previous[0]?.summary ?? '' }));
+  } catch (error) { res.status(503).json({ code: 'context_suggestion_unavailable', message: error instanceof Error ? error.message : 'AI note help is unavailable.' }); }
+});
+
 app.put('/api/contacts/:contactId/conversations/:encounterId/context', requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const contactId = z.string().min(1).max(80).safeParse(req.params.contactId);
@@ -961,15 +979,14 @@ app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireCon
   const id = z.string().min(1).max(80).safeParse(req.params.contactId);
   if (!id.success) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
   try {
-    let generated: { subject: string; body: string } | null = null;
+    const created = await createEmailDraft(actor.id, workspace.id, id.data);
     if (isEmailDraftAIEnabled()) {
       try {
-        const suggestion = await getEmailDraftSuggestion(actor.id, workspace.id, id.data);
-        generated = await draftEmail(suggestion.aiContext);
-      }
-      catch { console.error(JSON.stringify({ event: 'ai_email_suggestion_unavailable', workspaceId: workspace.id })); }
+        await queueEmailDraftImprovement(workspace.id, created.id, created.subject, created.body);
+        return res.status(201).json({ ...created, generation: 'pending' });
+      } catch { console.error(JSON.stringify({ event: 'draft_improvement_not_queued', workspaceId: workspace.id })); }
     }
-    res.status(201).json(await (createEmailDraft(actor.id, workspace.id, id.data, generated ?? undefined)));
+    res.status(201).json(created);
   }
   catch (error) { res.status(409).json({ code: 'email_draft_not_created', message: error instanceof Error ? error.message : 'An email draft could not be created.' }); }
 });
@@ -1227,6 +1244,15 @@ const emailSettingsSchema = z.object({
 }).strict();
 
 const capturePreferenceSchema = z.object({ afterSaveEmail: z.enum(['ask', 'never']) }).strict();
+
+app.post('/api/setup/profile-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { workspace } = res.locals.context as RequestContext;
+  if (workspace.kind !== 'company' || workspace.role !== 'admin') return res.status(403).json({ code: 'settings_permission', message: 'A company admin manages shared email context.' });
+  const parsed = z.object({ sourceText: z.string().trim().min(30).max(8000) }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ code: 'invalid_profile_source', message: 'Paste at least a short paragraph from your website or brochure.' });
+  try { res.json(await suggestBusinessProfile(parsed.data.sourceText)); }
+  catch (error) { res.status(503).json({ code: 'profile_suggestion_unavailable', message: error instanceof Error ? error.message : 'AI setup help is unavailable.' }); }
+});
 
 app.get('/api/preferences/capture', requireContext, async (_req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;

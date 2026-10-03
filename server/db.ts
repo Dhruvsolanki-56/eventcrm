@@ -545,7 +545,14 @@ export async function getDashboard(actorId: string, workspaceId: string) {
   const profile = await (getWorkspaceSetting(actorId, workspaceId, profileKey)) as Record<string, unknown> | undefined;
   const profileFields = workspaceKind === 'personal' ? ['role', 'company', 'lookingFor'] : ['whatYouSell', 'productsText'];
   const hasPersonalizationDetails = profileFields.some((field) => typeof profile?.[field] === 'string' && (profile[field] as string).trim().length > 0);
-  return { counts, due, nextReviewScanId, hasPersonalizationDetails, timeZone };
+  const draftRow = await db.prepare(`SELECT COUNT(*) AS count FROM emails m
+    JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
+    JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
+    LEFT JOIN encounters linked ON linked.id=m.encounter_id AND linked.workspace_id=m.workspace_id
+    WHERE m.workspace_id=? AND m.status='draft' AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${emailAccessSql()}`)
+    .get(actorId, workspaceId, actorId, actorId, actorId) as { count: number };
+  const draftsReady = draftRow.count;
+  return { counts: { ...counts, drafts_ready: draftsReady }, due, nextReviewScanId, hasPersonalizationDetails, timeZone };
 }
 
 export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false) {
@@ -1607,7 +1614,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const senderOrganization = workspace?.kind === 'personal' && typeof settings.company === 'string' && settings.company.trim() ? settings.company.trim().slice(0, 120) : workspace?.name ?? '';
   const profileSignature = typeof settings.signature === 'string' ? settings.signature.trim().slice(0, 600) : '';
   const noteAccess = await (noteScope(actorId, workspaceId));
-  const recentConversations = await (db.prepare(`SELECT n.created_at AS date,e.name AS event_name,en.id AS encounter_id,
+  const recentConversations = await (db.prepare(`SELECT n.created_at AS date,n.kind,e.name AS event_name,en.id AS encounter_id,
       en.summary,en.open_question,en.promised_next_step,en.changed_since_last,
       CASE WHEN n.kind='audio' THEN n.transcript ELSE n.body END AS text
     FROM notes n LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
@@ -1615,7 +1622,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
     WHERE n.workspace_id=? AND n.contact_id=? AND ((n.kind='text' AND n.body<>'') OR (n.kind='audio' AND n.transcript<>''))
       AND ${visibleNoteSql('n')}
       AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
-    ORDER BY n.created_at DESC,n.id DESC LIMIT 6`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ date: string; event_name: string | null; encounter_id: string | null; text: string; summary: string | null; open_question: string | null; promised_next_step: string | null; changed_since_last: string | null }>;
+    ORDER BY n.created_at DESC,n.id DESC LIMIT 6`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ date: string; kind: 'audio' | 'text'; event_name: string | null; encounter_id: string | null; text: string; summary: string | null; open_question: string | null; promised_next_step: string | null; changed_since_last: string | null }>;
   const latest = recentConversations[0];
   const emailEventName = recentConversations.length ? recentConversations[0].event_name : contact.event_name;
   const emailEncounterId = recentConversations.length ? recentConversations[0].encounter_id : contact.encounter_id;
@@ -1624,17 +1631,24 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const interestedProductNames = interestedProducts.map((product) => product.name);
   const greeting = contact.name.split(/\s+/)[0] || 'there';
   const requestedWrittenFollowUp = /\b(?:official|formal) email\b|\bfollow[ -]?up (?:email|message)\b/i.test(latest?.text || '');
+  // A checked summary is strongest. With only a rough note, quote only a
+  // narrow request phrase; never turn a team instruction into a client promise.
+  const roughRequest = latest?.text.match(/\basked (?:for|about|whether)\s+([^.;!?\n]{5,140})/i)?.[1]?.trim() ?? '';
+  const safeRoughRequest = /\b(?:send|promise|offer|agree|paid|payment|accepted|confirmed)\b/i.test(roughRequest) ? '' : roughRequest;
+  const checkedTopic = latest?.summary?.match(/\b(?:needs|wants|asked for|interested in)\s+([^.;!?\n]{5,140})/i)?.[1]?.trim() ?? '';
+  const relevantPoint = (checkedTopic || safeRoughRequest).slice(0, 180);
   const subject = requestedWrittenFollowUp ? 'Following up on your project request' : variant === 'alternate' ? 'A quick follow-up' : 'Following up on our conversation';
   const opening = tone === 'Professional' ? 'Thank you for speaking with me.' : 'Thanks for speaking with me.';
+  const topicSentence = relevantPoint ? ` I’m following up about ${relevantPoint.replace(/[.?!]+$/, '')}.` : '';
   const requestForClarity = requestedWrittenFollowUp
     ? 'I’m following up in writing as requested. Could you confirm the scope you would like us to cover and any questions you want addressed?'
     : variant === 'alternate'
     ? 'I want to make sure my next message covers what you need. Could you confirm the main point you would like us to address?'
     : 'I want to make sure I follow up on the right details. Could you confirm what you need from us next?';
-  const body = `Hi ${greeting},\n\n${opening} ${requestForClarity}\n\n${profileSignature || await (getActorName(actorId))}`;
+  const body = `Hi ${greeting},\n\n${opening}${topicSentence} ${requestForClarity}\n\n${profileSignature || await (getActorName(actorId))}`;
   const sourcesUsed = [
     ...(emailEventName ? [{ label: 'Event', excerpt: emailEventName }] : []),
-    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} conversation${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: item.text.trim().slice(0, 180) })),
+    ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} ${item.kind === 'audio' ? 'checked voice transcript' : 'conversation'}${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: item.text.trim().slice(0, 180) })),
     ...(latest?.open_question ? [{ label: 'Open question', excerpt: latest.open_question.slice(0, 180) }] : []),
     ...(latest?.promised_next_step ? [{ label: 'Agreed next step', excerpt: latest.promised_next_step.slice(0, 180) }] : []),
     ...(latest?.changed_since_last ? [{ label: 'What changed', excerpt: latest.changed_since_last.slice(0, 180) }] : []),
@@ -1649,7 +1663,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
       firstName: greeting, companyName: contact.company_name, eventName: emailEventName,
       senderOrganization, senderRole, senderOfferings: whatYouSell, senderGoal: lookingFor,
       productsOfInterest: interestedProductNames, companyProducts: productNames,
-      recentConversations: recentConversations.slice(0, 4).map((item) => ({ date: item.date, eventName: item.event_name, rawNote: item.text.trim().slice(0, 600), checkedSummary: (item.summary || '').trim().slice(0, 500), openQuestion: (item.open_question || '').trim().slice(0, 300), promisedNextStep: (item.promised_next_step || '').trim().slice(0, 300), changedSinceLast: (item.changed_since_last || '').trim().slice(0, 300) })),
+      recentConversations: recentConversations.slice(0, 4).map((item) => ({ date: item.date, eventName: item.event_name, sourceType: item.kind === 'audio' ? 'voice' as const : 'text' as const, rawNote: item.text.trim().slice(0, 600), checkedSummary: (item.summary || '').trim().slice(0, 500), openQuestion: (item.open_question || '').trim().slice(0, 300), promisedNextStep: (item.promised_next_step || '').trim().slice(0, 300), changedSinceLast: (item.changed_since_last || '').trim().slice(0, 300) })),
       tone: tone as 'Friendly' | 'Professional' | 'Short',
       signature: profileSignature || await (getActorName(actorId)),
       neverPromise: typeof settings.neverPromise === 'string' ? settings.neverPromise.trim().slice(0, 500) : '',
@@ -1672,6 +1686,29 @@ export async function createEmailDraft(actorId: string, workspaceId: string, con
   const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
   const generation = generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const;
   return { id, ...publicDraft, generation, status: 'draft' as const };
+}
+
+// Keep model latency out of capture and conversation saves. The job only carries
+// identifiers and a hash of the starting text; it never stores a second copy of
+// the contact's conversation in its payload.
+export async function queueEmailDraftImprovement(workspaceId: string, emailId: string, subject: string, body: string) {
+  const originalHash = createHash('sha256').update(`${subject}\u0000${body}`).digest('hex');
+  await db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at,max_attempts) VALUES (?,?, 'email_draft', ?, ?, 1)`)
+    .run(randomUUID(), workspaceId, JSON.stringify({ emailId, originalHash }), new Date().toISOString());
+}
+
+export async function getEmailDraftForWorker(workspaceId: string, emailId: string) {
+  return await db.prepare(`SELECT id,created_by,contact_id,subject,body,status FROM emails WHERE workspace_id=? AND id=?`)
+    .get(workspaceId, emailId) as { id: string; created_by: string; contact_id: string; subject: string; body: string; status: string } | undefined;
+}
+
+export async function applyEmailDraftImprovement(workspaceId: string, emailId: string, jobId: string, originalHash: string, subject: string, body: string) {
+  const original = await getEmailDraftForWorker(workspaceId, emailId);
+  if (!original || original.status !== 'draft' || createHash('sha256').update(`${original.subject}\u0000${original.body}`).digest('hex') !== originalHash) return false;
+  const changed = await db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft' AND subject=? AND body=?
+    AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND workspace_id=? AND type='email_draft' AND status='running')`)
+    .run(subject, body, workspaceId, emailId, original.subject, original.body, jobId, workspaceId);
+  return changed.changes > 0;
 }
 
 export class EmailSendRateLimitError extends Error {
@@ -1703,6 +1740,7 @@ export async function getAlternateEmailDraftSuggestion(actorId: string, workspac
 export async function createAlternateEmailDraft(actorId: string, workspaceId: string, emailId: string, generated?: { subject: string; body: string }) {
   const suggestion = await getAlternateEmailDraftSuggestion(actorId, workspaceId, emailId);
   if (!suggestion) return undefined;
+  await db.prepare(`UPDATE jobs SET status='failed',last_error='A person chose another version.',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND type='email_draft' AND json_extract(payload_json,'$.emailId')=? AND status IN ('queued','running')`).run(workspaceId, emailId);
   const updated = await (db.prepare(`UPDATE emails SET subject=?,body=?,sources_json=? WHERE workspace_id=? AND id=? AND status='draft' AND contact_id IN (
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL AND archived_at IS NULL)`)
     .run(generated?.subject ?? suggestion.subject, generated?.body ?? suggestion.body, JSON.stringify(suggestion.sourcesUsed), workspaceId, emailId, workspaceId));
@@ -1720,6 +1758,7 @@ export async function updateEmailDraft(actorId: string, workspaceId: string, ema
   await (assertWorkspaceAccess(actorId, workspaceId));
   const draft = await (db.prepare(`SELECT contact_id FROM emails WHERE workspace_id=? AND id=? AND status='draft'`).get(workspaceId, emailId)) as { contact_id: string } | undefined;
   if (!draft || !await (emailAccessible(actorId, workspaceId, emailId))) return false;
+  await db.prepare(`UPDATE jobs SET status='failed',last_error='A person saved this draft.',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND type='email_draft' AND json_extract(payload_json,'$.emailId')=? AND status IN ('queued','running')`).run(workspaceId, emailId);
   const changed = await (db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft' AND contact_id IN (
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL)`)
     .run(subject.trim(), body.trim(), workspaceId, emailId, workspaceId));
@@ -1803,9 +1842,12 @@ export async function recordEmailFailed(emailId: string, workspaceId: string) {
 
 export async function getEmailStatus(actorId: string, workspaceId: string, emailId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const email = await (db.prepare(`SELECT id,contact_id,status,error_message FROM emails WHERE workspace_id=? AND id=?`).get(workspaceId, emailId)) as { id: string; contact_id: string; status: string; error_message: string | null } | undefined;
+  const email = await (db.prepare(`SELECT id,contact_id,status,error_message,subject,body FROM emails WHERE workspace_id=? AND id=?`).get(workspaceId, emailId)) as { id: string; contact_id: string; status: string; error_message: string | null; subject: string; body: string } | undefined;
   if (!email || !await (emailAccessible(actorId, workspaceId, emailId))) return undefined;
-  return { id: email.id, status: email.status, error: email.error_message };
+  const job = await db.prepare(`SELECT status FROM jobs WHERE workspace_id=? AND type='email_draft' AND json_extract(payload_json,'$.emailId')=? ORDER BY created_at DESC LIMIT 1`)
+    .get(workspaceId, emailId) as { status: string } | undefined;
+  return { id: email.id, status: email.status, error: email.error_message, subject: email.subject, body: email.body,
+    generation: job ? job.status === 'succeeded' ? 'ai' : job.status === 'failed' ? 'fallback' : 'pending' : 'template' };
 }
 
 export async function retryEmail(actorId: string, workspaceId: string, emailId: string) {
@@ -2149,7 +2191,7 @@ export async function claimNextJob(): Promise<JobRow | undefined> {
   return await (db.transaction(async () => {
     const job = await (db.prepare(`SELECT id,workspace_id,type,payload_json,attempts,max_attempts FROM jobs
       WHERE (status='queued' AND run_at<=?) OR (status='running' AND lease_until<=?)
-      ORDER BY run_at,created_at LIMIT 1`).get(now, now)) as JobRow | undefined;
+      ORDER BY CASE type WHEN 'email_send' THEN 0 WHEN 'password_reset_email' THEN 0 WHEN 'email_verification' THEN 0 WHEN 'card_read' THEN 1 WHEN 'email_draft' THEN 3 ELSE 2 END,run_at,created_at LIMIT 1`).get(now, now)) as JobRow | undefined;
     if (!job) return undefined;
     await (db.prepare(`UPDATE jobs SET status='running',attempts=attempts+1,lease_until=?,last_error=NULL WHERE id=?`)
       .run(new Date(Date.now() + 60_000).toISOString(), job.id));
@@ -2159,7 +2201,7 @@ export async function claimNextJob(): Promise<JobRow | undefined> {
 
 export async function completeJob(jobId: string) {
   await (db.prepare(`UPDATE jobs SET status='succeeded',payload_json=CASE WHEN type IN ('password_reset_email','email_verification') THEN json_set(payload_json,'$.token','') ELSE payload_json END,
-    lease_until=NULL,last_error=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`)
+    lease_until=NULL,last_error=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running'`)
     .run(jobId));
 }
 

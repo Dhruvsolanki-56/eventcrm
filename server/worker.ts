@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { createTransport } from 'nodemailer';
-import { completeJob, claimNextJob, failJobAttempt, getDailyDigestForWorker, getEmailForWorker, getEmailVerificationForWorker, getPasswordResetEmailForWorker, getScanForWorker, getWorkspaceEmailSettingsForWorker, markScanNeedsInput, markScanReading, recordEmailFailed, recordEmailSent, scheduleReminderWork, updateDigestRunForJob, updateScanRead, type JobRow } from './db.js';
+import { applyEmailDraftImprovement, completeJob, claimNextJob, failJobAttempt, getDailyDigestForWorker, getEmailDraftForWorker, getEmailDraftSuggestion, getEmailForWorker, getEmailVerificationForWorker, getPasswordResetEmailForWorker, getScanForWorker, getWorkspaceEmailSettingsForWorker, markScanNeedsInput, markScanReading, recordEmailFailed, recordEmailSent, scheduleReminderWork, updateDigestRunForJob, updateScanRead, type JobRow } from './db.js';
+import { draftEmail } from './ai.js';
 import { safeFailureCode, safeJobFailureMessage, serverCardReaderUnavailableMessage } from './safe-failure.js';
 import { sendResendEmail } from './resend-email.js';
 
@@ -16,6 +17,22 @@ async function senderForWorkspace(workspaceId: string) {
 }
 
 async function processJob(job: JobRow) {
+  if (job.type === 'email_draft') {
+    const payload = JSON.parse(job.payload_json) as { emailId?: string; originalHash?: string };
+    if (!payload.emailId || !payload.originalHash) throw new Error('Draft job details are incomplete.');
+    const existing = await getEmailDraftForWorker(job.workspace_id, payload.emailId);
+    if (!existing || existing.status !== 'draft') { await completeJob(job.id); return; }
+    const suggestion = await getEmailDraftSuggestion(existing.created_by, job.workspace_id, existing.contact_id);
+    const generated = await draftEmail(suggestion.aiContext);
+    if (!generated) throw new Error('AI draft is unavailable.');
+    if (!await applyEmailDraftImprovement(job.workspace_id, existing.id, job.id, payload.originalHash, generated.subject, generated.body)) {
+      // The person edited or approved the template while AI was working.
+      // Never replace their version.
+      throw new Error('The draft changed before AI finished.');
+    }
+    await completeJob(job.id);
+    return;
+  }
   if (job.type === 'password_reset_email' || job.type === 'email_verification') {
     const payload = JSON.parse(job.payload_json) as { userId?: string; token?: string };
     if (!payload.userId || !payload.token) throw new Error('The account email message is incomplete.');

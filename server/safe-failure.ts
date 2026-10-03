@@ -20,6 +20,8 @@ export function safeJobFailureMessage(type: string): string {
       return 'The mail server could not accept this message.';
     case 'card_read':
       return 'Card reading did not finish on the server. Open Review to try on-device reading, or type it in.';
+    case 'email_draft':
+      return 'AI could not improve this draft. The editable template remains saved and unsent.';
     default:
       return 'This background task did not finish. Try again or contact your admin.';
   }
