@@ -10,6 +10,7 @@ import { resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { createTransport } from 'nodemailer';
+import { leadMailTransportReady, sendResendEmail } from './resend-email.js';
 import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetConfirmSchema, PasswordResetRequestSchema, SaveLeadSchema, SignupSchema, SessionSchema, WebsiteSchema } from '../shared/contracts.js';
 import {
   createSession,
@@ -70,6 +71,7 @@ import {
   clearSampleWorkspaceData,
   clearPersonalWorkspaceData,
   setVoiceNoteText,
+  setVoiceNoteSummary,
   getVoiceNote,
   deleteVoiceNote,
   createEmailDraft,
@@ -100,6 +102,7 @@ import {
   discardScan,
   findScanByClientId,
   findScanByContentHash,
+  findLikelySavedScan,
   applyQrToScan,
   markScanNeedsInputByActor,
   saveScannedLead,
@@ -113,6 +116,8 @@ import {
 } from './db.js';
 import { draftEmail, isAIProviderEnabled, isCardAIEnabled, readCard, suggestFollowUp } from './ai.js';
 import { isGeminiCardEnabled } from './gemini-card.js';
+import { summarizeCheckedTranscript } from './gemini-conversation.js';
+import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
 
@@ -256,7 +261,7 @@ async function workspaceMailSender(workspaceId: string) {
   const configured = await (getWorkspaceEmailSettingsForWorker(workspaceId));
   const fromAddress = configured?.fromAddress ?? process.env.SMTP_FROM_ADDRESS?.trim();
   const fromName = configured?.fromName ?? process.env.SMTP_FROM_NAME?.trim() ?? 'Gather';
-  if (!process.env.SMTP_HOST || !fromAddress || !z.email().safeParse(fromAddress).success || !fromName || /[\r\n]/.test(fromName)) return null;
+  if (!leadMailTransportReady() || !fromAddress || !z.email().safeParse(fromAddress).success || !fromName || /[\r\n]/.test(fromName)) return null;
   return { fromAddress, fromName: fromName.slice(0, 100) };
 }
 const requireEmailVerification = (isProduction && !publicDemoMode) || process.env.REQUIRE_EMAIL_VERIFICATION === 'true';
@@ -287,7 +292,7 @@ app.get('/api/capabilities', (_req, res) => res.json({
   aiCardProvider: isGeminiCardEnabled() ? 'gemini' : isAIProviderEnabled() ? 'anthropic' : null,
   emailDrafts: isAIProviderEnabled(),
   followUpSuggestions: isAIProviderEnabled(),
-  emailSending: Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM_ADDRESS),
+  emailSending: Boolean(leadMailTransportReady() && process.env.SMTP_FROM_ADDRESS),
   voiceTranscription: 'browser',
 }));
 
@@ -493,7 +498,7 @@ async function updateOnboardingStep(actorId: string, workspaceId: string, step: 
 app.get('/api/onboarding', requireContext, async (_req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const sender = await (workspaceMailSender(workspace.id));
-  const mailReady = Boolean(process.env.SMTP_HOST && sender);
+  const mailReady = Boolean(leadMailTransportReady() && sender);
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     state: await (getOnboardingState(actor.id, workspace.id)),
@@ -523,8 +528,18 @@ app.post('/api/onboarding/test-email', emailTestLimiter, requireContext, async (
   const recipient = parsed.data.recipient ?? actor.email;
   const host = process.env.SMTP_HOST?.trim();
   const sender = await (workspaceMailSender(workspace.id));
-  if (!host || !sender) {
+  if ((!host && process.env.EMAIL_TRANSPORT !== 'resend') || !sender) {
     return res.status(503).json({ code: 'email_not_configured', message: 'Mail sending is not set up yet. No test email was sent.' });
+  }
+  if (process.env.EMAIL_TRANSPORT === 'resend') {
+    try {
+      await sendResendEmail({ id: randomUUID(), fromAddress: sender.fromAddress, fromName: sender.fromName,
+        to: recipient, subject: 'Gather test email',
+        text: `This test message was requested from the Gather setup screen for ${workspace.name}. The provider accepted it; that does not confirm inbox delivery.` });
+      return res.json({ status: 'sent_to_server', message: `The email provider accepted a test message for ${recipient}. Inbox delivery is not confirmed.` });
+    } catch {
+      return res.status(502).json({ code: 'email_test_failed', message: 'The email provider did not accept the test message. Check its key and verified sender.' });
+    }
   }
   const port = Number(process.env.SMTP_PORT ?? 587);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return res.status(503).json({ code: 'email_settings_invalid', message: 'The mail server settings need attention. No test email was sent.' });
@@ -894,7 +909,13 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add a conversation note and choose an event, or choose no event.' });
   try {
     const saved = await addConversation(actor.id, workspace.id, id.data, parsed.data);
-    res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate });
+    const draftSettings = await getWorkspaceSetting(actor.id, workspace.id, 'draftAutomation') as { autoDraftAfterConversation?: boolean } | undefined;
+    let autoDraft = null;
+    if (draftSettings?.autoDraftAfterConversation && !saved.duplicate) {
+      try { autoDraft = await createEmailDraft(actor.id, workspace.id, id.data); }
+      catch { console.error(JSON.stringify({ event: 'automatic_draft_unavailable', workspaceId: workspace.id })); }
+    }
+    res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate, autoDraft });
   } catch (error) {
     if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
     const message = error instanceof Error ? error.message : 'The conversation could not be saved.';
@@ -968,7 +989,7 @@ app.post('/api/emails/:emailId/send', requireContext, async (req, res) => {
   const publicUrl = process.env.PUBLIC_BASE_URL ?? '';
   if (isProduction && publicUrl && !publicUrl.startsWith('https://')) return res.status(503).json({ code: 'https_required', message: 'The public email link must use HTTPS before sending.' });
   try {
-    const result = await (approveEmailDraft(actor.id, workspace.id, id.data, Boolean(process.env.SMTP_HOST && await (workspaceMailSender(workspace.id))), publicUrl));
+    const result = await (approveEmailDraft(actor.id, workspace.id, id.data, Boolean(leadMailTransportReady() && await (workspaceMailSender(workspace.id))), publicUrl));
     res.json(result);
   } catch (error) {
     if (error instanceof EmailSendRateLimitError) {
@@ -1120,6 +1141,26 @@ app.put('/api/notes/:noteId/text', requireContext, async (req, res) => {
   }
 });
 
+app.post('/api/notes/:noteId/summary-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.noteId);
+  if (!id.success) return res.status(404).json({ code: 'audio_missing', message: 'This recording is no longer available.' });
+  const note = await getVoiceNote(actor.id, workspace.id, id.data);
+  if (!note) return res.status(404).json({ code: 'audio_missing', message: 'This recording is no longer available.' });
+  if (!note.transcript.trim()) return res.status(409).json({ code: 'transcript_needed', message: 'Check and save the words first.' });
+  try { return res.json({ summary: await summarizeCheckedTranscript(note.transcript) }); }
+  catch (error) { return res.status(503).json({ code: 'summary_unavailable', message: error instanceof Error ? error.message : 'AI note help is unavailable.' }); }
+});
+
+app.put('/api/notes/:noteId/summary', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.noteId);
+  const parsed = z.object({ summary: z.string().trim().max(1000) }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_summary', message: 'Check the summary and try again.' });
+  if (!await setVoiceNoteSummary(actor.id, workspace.id, id.data, parsed.data.summary)) return res.status(404).json({ code: 'audio_missing', message: 'This recording is no longer available.' });
+  res.json({ saved: true });
+});
+
 app.delete('/api/notes/:noteId', requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const id = z.string().uuid().safeParse(req.params.noteId);
@@ -1131,7 +1172,7 @@ app.delete('/api/notes/:noteId', requireContext, async (req, res) => {
 });
 
 const settingSchema = z.object({
-  key: z.enum(['knowledge', 'aboutMe', 'email', 'capture', 'reminders', 'onboarding']),
+  key: z.enum(['knowledge', 'aboutMe', 'email', 'capture', 'reminders', 'onboarding', 'draftAutomation']),
   value: z.unknown(),
 });
 const emailSettingsSchema = z.object({
@@ -1159,7 +1200,7 @@ app.put('/api/preferences/capture', requireContext, async (req, res) => {
 app.get('/api/settings', requireContext, async (_req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   if (workspace.kind === 'company' && workspace.role !== 'admin') return res.status(403).json({ code: 'settings_permission', message: 'Ask your company admin to change workspace settings.' });
-  const keys = ['knowledge', 'aboutMe', 'email', 'capture', 'reminders', 'onboarding'] as const;
+  const keys = ['knowledge', 'aboutMe', 'email', 'capture', 'reminders', 'onboarding', 'draftAutomation'] as const;
   const settings = await Promise.all(keys.map(async (key) => [key, await getWorkspaceSetting(actor.id, workspace.id, key) ?? null] as const));
   res.json(Object.fromEntries(settings));
 });
@@ -1201,6 +1242,11 @@ app.put('/api/settings', requireContext, async (req, res) => {
     try { new Intl.DateTimeFormat('en-US', { timeZone: reminderSettings.data.timeZone }).format(new Date()); }
     catch { return res.status(400).json({ code: 'invalid_reminder_timezone', message: 'Choose a valid time zone and try again.' }); }
     value = reminderSettings.data;
+  }
+  if (parsed.data.key === 'draftAutomation') {
+    const settings = z.object({ autoDraftAfterConversation: z.boolean() }).strict().safeParse(value);
+    if (!settings.success) return res.status(400).json({ code: 'invalid_draft_automation', message: 'Choose whether to prepare drafts after a conversation.' });
+    value = settings.data;
   }
   await (setWorkspaceSetting(actor.id, workspace.id, parsed.data.key, value));
   res.json({ saved: true, changedBy: actor.name });
@@ -1328,6 +1374,13 @@ app.post('/api/scans', scanLimiter, requireContext, express.raw({ type: ['image/
   const contentHash = createHash('sha256').update(bytes).digest('hex');
   const existingImage = await findScanByContentHash(actor.id, workspace.id, contentHash);
   if (existingImage) return res.status(200).json({ scan: publicScan(existingImage), duplicate: true, duplicateImage: true });
+  let visualHash: string;
+  try { visualHash = await imageDifferenceHash(bytes); }
+  catch { return res.status(415).json({ code: 'invalid_photo', message: 'This photo could not be read. Choose a clear JPEG, PNG or WebP image.' }); }
+  if (req.header('x-allow-similar-scan') !== 'true') {
+    const likely = await findLikelySavedScan(actor.id, workspace.id, visualHash);
+    if (likely) return res.status(200).json({ scan: publicScan(likely), possibleDuplicate: true });
+  }
   const scanId = randomUUID();
   const extension = detectedMime === 'image/jpeg' ? '.jpg' : detectedMime === 'image/png' ? '.png' : '.webp';
   const uploadRoot = resolve(process.env.UPLOADS_PATH ?? 'uploads');
@@ -1340,7 +1393,7 @@ app.post('/api/scans', scanLimiter, requireContext, express.raw({ type: ['image/
     try {
       const result = await (createScan({
         actorId: actor.id, workspaceId: workspace.id, eventId,
-        clientScanId: clientScanParsed.data, clientOrder: clientOrderParsed.data, scanId, source: sourceParsed.data, imagePath, imageMime: detectedMime, imageBytes: bytes.length, contentHash,
+        clientScanId: clientScanParsed.data, clientOrder: clientOrderParsed.data, scanId, source: sourceParsed.data, imagePath, imageMime: detectedMime, imageBytes: bytes.length, contentHash, visualHash,
       }));
       if (result.duplicate) await unlink(imagePath).catch(() => undefined);
       return res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate, duplicateImage: result.duplicate && result.scan.client_scan_id !== clientScanParsed.data });

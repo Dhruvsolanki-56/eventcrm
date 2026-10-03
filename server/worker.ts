@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { createTransport } from 'nodemailer';
 import { completeJob, claimNextJob, failJobAttempt, getDailyDigestForWorker, getEmailForWorker, getEmailVerificationForWorker, getPasswordResetEmailForWorker, getScanForWorker, getWorkspaceEmailSettingsForWorker, markScanNeedsInput, markScanReading, recordEmailFailed, recordEmailSent, scheduleReminderWork, updateDigestRunForJob, updateScanRead, type JobRow } from './db.js';
 import { safeFailureCode, safeJobFailureMessage, serverCardReaderUnavailableMessage } from './safe-failure.js';
+import { sendResendEmail } from './resend-email.js';
 
 let active = false;
 let timer: NodeJS.Timeout | undefined;
@@ -93,7 +94,18 @@ async function processJob(job: JobRow) {
     const host = process.env.SMTP_HOST;
     const sender = await (senderForWorkspace(job.workspace_id));
     const publicBase = process.env.PUBLIC_BASE_URL?.replace(/\/+$/, '');
-    if (!host || !sender || !publicBase) throw new Error('Mail server settings are incomplete.');
+    if ((!host && process.env.EMAIL_TRANSPORT !== 'resend') || !sender || !publicBase) throw new Error('Mail server settings are incomplete.');
+    const unsubscribeUrl = `${publicBase}/unsubscribe/${encodeURIComponent(payload.unsubscribeToken)}`;
+    if (process.env.EMAIL_TRANSPORT === 'resend') {
+      const messageId = await sendResendEmail({
+        id: email.id, fromName: sender.name, fromAddress: sender.address, to: email.recipient,
+        subject: email.subject, text: `${email.body}\n\nTo stop receiving these emails, visit: ${unsubscribeUrl}`,
+        unsubscribeUrl,
+      });
+      await (recordEmailSent(email.id, job.workspace_id, messageId));
+      await (completeJob(job.id));
+      return;
+    }
     const port = Number(process.env.SMTP_PORT ?? 587);
     const transport = createTransport({
       host, port, secure: process.env.SMTP_SECURE === 'true' || port === 465,
@@ -102,7 +114,6 @@ async function processJob(job: JobRow) {
       tls: { minVersion: 'TLSv1.2' },
     });
     try {
-      const unsubscribeUrl = `${publicBase}/unsubscribe/${encodeURIComponent(payload.unsubscribeToken)}`;
       const result = await transport.sendMail({
         from: { name: sender.name, address: sender.address },
         to: email.recipient, subject: email.subject,

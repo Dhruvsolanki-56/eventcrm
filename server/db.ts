@@ -596,7 +596,8 @@ export async function suggestCompanies(actorId: string, workspaceId: string, nam
   const ranked = rows.map((company) => {
     const exactDomain = Boolean(domain && (company.normalized_domain === domain || aliasMap.get(company.id)?.domains.has(domain)));
     const exactName = Boolean(normalizedName && (company.normalized_name === normalizedName || aliasMap.get(company.id)?.names.has(normalizedName)));
-    const similarName = normalizedName.length >= 3 && company.normalized_name.length >= 3 &&
+    const sameCoreName = companyCoreName(name) && companyCoreName(name) === companyCoreName(company.name);
+    const similarName = sameCoreName || normalizedName.length >= 3 && company.normalized_name.length >= 3 &&
       (company.normalized_name.startsWith(normalizedName) || normalizedName.startsWith(company.normalized_name) ||
         editDistance(company.normalized_name, normalizedName) <= 2 ||
         Math.min(company.normalized_name.length, normalizedName.length) / Math.max(company.normalized_name.length, normalizedName.length) >= 0.82 && editDistance(company.normalized_name, normalizedName) <= 4);
@@ -1187,7 +1188,7 @@ export async function getPersonDetail(actorId: string, workspaceId: string, cont
     WHERE c.workspace_id=? AND c.id=? AND c.deleted_at IS NULL`).get(workspaceId, contactId)) as Record<string, unknown> | undefined;
   if (!person || !await (contactAccessible(actorId, workspaceId, contactId))) return undefined;
   const noteAccess = await (noteScope(actorId, workspaceId));
-  const timeline = await (db.prepare(`SELECT 'note' AS kind,n.id,CASE WHEN n.kind='audio' THEN CASE WHEN n.transcript<>'' THEN n.transcript ELSE 'Voice recording — no text added.' END ELSE n.body END AS detail,n.created_at,e.name AS event_name FROM notes n
+  const timeline = await (db.prepare(`SELECT 'note' AS kind,n.id,CASE WHEN n.kind='audio' THEN CASE WHEN n.summary<>'' THEN n.summary WHEN n.transcript<>'' THEN n.transcript ELSE 'Voice recording — no text added.' END ELSE n.body END AS detail,n.created_at,e.name AS event_name FROM notes n
       LEFT JOIN encounters note_en ON note_en.id=n.encounter_id AND note_en.workspace_id=n.workspace_id
       LEFT JOIN events e ON e.id=note_en.event_id AND e.workspace_id=note_en.workspace_id
       WHERE n.workspace_id=? AND n.contact_id=? AND ${visibleNoteSql('n')}
@@ -1200,12 +1201,12 @@ export async function getPersonDetail(actorId: string, workspaceId: string, cont
     ORDER BY created_at DESC LIMIT 60`).all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId, workspaceId, contactId, actorId, workspaceId, contactId, actorId, workspaceId, contactId, actorId, workspaceId, contactId));
   const products = await (db.prepare(`SELECT p.id,p.name,p.description FROM contact_products cp JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id
     WHERE cp.workspace_id=? AND cp.contact_id=? AND p.archived_at IS NULL`).all(workspaceId, contactId));
-  const voiceNotes = await (db.prepare(`SELECT n.id,n.transcript,n.duration_seconds,n.audio_mime,n.created_at FROM notes n
+  const voiceNotes = await (db.prepare(`SELECT n.id,n.transcript,n.summary,n.duration_seconds,n.audio_mime,n.created_at FROM notes n
     LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
     WHERE n.workspace_id=? AND n.contact_id=? AND n.kind='audio' AND ${visibleNoteSql('n')}
       AND (en.event_id IS NULL OR ?=1 OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
     ORDER BY n.created_at DESC`)
-    .all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ id: string; transcript: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>;
+    .all(workspaceId, contactId, noteAccess.all, actorId, actorId, noteAccess.all, actorId)) as Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>;
   return { person, timeline, products, voiceNotes };
 }
 
@@ -1422,18 +1423,32 @@ export async function setVoiceNoteText(actorId: string, workspaceId: string, not
     if (workspaceBytes - currentBytes + nextBytes > workspaceLimit || totalBytes - currentBytes + nextBytes > totalLimit) {
       throw new VoiceStorageLimitError(workspaceBytes - currentBytes + nextBytes > workspaceLimit ? 'workspace' : 'service');
     }
-    const changed = await (db.prepare(`UPDATE notes SET transcript=?,transcript_status='manual' WHERE workspace_id=? AND id=? AND kind='audio' AND contact_id IN (SELECT id FROM contacts WHERE workspace_id=? AND deleted_at IS NULL)`)
+    const changed = await (db.prepare(`UPDATE notes SET transcript=?,summary='',transcript_status='manual' WHERE workspace_id=? AND id=? AND kind='audio' AND contact_id IN (SELECT id FROM contacts WHERE workspace_id=? AND deleted_at IS NULL)`)
       .run(text, workspaceId, noteId, workspaceId));
     if (changed.changes) await (db.prepare(`UPDATE contacts SET version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=(SELECT contact_id FROM notes WHERE id=? AND workspace_id=?)`).run(workspaceId, noteId, workspaceId));
     return changed.changes > 0;
   })());
 }
 
+export async function setVoiceNoteSummary(actorId: string, workspaceId: string, noteId: string, summary: string) {
+  await assertWorkspaceAccess(actorId, workspaceId);
+  if (!await noteVisible(actorId, workspaceId, noteId, true)) return false;
+  return await db.transaction(async () => {
+    const changed = await db.prepare(`UPDATE notes SET summary=? WHERE workspace_id=? AND id=? AND kind='audio' AND transcript<>''
+      AND contact_id IN (SELECT id FROM contacts WHERE workspace_id=? AND deleted_at IS NULL)`)
+      .run(summary.trim(), workspaceId, noteId, workspaceId);
+    if (!changed.changes) return false;
+    await db.prepare(`UPDATE contacts SET version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=(SELECT contact_id FROM notes WHERE id=? AND workspace_id=?)`).run(workspaceId, noteId, workspaceId);
+    await db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id) VALUES (?,?,?,'voice_summary_saved','note',?)`).run(randomUUID(), workspaceId, actorId, noteId);
+    return true;
+  })();
+}
+
 export async function getVoiceNote(actorId: string, workspaceId: string, noteId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const note = await (db.prepare(`SELECT audio_path,audio_mime,contact_id FROM notes WHERE workspace_id=? AND id=? AND kind='audio' AND contact_id IN (SELECT id FROM contacts WHERE workspace_id=? AND deleted_at IS NULL)`)
-    .get(workspaceId, noteId, workspaceId)) as { audio_path: string; audio_mime: string; contact_id: string } | undefined;
-  return note && await (noteVisible(actorId, workspaceId, noteId)) ? { audio_path: note.audio_path, audio_mime: note.audio_mime } : undefined;
+  const note = await (db.prepare(`SELECT audio_path,audio_mime,contact_id,transcript,summary FROM notes WHERE workspace_id=? AND id=? AND kind='audio' AND contact_id IN (SELECT id FROM contacts WHERE workspace_id=? AND deleted_at IS NULL)`)
+    .get(workspaceId, noteId, workspaceId)) as { audio_path: string; audio_mime: string; contact_id: string; transcript: string; summary: string } | undefined;
+  return note && await (noteVisible(actorId, workspaceId, noteId)) ? note : undefined;
 }
 
 export async function deleteVoiceNote(actorId: string, workspaceId: string, noteId: string) {
@@ -1544,7 +1559,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const profileSignature = typeof settings.signature === 'string' ? settings.signature.trim().slice(0, 600) : '';
   const noteAccess = await (noteScope(actorId, workspaceId));
   const recentConversations = await (db.prepare(`SELECT n.created_at AS date,e.name AS event_name,en.id AS encounter_id,
-      CASE WHEN n.kind='audio' THEN n.transcript ELSE n.body END AS text
+      CASE WHEN n.kind='audio' THEN CASE WHEN n.summary<>'' THEN n.summary ELSE n.transcript END ELSE n.body END AS text
     FROM notes n LEFT JOIN encounters en ON en.workspace_id=n.workspace_id AND en.id=n.encounter_id
     LEFT JOIN events e ON e.workspace_id=en.workspace_id AND e.id=en.event_id
     WHERE n.workspace_id=? AND n.contact_id=? AND ((n.kind='text' AND n.body<>'') OR (n.kind='audio' AND n.transcript<>''))
@@ -1850,13 +1865,27 @@ export async function findScanByContentHash(actorId: string, workspaceId: string
     .get(workspaceId, contentHash, actorId, actorId)) as ScanRow | undefined;
 }
 
+export async function findLikelySavedScan(actorId: string, workspaceId: string, visualHash: string) {
+  await assertWorkspaceAccess(actorId, workspaceId);
+  const { imageHashDistance } = await import('./visual-hash.js');
+  const activeBits = imageHashDistance(visualHash, '0000000000000000');
+  if (activeBits < 8 || activeBits > 56) return undefined;
+  const rows = await db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at,s.visual_hash
+    FROM scans s WHERE s.workspace_id=? AND s.status='saved' AND s.contact_id IS NOT NULL AND s.visual_hash IS NOT NULL
+      AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))
+    ORDER BY s.saved_at DESC LIMIT 500`).all(workspaceId, actorId, actorId) as Array<ScanRow & { visual_hash: string }>;
+  const candidate = rows.map((scan) => ({ scan, distance: imageHashDistance(visualHash, scan.visual_hash) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+  return candidate && candidate.distance <= 3 ? candidate.scan : undefined;
+}
+
 function configuredStorageLimit(name: string, fallback: number) {
   const value = process.env[name] === undefined ? fallback : Number(process.env[name]);
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid ${name} storage limit configuration.`);
   return value;
 }
 
-export async function createScan(input: { actorId: string; workspaceId: string; eventId: string | null; clientScanId: string; clientOrder?: number; scanId?: string; source: ScanRow['source']; imagePath: string; imageMime: string; imageBytes: number; contentHash?: string }) {
+export async function createScan(input: { actorId: string; workspaceId: string; eventId: string | null; clientScanId: string; clientOrder?: number; scanId?: string; source: ScanRow['source']; imagePath: string; imageMime: string; imageBytes: number; contentHash?: string; visualHash?: string }) {
   await (assertWorkspaceAccess(input.actorId, input.workspaceId));
   if (!Number.isSafeInteger(input.imageBytes) || input.imageBytes <= 0) throw new Error('scan_storage_limit');
   const scanId = input.scanId ?? randomUUID();
@@ -1883,8 +1912,8 @@ export async function createScan(input: { actorId: string; workspaceId: string; 
     const workspaceBytes = (await (db.prepare(`SELECT COALESCE(SUM(image_bytes),0) AS total FROM scans WHERE workspace_id=? AND image_path IS NOT NULL`).get(input.workspaceId)) as { total: number }).total;
     const allBytes = (await (db.prepare(`SELECT COALESCE(SUM(image_bytes),0) AS total FROM scans WHERE image_path IS NOT NULL`).get()) as { total: number }).total;
     if (workspaceBytes + input.imageBytes > workspaceLimit || allBytes + input.imageBytes > totalLimit) throw new Error('scan_storage_limit');
-    await (db.prepare(`INSERT INTO scans(id,workspace_id,event_id,client_scan_id,source,image_path,image_mime,image_bytes,content_sha256,status,created_by,client_order) VALUES (?,?,?,?,?,?,?,?,?, 'queued',?,?)`)
-      .run(scanId, input.workspaceId, input.eventId, input.clientScanId, input.source, input.imagePath, input.imageMime, input.imageBytes, input.contentHash ?? null, input.actorId, input.clientOrder ?? Date.now() * 10));
+    await (db.prepare(`INSERT INTO scans(id,workspace_id,event_id,client_scan_id,source,image_path,image_mime,image_bytes,content_sha256,visual_hash,status,created_by,client_order) VALUES (?,?,?,?,?,?,?,?,?,?,'queued',?,?)`)
+      .run(scanId, input.workspaceId, input.eventId, input.clientScanId, input.source, input.imagePath, input.imageMime, input.imageBytes, input.contentHash ?? null, input.visualHash ?? null, input.actorId, input.clientOrder ?? Date.now() * 10));
     await (db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at) VALUES (?,?, 'card_read', ?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
       .run(jobId, input.workspaceId, JSON.stringify({ scanId })));
     const scan = await (db.prepare(`SELECT id,client_scan_id,source,image_mime,status,extracted_json,uncertain_json,error_message,contact_id,queued_at,ready_at,saved_at FROM scans WHERE id=?`)
@@ -2149,6 +2178,8 @@ export async function retryJob(actorId: string, workspaceId: string, jobId: stri
 }
 
 const normalizeCompanyName = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+// Legal suffixes are only a review hint: they never silently merge two companies.
+const companyCoreName = (value: string) => normalizeCompanyName(value.replace(/(?:\s|,|\.)+(?:incorporated|inc|limited|ltd|llc|llp|corp(?:oration)?|pvt|private)(?:\s|\.)*$/i, ''));
 async function findExactCompany(workspaceId: string, normalizedName: string, domain: string) {
   const lookup = async (aliasType: 'name' | 'domain', value: string) => {
     if (!value) return undefined;
@@ -2370,7 +2401,7 @@ export async function saveScannedMaterial(actorId: string, workspaceId: string, 
       FROM companies co LEFT JOIN contacts c ON c.company_id=co.id AND c.workspace_id=co.workspace_id AND c.deleted_at IS NULL
       WHERE co.workspace_id=? AND co.archived_at IS NULL GROUP BY co.id ORDER BY co.name`).all(workspaceId)) as Array<{ id: string; name: string; normalized_name: string; people_count: number }>)
     .filter((company) => visibleIds.has(company.id) && company.normalized_name && company.normalized_name !== normalizedName &&
-      (editDistance(company.normalized_name, normalizedName) <= 2 || Math.min(company.normalized_name.length, normalizedName.length) / Math.max(company.normalized_name.length, normalizedName.length) >= 0.82 && editDistance(company.normalized_name, normalizedName) <= 4))
+      (companyCoreName(company.name) === companyCoreName(title) || editDistance(company.normalized_name, normalizedName) <= 2 || Math.min(company.normalized_name.length, normalizedName.length) / Math.max(company.normalized_name.length, normalizedName.length) >= 0.82 && editDistance(company.normalized_name, normalizedName) <= 4))
     .slice(0, 3).map(({ id, name, people_count }) => ({ id, name, people_count }));
   if (!exactCompany && candidates.length && !input.companyChoice) return { saved: false as const, needsCompanyDecision: true, candidates };
   if (input.companyChoice && input.companyChoice !== 'create' && !candidates.some((candidate) => candidate.id === input.companyChoice)) {

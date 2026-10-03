@@ -314,6 +314,10 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; letter-s
 .saved-voice audio, .recording-preview audio { width: 100%; min-height: 34px; }
 .saved-voice small { color: var(--muted); font-size: .72rem; }
 .saved-voice label { display: grid; gap: 5px; color: var(--muted); font-size: .76rem; }
+.voice-summary { display: grid; gap: 8px; margin-top: 9px; padding: 13px; border: 1px solid #dce6dd; border-radius: 8px; background: #f6f9f6; }
+.voice-summary p { margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.voice-summary .button { justify-self: start; }
+.voice-summary textarea { min-height: 78px; }
 .saved-voice textarea { width: 100%; padding: 8px; border: 1px solid #d7d1c7; border-radius: 6px; background: #fff; color: var(--ink); }
 .saved-voice > .button { justify-self: start; min-height: 40px; }
 .local-transcript-review { display: grid; gap: 8px; }
@@ -568,6 +572,13 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; letter-s
 .reminder-choice span { display: grid; gap: 2px; }
 .reminder-choice strong { font-size: .9rem; }
 .reminder-choice small { max-width: 620px; font-size: .78rem; }
+.draft-automation-settings { display: grid; gap: 8px; margin-top: 14px; padding: 20px 22px; }
+.draft-automation-settings > h2 { margin: 0; font-size: 1.2rem; }
+.draft-automation-choice { display: flex; align-items: flex-start; gap: 11px; cursor: pointer; }
+.draft-automation-choice input { flex: 0 0 auto; width: 19px; height: 19px; margin: 3px 0 0; accent-color: var(--blue); }
+.draft-automation-choice span { display: grid; gap: 2px; }
+.draft-automation-choice strong { font-size: .9rem; }
+.draft-automation-choice small { max-width: 620px; font-size: .78rem; }
 .reminder-fields { margin-top: 2px; }
 .reminder-fields label { display: grid; gap: 6px; font-size: .85rem; font-weight: 600; }
 .reminder-fields input { width: 100%; min-height: 44px; padding: 9px 11px; border: 1px solid #d7d1c7; border-radius: 7px; background: #fff; color: var(--ink); }

@@ -46,6 +46,7 @@ export default function SettingsPage() {
       <div className="form-footer"><p>If an AI key is set up, card photos may be sent for reading, and saved notes or workspace details may be sent to prepare email and next-step suggestions.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}</button></div>
     </form>}
     {(!personal && session.workspace.role === 'admin') || personal ? <EmailSettingsPanel /> : null}
+    {(!personal && session.workspace.role === 'admin') || personal ? <DraftAutomationSettings /> : null}
     {(!personal && session.workspace.role === 'admin') && <DataExportPanel personal={false} />}
     {personal && <DataExportPanel personal />}
     {(!personal && session.workspace.role === 'admin') || personal ? <ClearSampleDataPanel /> : null}
@@ -55,6 +56,28 @@ export default function SettingsPage() {
     <ProblemsPanel />
     <p className="settings-note"><Mic size={16} /> Voice recordings stay attached to the person you save them with. Transcription is optional; you can type a short note when it is not set up.</p>
   </section>;
+}
+
+function DraftAutomationSettings() {
+  const { session, csrfToken, notify } = useWorkspace();
+  const [enabled, setEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    void request<{ draftAutomation?: { autoDraftAfterConversation?: boolean } | null }>('/api/settings', {}, { workspaceId: session.workspace.id })
+      .then((settings) => setEnabled(Boolean(settings.draftAutomation?.autoDraftAfterConversation)))
+      .catch((error) => notify((error as Error).message))
+      .finally(() => setLoading(false));
+  }, [session.workspace.id, notify]);
+  async function save() {
+    setSaving(true);
+    try {
+      await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'draftAutomation', value: { autoDraftAfterConversation: enabled } }) }, { csrfToken, workspaceId: session.workspace.id });
+      notify(enabled ? 'New conversations will prepare an unsent draft.' : 'Automatic draft preparation is off.');
+    } catch (error) { notify((error as Error).message); }
+    finally { setSaving(false); }
+  }
+  return <section className="surface-card draft-automation-settings" aria-labelledby="draft-automation-title"><p className="eyebrow">EMAIL WORKFLOW</p><h2 id="draft-automation-title">Have a draft ready after each conversation.</h2><p className="subtle">Gather uses the latest saved conversation and earlier context to prepare an editable template. Nothing is sent automatically. People without an email address or who opted out get no draft.</p>{!loading && <><label className="draft-automation-choice"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft for that conversation. You decide whether to send it.</small></span></label><button type="button" className="button primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save email workflow'}</button></>}</section>;
 }
 
 function EmailSettingsPanel() {

@@ -698,13 +698,14 @@ function PersonPage() {
   const requestedConversation = new URLSearchParams(location.search).get('newConversation') === '1';
   const requestedEventId = new URLSearchParams(location.search).get('event');
   const { session, csrfToken, notify } = useWorkspace();
-  const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }> } | null>(null);
+  const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }> } | null>(null);
   const [note, setNote] = useState('');
   const [conversationEvents, setConversationEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
   const [conversationEventId, setConversationEventId] = useState('');
   const conversationRequestId = useRef(crypto.randomUUID());
   const [emailDraftVersion, setEmailDraftVersion] = useState(0);
   const [emailAfterConversation, setEmailAfterConversation] = useState(false);
+  const [conversationDraft, setConversationDraft] = useState<EmailDraftView | null>(null);
   const [emailHasOpenDraft, setEmailHasOpenDraft] = useState(false);
   const [saving, setSaving] = useState(false);
   const [stageDraft, setStageDraft] = useState('');
@@ -777,9 +778,9 @@ function PersonPage() {
   async function addNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prepareEmail = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.dataset.action === 'email';
-    if (prepareEmail && emailHasOpenDraft && !window.confirm('A new email draft will replace the open draft on this page. The earlier draft stays saved and unsent. Continue?')) return;
+    if (emailHasOpenDraft && !window.confirm('Saving this conversation may prepare a new email draft. The draft currently open here will remain saved and unsent, but will close on this page. Continue?')) return;
     setSaving(true); setError('');
-    try { await request(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); await load(); if (prepareEmail) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
+    try { const result = await request<{ autoDraft: EmailDraftView | null }>(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); await load(); setConversationDraft(result.autoDraft); if (prepareEmail || result.autoDraft) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail || result.autoDraft ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
     catch (issue) { setError((issue as Error).message); } finally { setSaving(false); }
   }
   async function saveCompanyDeal(event: FormEvent<HTMLFormElement>) {
@@ -823,7 +824,7 @@ function PersonPage() {
         <button className="button primary" data-action="email" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add & prepare email'}</button>
         <button className="button secondary" data-action="note" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add conversation'}</button>
       </form>
-      <FollowUpComposer key={`${contactId}-${emailDraftVersion}`} contactId={contactId} autoOpen={emailAfterConversation} onDraftStateChange={setEmailHasOpenDraft} />
+      <FollowUpComposer key={`${contactId}-${emailDraftVersion}`} contactId={contactId} autoOpen={emailAfterConversation} initialDraft={conversationDraft} onDraftStateChange={setEmailHasOpenDraft} />
       <VoiceNotesPanel contactId={contactId} notes={detail.voiceNotes} onChange={() => void load()} />
       <TaskPlanner contactId={contactId} kind={plannerKind} onKindChange={setPlannerKind} onSaved={() => void load()} />
       <ArchivePersonPanel contactId={contactId} />
@@ -972,7 +973,7 @@ function TaskPlanner({ contactId, kind, onKindChange, onSaved }: { contactId: st
   </form>;
 }
 
-function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; notes: Array<{ id: string; transcript: string; duration_seconds: number | null; created_at: string }>; onChange: () => void }) {
+function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; notes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; created_at: string }>; onChange: () => void }) {
   const { session, csrfToken } = useWorkspace();
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -986,6 +987,8 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
   const [localTranscribeId, setLocalTranscribeId] = useState('');
   const [localTranscribeProgress, setLocalTranscribeProgress] = useState('');
   const [transcriptSuggestions, setTranscriptSuggestions] = useState<Record<string, string>>({});
+  const [summarySuggestions, setSummarySuggestions] = useState<Record<string, string>>({});
+  const [summarizingId, setSummarizingId] = useState('');
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<VoiceLanguage>('english');
   useEffect(() => () => { streamRef.current?.getTracks().forEach((track) => track.stop()); if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   useEffect(() => {
@@ -1043,6 +1046,22 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
     } catch (issue) { setError((issue as Error).message); setLocalTranscribeProgress(''); }
     finally { setLocalTranscribeId(''); }
   }
+  async function suggestSummary(noteId: string) {
+    setSummarizingId(noteId); setError('');
+    try {
+      const result = await request<{ summary: string }>(`/api/notes/${noteId}/summary-suggestion`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
+      setSummarySuggestions((current) => ({ ...current, [noteId]: result.summary }));
+      setError('AI suggested a takeaway. Check and save it before it can inform an email draft.');
+    } catch (issue) { setError((issue as Error).message); }
+    finally { setSummarizingId(''); }
+  }
+  async function saveSummary(noteId: string, summary: string) {
+    try {
+      await request(`/api/notes/${noteId}/summary`, { method: 'PUT', body: JSON.stringify({ summary }) }, { csrfToken, workspaceId: session.workspace.id });
+      setSummarySuggestions((current) => { const next = { ...current }; delete next[noteId]; return next; });
+      setError('Checked takeaway saved. Future email drafts can use it.'); onChange();
+    } catch (issue) { setError((issue as Error).message); }
+  }
   async function removeVoice(noteId: string) {
     if (!window.confirm('Delete this recording and its saved text?')) return;
     try { await request(`/api/notes/${noteId}`, { method: 'DELETE' }, { csrfToken, workspaceId: session.workspace.id }); onChange(); }
@@ -1050,7 +1069,7 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
   }
   const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   return <section id="person-voice-note" className="surface-card voice-panel"><p className="eyebrow">VOICE NOTE · OPTIONAL</p><h2>Save the detail in your own words.</h2><p className="voice-disclosure">Record up to two minutes. You can transcribe on this device for free, then check the text, or type it yourself. The speech model downloads on first use; your audio is not sent to its host.</p><label className="voice-language">Recording language<select value={transcriptionLanguage} onChange={(event) => setTranscriptionLanguage(event.target.value as VoiceLanguage)}><option value="english">English</option><option value="hindi">Hindi</option><option value="gujarati">Gujarati</option></select></label>
-    {notes.map((item) => <article className="saved-voice" key={item.id}><audio controls preload="none" src={`/api/notes/${item.id}/audio`}>Audio playback is not supported by this browser.</audio><small>{Math.floor((item.duration_seconds ?? 0) / 60)}:{String((item.duration_seconds ?? 0) % 60).padStart(2, '0')} · {new Date(item.created_at).toLocaleDateString()}</small><button type="button" className="button secondary" disabled={Boolean(localTranscribeId)} onClick={() => void transcribeSavedNote(item.id)}>{localTranscribeId === item.id ? 'Transcribing…' : 'Transcribe on this device'}</button>{localTranscribeId === item.id && <p role="status">{localTranscribeProgress}</p>}{transcriptSuggestions[item.id] !== undefined ? <div className="local-transcript-review"><label>Suggested transcript · check before saving<textarea rows={4} maxLength={4000} value={transcriptSuggestions[item.id]} onChange={(event) => setTranscriptSuggestions((current) => ({ ...current, [item.id]: event.target.value }))} /></label><div className="local-transcript-actions"><button type="button" className="button primary" onClick={() => void saveText(item.id, transcriptSuggestions[item.id])}>Save checked text</button><button type="button" className="button secondary" onClick={() => setTranscriptSuggestions((current) => { const next = { ...current }; delete next[item.id]; return next; })}>Discard suggestion</button></div></div> : <label>Text you typed<textarea key={`${item.id}-${item.transcript}`} rows={3} maxLength={4000} defaultValue={item.transcript} onBlur={(event) => { if (event.currentTarget.value !== item.transcript) void saveText(item.id, event.currentTarget.value); }} placeholder="Optional. Type what you want to remember." /></label>}<button type="button" className="text-button danger-text" onClick={() => void removeVoice(item.id)}>Delete recording</button></article>)}
+    {notes.map((item) => <article className="saved-voice" key={item.id}><audio controls preload="none" src={`/api/notes/${item.id}/audio`}>Audio playback is not supported by this browser.</audio><small>{Math.floor((item.duration_seconds ?? 0) / 60)}:{String((item.duration_seconds ?? 0) % 60).padStart(2, '0')} · {new Date(item.created_at).toLocaleDateString()}</small><button type="button" className="button secondary" disabled={Boolean(localTranscribeId)} onClick={() => void transcribeSavedNote(item.id)}>{localTranscribeId === item.id ? 'Transcribing…' : 'Transcribe on this device'}</button>{localTranscribeId === item.id && <p role="status">{localTranscribeProgress}</p>}{transcriptSuggestions[item.id] !== undefined ? <div className="local-transcript-review"><label>Suggested transcript · check before saving<textarea rows={4} maxLength={4000} value={transcriptSuggestions[item.id]} onChange={(event) => setTranscriptSuggestions((current) => ({ ...current, [item.id]: event.target.value }))} /></label><div className="local-transcript-actions"><button type="button" className="button primary" onClick={() => void saveText(item.id, transcriptSuggestions[item.id])}>Save checked text</button><button type="button" className="button secondary" onClick={() => setTranscriptSuggestions((current) => { const next = { ...current }; delete next[item.id]; return next; })}>Discard suggestion</button></div></div> : <label>Text you typed<textarea key={`${item.id}-${item.transcript}`} rows={3} maxLength={4000} defaultValue={item.transcript} onBlur={(event) => { if (event.currentTarget.value !== item.transcript) void saveText(item.id, event.currentTarget.value); }} placeholder="Optional. Type what you want to remember." /></label>}{item.transcript && <div className="voice-summary"><p>Optional: ask AI to suggest the main takeaway from your checked text. This sends that text to Google; you must check its suggestion before saving.</p><button type="button" className="button secondary" disabled={Boolean(summarizingId)} onClick={() => void suggestSummary(item.id)}>{summarizingId === item.id ? 'Finding the takeaway…' : 'Suggest a takeaway'}</button><label>Conversation takeaway<textarea rows={3} maxLength={1000} value={summarySuggestions[item.id] ?? item.summary} onChange={(event) => setSummarySuggestions((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="What they need and what happens next" /></label>{summarySuggestions[item.id] !== undefined && summarySuggestions[item.id] !== item.summary && <button type="button" className="button primary" onClick={() => void saveSummary(item.id, summarySuggestions[item.id])}>Save checked takeaway</button>}</div>}<button type="button" className="text-button danger-text" onClick={() => void removeVoice(item.id)}>Delete recording</button></article>)}
     {clip && <div className="recording-preview"><strong>Review your recording · {clock}</strong><audio controls src={previewUrl || undefined}>Audio playback is not supported by this browser.</audio><button type="button" className="button primary" disabled={busy} onClick={() => void saveRecording()}>{busy ? 'Saving…' : 'Save voice note'}</button><button type="button" className="text-button" onClick={() => { setClip(null); if (previewUrl) URL.revokeObjectURL(previewUrl); setPreviewUrl(''); }}>Discard recording</button></div>}
     {recording ? <div className="recording-controls"><span className="recording-live"><i /> Recording · {clock} / 2:00</span><button type="button" className="button secondary" onClick={stopRecording}>Stop recording</button></div> : !clip && <button type="button" className="button secondary" onClick={() => void startRecording()}><Mic size={16} /> Record voice note</button>}
     {error && <p className="voice-feedback" role="status">{error}</p>}
@@ -1298,11 +1317,23 @@ function ScanPage() {
         .then((data) => { const available = data.aiCardProvider === 'gemini'; setGeminiCardsAvailable(available); return available; })
         .catch(() => false);
       const qrPromise = readQrFromImage(photo);
-      const result = await request<{ scan: Record<string, unknown>; duplicate: boolean; duplicateImage?: boolean }>('/api/scans', {
+      const uploadHeaders = { 'Content-Type': photo.type, 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': source, 'X-Client-Order': String(localScan?.clientOrder ?? Date.now() * 10), ...(captureEventId !== null ? { 'X-Event-Id': captureEventId || 'none' } : {}) };
+      type UploadResult = { scan: Record<string, unknown>; duplicate: boolean; duplicateImage?: boolean; possibleDuplicate?: boolean };
+      let result = await request<UploadResult>('/api/scans', {
         method: 'POST',
-        headers: { 'Content-Type': photo.type, 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': source, 'X-Client-Order': String(localScan?.clientOrder ?? Date.now() * 10), ...(captureEventId !== null ? { 'X-Event-Id': captureEventId || 'none' } : {}) },
+        headers: uploadHeaders,
         body: photo,
       }, { csrfToken, workspaceId: session.workspace.id });
+      if (result.possibleDuplicate) {
+        const candidate = scanFromApi(result.scan);
+        const same = window.confirm('This looks like a card already saved for this person. Choose OK to open their conversations, or Cancel to keep this as a different photo. No new photo has been stored yet.');
+        if (same && candidate.contactId) {
+          setScans((items) => items.filter((item) => item.id !== localId));
+          navigate(`/people/${candidate.contactId}?newConversation=1&event=${encodeURIComponent(captureEventId ?? '')}`);
+          return;
+        }
+        result = await request<UploadResult>('/api/scans', { method: 'POST', headers: { ...uploadHeaders, 'X-Allow-Similar-Scan': 'true' }, body: photo }, { csrfToken, workspaceId: session.workspace.id });
+      }
       const uploaded = scanFromApi(result.scan);
       uploadedId = uploaded.id;
       if (result.duplicateImage) {
@@ -1931,9 +1962,10 @@ function ReviewPage() {
   </section>;
 }
 
-function FollowUpComposer({ contactId, autoOpen = false, onSkip, onComplete, onDraftStateChange }: { contactId: string; autoOpen?: boolean; onSkip?: () => void; onComplete?: (message: string) => void; onDraftStateChange?: (open: boolean) => void }) {
+type EmailDraftView = { id: string; recipient: string; subject: string; body: string; status: 'draft' | 'queued' | 'outbox' | 'sent' | 'failed'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> };
+function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, onSkip, onComplete, onDraftStateChange }: { contactId: string; autoOpen?: boolean; initialDraft?: EmailDraftView | null; onSkip?: () => void; onComplete?: (message: string) => void; onDraftStateChange?: (open: boolean) => void }) {
   const { session, csrfToken } = useWorkspace();
-  const [draft, setDraft] = useState<{ id: string; recipient: string; subject: string; body: string; status: 'draft' | 'queued' | 'outbox' | 'sent' | 'failed'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> } | null>(null);
+  const [draft, setDraft] = useState<EmailDraftView | null>(initialDraft);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1961,7 +1993,7 @@ function FollowUpComposer({ contactId, autoOpen = false, onSkip, onComplete, onD
     finally { setBusy(false); }
   }
   useEffect(() => {
-    if (!autoOpen || autoOpenStarted.current) return;
+    if (!autoOpen || initialDraft || autoOpenStarted.current) return;
     autoOpenStarted.current = true;
     void create();
   }, [autoOpen, contactId]);

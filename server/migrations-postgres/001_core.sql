@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS scans (
   material_company_id text REFERENCES companies(id) ON DELETE SET NULL,
   image_bytes bigint NOT NULL DEFAULT 0 CHECK (image_bytes >= 0),
   content_sha256 text,
+  visual_hash text,
   UNIQUE(workspace_id,client_scan_id)
 );
 CREATE INDEX IF NOT EXISTS scans_workspace_owner ON scans(workspace_id,created_by,queued_at);
@@ -170,7 +171,8 @@ CREATE TABLE IF NOT EXISTS notes (
   duration_seconds integer,
   created_at text NOT NULL DEFAULT to_char(timezone('utc', now()), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
   audio_bytes bigint NOT NULL DEFAULT 0 CHECK (audio_bytes >= 0),
-  created_by text REFERENCES users(id)
+  created_by text REFERENCES users(id),
+  summary text NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS notes_by_creator ON notes(workspace_id,created_by,contact_id);
 CREATE TABLE IF NOT EXISTS contact_products (
