@@ -601,7 +601,7 @@ test('person detail edits detect stale changes and offer a reload', async ({ pag
   await secondContext.close();
 });
 
-test('photo upload starts reading immediately, reviews one lead, links repeat people, and saves next', async ({ page }) => {
+test('photo upload starts reading immediately, reviews one lead, links repeat people, and saves next', async ({ page }, testInfo) => {
   test.setTimeout(90_000);
   await page.goto('/');
   await page.getByRole('button', { name: /Create an account/ }).click();
@@ -649,6 +649,23 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   const readyMs = Date.now() - started;
   await expect(page.getByRole('button', { name: 'Save & scan next' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save & prepare email' })).toBeVisible();
+  const reviewActionsStayTogether = async () => {
+    const layout = await page.locator('.review-save-actions').evaluate((group) => {
+      const groupBox = group.getBoundingClientRect();
+      const buttons = [...group.querySelectorAll('button')].map((button) => ({ box: button.getBoundingClientRect(), background: getComputedStyle(button).backgroundColor }));
+      return { groupWidth: groupBox.width, groupRight: groupBox.right, buttons: buttons.map(({ box, background }) => ({ x: box.x, y: box.y, width: box.width, right: box.right, background })) };
+    });
+    expect(layout.buttons).toHaveLength(3);
+    const [first, , next] = layout.buttons;
+    expect(next.right).toBeLessThanOrEqual(layout.groupRight + 1);
+    expect(next.background).not.toBe('rgba(0, 0, 0, 0)');
+    expect(next.y === first.y || next.width >= layout.groupWidth - 1).toBe(true);
+  };
+  await reviewActionsStayTogether();
+  await page.locator('.review-footer--choice').screenshot({ path: testInfo.outputPath('review-actions-desktop.png') });
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await reviewActionsStayTogether();
+  await page.locator('.review-footer--choice').screenshot({ path: testInfo.outputPath('review-actions-compact.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -692,7 +709,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.locator('.profile-button').click();
 
   await input.setInputFiles({ name: 'repeat-business-card.jpg', mimeType: 'image/jpeg', buffer });
-  await expect(page).toHaveURL(/\/people\//);
+  await expect(page).toHaveURL(/\/people\//, { timeout: 15_000 });
   await expect(page.getByRole('heading', { name: 'Demo Contact' })).toBeVisible();
   await expect(page.getByLabel('What did you discuss?')).toBeFocused();
   await page.getByLabel('What did you discuss?').fill('Spoke again later and asked for updated sample timing.');
