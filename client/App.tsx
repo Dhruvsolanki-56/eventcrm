@@ -235,9 +235,9 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
     <section className="auth-panel">
       <div className="brand-lockup"><span className="brand-mark">G</span><span>Gather</span></div>
       <div className="auth-intro">
-        <p className="eyebrow">EVENT LEADS, KEPT IN ORDER</p>
+        <p className="eyebrow">FROM CONVERSATION TO FOLLOW-UP</p>
         <h1>{recoveryMode === 'reset' ? 'Choose a new password.' : recoveryMode === 'verify' ? 'Verify your email.' : recoveryMode === 'request' ? 'Get back into Gather.' : mode === 'signin' ? 'Good to see you.' : 'Start with one good conversation.'}</h1>
-        <p>{recoveryMode ? 'Use a one-time link sent to your account email.' : 'Capture a lead, add a note, and choose what happens next.'}</p>
+        <p>{recoveryMode ? 'Use a one-time link sent to your account email.' : 'Capture the conversation, review the details, and prepare a personal email.'}</p>
       </div>
       {recoveryMode === 'request' ? <form className="stack-form" onSubmit={requestPasswordReset}>
         <label>Email<input name="email" type="email" autoComplete="email" required placeholder="you@company.com" /></label>
@@ -291,8 +291,8 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
       <div className="aside-content">
         <div className="aside-card-icon"><ScanLine size={24} /></div>
         <h2>Start with the person in front of you.</h2>
-        <p>Keep the card, the conversation, and the next step together.</p>
-        <div className="aside-flow"><span>Capture</span><i></i><span>Review</span><i></i><span>Follow up</span></div>
+        <p>Keep the card and conversation together, then review a draft before anything goes out.</p>
+        <div className="aside-flow"><span>Capture</span><i></i><span>Review</span><i></i><span>Draft email</span></div>
       </div>
       <span className="aside-wordmark">Gather CRM</span>
     </aside>
