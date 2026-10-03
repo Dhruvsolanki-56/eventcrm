@@ -6,8 +6,10 @@ import { resolve } from 'node:path';
 test('workspace draft automation saves an unsent draft only once for a conversation', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
-  const headers = { 'X-CSRF-Token': csrf.csrfToken, 'X-Workspace-Id': 'demo-northstar' };
+  await expect.poll(async () => (await (await page.request.get('/api/auth/me')).json() as { authenticated?: boolean; user?: { name?: string } }).user?.name).toBe('Maya Chen');
+  const csrfToken = (await page.context().cookies()).find((cookie) => cookie.name === 'gather_csrf')?.value;
+  expect(csrfToken).toBeTruthy();
+  const headers = { 'X-CSRF-Token': csrfToken!, 'X-Workspace-Id': 'demo-northstar' };
   const database = new Database(resolve(process.env.DATABASE_PATH!));
   const clientConversationId = randomUUID();
   const emailCount = () => (database.prepare("SELECT COUNT(*) AS count FROM emails WHERE workspace_id='demo-northstar' AND contact_id='demo-ns-contact-1'").get() as { count: number }).count;

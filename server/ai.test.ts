@@ -10,6 +10,7 @@ afterEach(() => {
 
 describe('provider output checks', () => {
   it('requires explicit provider mode and a key before enabling AI', () => {
+    vi.stubEnv('AI_PROVIDER', 'anthropic');
     vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
     vi.stubEnv('AI_MODE', 'off');
     expect(isAIProviderEnabled()).toBe(false);
@@ -37,7 +38,8 @@ describe('provider output checks', () => {
 
   it('turns a provider request timeout into a bounded read failure without exposing the provider message', async () => {
     vi.stubEnv('AI_MODE', 'provider');
-    vi.stubEnv('ANTHROPIC_API_KEY', 'test-provider-key');
+    vi.stubEnv('AI_PROVIDER', 'gemini');
+    vi.stubEnv('GEMINI_API_KEY', 'test-provider-key');
     const fetch = vi.fn(async () => {
       const error = new Error('timeout for private.lead@example.com');
       error.name = 'AbortError';

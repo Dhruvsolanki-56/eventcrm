@@ -55,6 +55,7 @@ import {
   recordWorkspaceExport,
   getPersonDetail,
   getEmailDraftSuggestion,
+  getAlternateEmailDraftSuggestion,
   getFollowUpSuggestionContext,
   addPersonNote,
   addConversation,
@@ -114,7 +115,7 @@ import {
   type ActorInfo,
   type WorkspaceInfo,
 } from './db.js';
-import { draftEmail, isAIProviderEnabled, isCardAIEnabled, readCard, suggestFollowUp } from './ai.js';
+import { draftEmail, isAIProviderEnabled, isCardAIEnabled, isEmailDraftAIEnabled, readCard, suggestFollowUp } from './ai.js';
 import { isGeminiCardEnabled } from './gemini-card.js';
 import { summarizeCheckedTranscript } from './gemini-conversation.js';
 import { imageDifferenceHash } from './visual-hash.js';
@@ -290,7 +291,7 @@ app.get('/api/capabilities', (_req, res) => res.json({
   cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : isGeminiCardEnabled() ? 'provider' : 'browser',
   aiCardAssist: isCardAIEnabled(),
   aiCardProvider: isGeminiCardEnabled() ? 'gemini' : isAIProviderEnabled() ? 'anthropic' : null,
-  emailDrafts: isAIProviderEnabled(),
+  emailDrafts: isEmailDraftAIEnabled(),
   followUpSuggestions: isAIProviderEnabled(),
   emailSending: Boolean(leadMailTransportReady() && process.env.SMTP_FROM_ADDRESS),
   voiceTranscription: 'browser',
@@ -912,7 +913,14 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
     const draftSettings = await getWorkspaceSetting(actor.id, workspace.id, 'draftAutomation') as { autoDraftAfterConversation?: boolean } | undefined;
     let autoDraft = null;
     if (draftSettings?.autoDraftAfterConversation && !saved.duplicate) {
-      try { autoDraft = await createEmailDraft(actor.id, workspace.id, id.data); }
+      try {
+        let generated: { subject: string; body: string } | null = null;
+        if (isEmailDraftAIEnabled()) {
+          try { generated = await draftEmail((await getEmailDraftSuggestion(actor.id, workspace.id, id.data)).aiContext); }
+          catch { console.error(JSON.stringify({ event: 'ai_email_suggestion_unavailable', workspaceId: workspace.id })); }
+        }
+        autoDraft = await createEmailDraft(actor.id, workspace.id, id.data, generated ?? undefined);
+      }
       catch { console.error(JSON.stringify({ event: 'automatic_draft_unavailable', workspaceId: workspace.id })); }
     }
     res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate, autoDraft });
@@ -930,7 +938,7 @@ app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireCon
   if (!id.success) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
   try {
     let generated: { subject: string; body: string } | null = null;
-    if (isAIProviderEnabled()) {
+    if (isEmailDraftAIEnabled()) {
       try {
         const suggestion = await getEmailDraftSuggestion(actor.id, workspace.id, id.data);
         generated = await draftEmail(suggestion.aiContext);
@@ -963,7 +971,14 @@ app.post('/api/emails/:emailId/alternate', requireContext, async (req, res) => {
   const id = z.string().uuid().safeParse(req.params.emailId);
   if (!id.success) return res.status(404).json({ code: 'email_missing', message: 'This draft is no longer available.' });
   try {
-    const draft = await (createAlternateEmailDraft(actor.id, workspace.id, id.data));
+    let generated: { subject: string; body: string } | null = null;
+    if (isEmailDraftAIEnabled()) {
+      const suggestion = await getAlternateEmailDraftSuggestion(actor.id, workspace.id, id.data);
+      if (!suggestion) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to change.' });
+      try { generated = await draftEmail(suggestion.aiContext, true); }
+      catch { console.error(JSON.stringify({ event: 'ai_email_alternate_unavailable', workspaceId: workspace.id })); }
+    }
+    const draft = await (createAlternateEmailDraft(actor.id, workspace.id, id.data, generated ?? undefined));
     if (!draft) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to change.' });
     res.json(draft);
   } catch (error) {

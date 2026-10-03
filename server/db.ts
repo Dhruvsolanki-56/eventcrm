@@ -1627,7 +1627,8 @@ export async function createEmailDraft(actorId: string, workspaceId: string, con
   await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by) VALUES (?,?,?,?,?,?,?,'draft',?)`)
     .run(id, workspaceId, contactId, draft.encounterId, draft.recipient, draft.subject, draft.body, actorId));
   const { aiContext: _aiContext, encounterId: _encounterId, ...publicDraft } = draft;
-  const generation = generated ? 'ai' as const : process.env.AI_MODE === 'provider' && process.env.ANTHROPIC_API_KEY ? 'fallback' as const : 'template' as const;
+  const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
+  const generation = generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const;
   return { id, ...publicDraft, generation, status: 'draft' as const };
 }
 
@@ -1649,17 +1650,23 @@ async function recordEmailSendAllowance(actorId: string, workspaceId: string) {
   await (db.prepare(`INSERT INTO email_send_limits(id,workspace_id,actor_user_id) VALUES (?,?,?)`).run(randomUUID(), workspaceId, actorId));
 }
 
-export async function createAlternateEmailDraft(actorId: string, workspaceId: string, emailId: string) {
+export async function getAlternateEmailDraftSuggestion(actorId: string, workspaceId: string, emailId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const existing = await (db.prepare(`SELECT contact_id FROM emails WHERE workspace_id=? AND id=? AND status='draft'`)
     .get(workspaceId, emailId)) as { contact_id: string } | undefined;
   if (!existing || !await (emailAccessible(actorId, workspaceId, emailId))) return undefined;
-  const suggestion = await (buildEmailSuggestion(actorId, workspaceId, existing.contact_id, 'alternate'));
+  return buildEmailSuggestion(actorId, workspaceId, existing.contact_id, 'alternate');
+}
+
+export async function createAlternateEmailDraft(actorId: string, workspaceId: string, emailId: string, generated?: { subject: string; body: string }) {
+  const suggestion = await getAlternateEmailDraftSuggestion(actorId, workspaceId, emailId);
+  if (!suggestion) return undefined;
   const updated = await (db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft' AND contact_id IN (
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL AND archived_at IS NULL)`)
-    .run(suggestion.subject, suggestion.body, workspaceId, emailId, workspaceId));
+    .run(generated?.subject ?? suggestion.subject, generated?.body ?? suggestion.body, workspaceId, emailId, workspaceId));
   const { aiContext: _aiContext, ...publicSuggestion } = suggestion;
-  return updated.changes ? { id: emailId, ...publicSuggestion, generation: 'template' as const, status: 'draft' as const } : undefined;
+  const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
+  return updated.changes ? { id: emailId, ...publicSuggestion, subject: generated?.subject ?? suggestion.subject, body: generated?.body ?? suggestion.body, generation: generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const, status: 'draft' as const } : undefined;
 }
 
 async function getActorName(actorId: string) {
