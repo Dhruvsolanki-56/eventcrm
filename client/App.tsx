@@ -1,11 +1,12 @@
-import { Fragment, forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type FormEvent } from 'react';
+import { Fragment, forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, Thermometer, Trash2, UserRound, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, Sparkles, Thermometer, Trash2, UserRound, Users, X } from 'lucide-react';
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
 import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-ocr.js';
 import { askConfirm } from './confirm.js';
+import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
@@ -1012,7 +1013,7 @@ function TaskPlanner({ contactId, kind, onKindChange, onSaved }: { contactId: st
     <label>{kind === 'meeting' ? 'Meeting time' : 'Follow-up time'}<input aria-label={kind === 'meeting' ? 'Meeting time' : 'Follow-up time'} type="datetime-local" required value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
     <small>Time shown in {timeZone}.</small>
     <label>Note (optional)<textarea rows={2} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder={kind === 'meeting' ? 'What should you cover?' : 'What should you follow up about?'} /></label>
-    {aiSuggestionsAvailable && <button type="button" className="text-button suggestion-action" disabled={suggestionBusy} onClick={() => void askForSuggestion()}>{suggestionBusy ? 'Preparing a suggestion…' : 'Suggest a next step'}</button>}
+    {aiSuggestionsAvailable && <button type="button" className="text-button suggestion-action" disabled={suggestionBusy} onClick={() => void askForSuggestion()}>{suggestionBusy ? <><Sparkles size={14} className="status-spin" aria-hidden="true" /> Preparing a suggestion…</> : 'Suggest a next step'}</button>}
     {!aiSuggestionsAvailable && aiSuggestionsAvailable !== null && <p className="subtle suggestion-message">AI suggestions are not set up. Choose a date and write the next step yourself.</p>}
     {suggestion && <div className="suggestion-card"><strong>Suggested next step · {suggestion.daysFromNow === 0 ? 'today' : suggestion.daysFromNow === 1 ? 'tomorrow' : `in ${suggestion.daysFromNow} days`}</strong><p>{suggestion.note}</p><small>{suggestion.reason} Nothing has been saved.</small><button type="button" className="button secondary" onClick={useSuggestion}>Use this suggestion</button></div>}
     {suggestionMessage && <p className="subtle suggestion-message" role="status">{suggestionMessage}</p>}
@@ -1266,6 +1267,11 @@ function scanFromApi(scan: Record<string, unknown>): ScanView {
   };
 }
 
+function sentence(text: string) {
+  const clean = text.trim().replace(/[.…]+$/, '');
+  return clean ? `${clean.charAt(0).toUpperCase()}${clean.slice(1)}.` : '';
+}
+
 function ScanThumbnail({ item }: { item: ScanView }) {
   const [localUrl, setLocalUrl] = useState('');
   useEffect(() => {
@@ -1274,7 +1280,7 @@ function ScanThumbnail({ item }: { item: ScanView }) {
     setLocalUrl(next);
     return () => URL.revokeObjectURL(next);
   }, [item.file]);
-  return <div className="tray-thumb">{(item.imageUrl || localUrl) && <img src={item.imageUrl || localUrl} alt={item.materialCompanyId ? 'Company brochure photo' : 'Card photo'} />}</div>;
+  return <div className={`tray-thumb${item.status === 'uploading' || item.status === 'queued' || item.status === 'reading' ? ' is-reading' : ''}`}>{(item.imageUrl || localUrl) && <img src={item.imageUrl || localUrl} alt={item.materialCompanyId ? 'Company brochure photo' : 'Card photo'} />}</div>;
 }
 
 function ScanPage() {
@@ -1495,9 +1501,10 @@ function ScanPage() {
         {scans.length === 0 ? <div className="tray-empty"><span className="empty-icon"><ScanLine size={18} /></span><p>New photos appear here while the camera stays ready.</p></div> : <div className="tray-list">{scans.map((item, index) => {
           const title = item.materialCompanyId ? 'Company brochure' : typeof item.extracted?.name === 'string' && item.extracted.name ? item.extracted.name : item.source === 'qr' ? 'QR code' : `Photo ${scans.length - index}`;
           const reviewable = item.status === 'ready' || item.status === 'failed';
-          return <div className="tray-item" key={item.id} data-client-scan-id={item.clientScanId}>
+          const working = item.status === 'uploading' || item.status === 'queued' || item.status === 'reading';
+          return <div className={`tray-item${working ? ' is-working' : ''}`} key={item.id} data-client-scan-id={item.clientScanId}>
             <ScanThumbnail item={item} />
-            <div className="tray-item-copy"><strong>{title}</strong><span><StatusIcon status={item.status} /> {displayStatus[item.status]}</span>{item.error && <small>{item.error}</small>}</div>
+            <div className="tray-item-copy"><strong>{title}</strong><span className={working ? 'is-working-text' : undefined}><StatusIcon status={item.status} /> {displayStatus[item.status]}</span>{item.error && <small>{item.error}</small>}</div>
             {reviewable && <button className="tray-review" onClick={() => navigate(`/review/${item.id}${item.status === 'failed' ? '?dialog=1' : ''}`)}>Review</button>}
             {item.status === 'saved' && <span className="saved-check" aria-label="Saved"><Check size={17} /></span>}
             {item.status !== 'saved' && <button aria-label={`Discard ${title}`} className="icon-button" disabled={removingId === item.id} onClick={() => void discard(item)}><Trash2 size={16} /></button>}
@@ -1518,9 +1525,9 @@ function ScanPage() {
 function StatusIcon({ status }: { status: ScanView['status'] }) {
   if (status === 'failed') return <AlertCircle size={14} aria-hidden="true" />;
   if (status === 'saved') return <Check size={14} aria-hidden="true" />;
-  if (status === 'ready') return <Check size={14} aria-hidden="true" />;
-  if (status === 'uploading') return <RotateCw size={14} aria-hidden="true" />;
-  return <Clock3 size={14} aria-hidden="true" />;
+  if (status === 'ready') return <Check size={14} className="status-pop" aria-hidden="true" />;
+  if (status === 'uploading') return <RotateCw size={14} className="status-spin" aria-hidden="true" />;
+  return <Sparkles size={14} className="status-pulse" aria-hidden="true" />;
 }
 
 function CameraPreview({ stream, onClose, onCapture, onQr }: { stream: MediaStream; onClose: () => void; onCapture: (file: File) => void; onQr: (raw: string) => void }) {
@@ -1962,6 +1969,7 @@ function ReviewPage() {
   }
   const status = String(scan?.status ?? 'loading');
   const reviewPending = status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning;
+  const justRead = useJustFinished(reviewPending, 2400);
   const materialAlreadySaved = typeof scan?.materialCompanyId === 'string' && !!scan.materialCompanyId;
   const fieldsDisabled = status === 'saved' && (reviewMode === 'person' || materialAlreadySaved);
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
@@ -1972,18 +1980,18 @@ function ReviewPage() {
     <div className="review-layout">
       <aside className="surface-card review-source">
         <div className="review-source-heading"><strong>Source photo</strong><span>Tap to enlarge</span></div>
-        {Boolean(scan?.mimeType) && <button type="button" className="review-photo-button" onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} onLoad={(event) => setPhotoWarning(photoQualityHint(event.currentTarget))} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
+        {Boolean(scan?.mimeType) && <button type="button" className={`review-photo-button${reviewPending ? ' is-scanning' : ''}`} onClick={() => setPhotoExpanded(true)} aria-label="Enlarge uploaded photo"><img src={`/api/scans/${scanId}/image`} onLoad={(event) => setPhotoWarning(photoQualityHint(event.currentTarget))} alt={reviewMode === 'brochure' ? 'Uploaded brochure' : 'Uploaded business card'} /><span>Tap to inspect photo</span></button>}
         {photoWarning && <p className="review-quality-warning" role="status"><AlertCircle size={16} />{photoWarning}</p>}
         {aiReadMessage && <p className="review-read-message" role="status">{aiReadMessage}</p>}
-        {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <details className="ai-card-assist"><summary>Need another read?</summary><p>If details are missing, ask AI to try again. {aiCardProvider === 'gemini' ? 'This sends the photo to Google again; on its free tier, Google may use it to improve products. ' : ''}Check its suggestion against the photo.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? 'Checking with AI…' : 'Ask AI to check this photo'}</button></details>}
+        {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <details className="ai-card-assist"><summary>Need another read?</summary><p>If details are missing, ask AI to try again. {aiCardProvider === 'gemini' ? 'This sends the photo to Google again; on its free tier, Google may use it to improve products. ' : ''}Check its suggestion against the photo.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? <><Sparkles size={14} className="status-spin" aria-hidden="true" /> Checking with AI…</> : 'Ask AI to check this photo'}</button></details>}
         {status === 'failed' && !ocrRunning && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
       </aside>
       <form id="review-save-form" className="surface-card review-form" onSubmit={(event) => reviewMode === 'brochure' ? void saveMaterial(event) : void submit(event)}>
         {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { reviewModeChanged.current = true; setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { reviewModeChanged.current = true; setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
         <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
-        {reviewPending && <div className="review-reading-note" role="status"><RotateCw size={17} aria-hidden="true" /><div><strong>Start checking the photo now.</strong><span>{ocrRunning ? ocrStage : 'Reading is starting.'} You can type while it finishes; your edits will stay. Save becomes available when reading ends.</span>{ocrRunning && !ocrStage.includes('Gemini') && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="On-device reading progress" />}</div></div>}
+        {reviewPending && <div className="review-reading-note" role="status"><RotateCw size={17} aria-hidden="true" /><div><strong>Start checking the photo now.</strong><span>{ocrRunning ? sentence(ocrStage) : 'Reading is starting.'} You can type while it finishes; your edits will stay. Save becomes available when reading ends.</span>{ocrRunning && !ocrStage.includes('Gemini') && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="On-device reading progress" />}</div></div>}
         {(status === 'ready' || status === 'failed') && <p className="review-check-note"><CircleCheck size={17} aria-hidden="true" /><span>Each field shows what the reader found: suggested, uncertain, or missing. These are not verified facts. Check them against the photo before saving.</span></p>}
-        {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key) => <Fragment key={key}><label className={lead.uncertain.includes(key) ? 'uncertain-field' : ''}>
+        {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key, index) => <Fragment key={key}><label style={{ '--i': index } as CSSProperties} className={[lead.uncertain.includes(key) ? 'uncertain-field' : '', reviewPending && !lead[key]?.trim() ? 'field-reading' : '', justRead && lead[key]?.trim() ? 'field-arrived' : ''].filter(Boolean).join(' ')}>
           <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}<em className={lead.uncertain.includes(key) ? '' : 'field-evidence'}>{lead.uncertain.includes(key) ? 'Check this' : lead[key]?.trim() ? 'Suggested' : reviewPending ? 'Reading' : 'Not found'}</em></span>
           <input value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
         </label>{key === 'company' && companyMatches()}</Fragment>)}
@@ -2028,6 +2036,7 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   const autoOpenStarted = useRef(false);
   const suggestedDraft = useRef<{ subject: string; body: string } | null>(null);
   const locallyEdited = useRef(false);
+  const [regenerating, setRegenerating] = useState(false);
   useEffect(() => { if (initialDraft) suggestedDraft.current = { subject: initialDraft.subject, body: initialDraft.body }; }, [initialDraft?.id]);
   useEffect(() => { onDraftStateChange?.(draft?.status === 'draft'); }, [draft?.status, onDraftStateChange]);
   useEffect(() => {
@@ -2074,13 +2083,13 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
     if (!draft) return;
     const changed = !!suggestedDraft.current && (draft.subject !== suggestedDraft.current.subject || draft.body !== suggestedDraft.current.body);
     if (changed && !await askConfirm({ title: 'Replace your edits?', body: 'Another suggestion will replace the unsent edits you made.', confirmLabel: 'Replace with new version' })) return;
-    setBusy(true); setError(''); setMessage('');
+    setBusy(true); setRegenerating(true); setError(''); setMessage('');
     try {
       const next = await request<{ id: string; recipient: string; subject: string; body: string; status: 'draft'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> }>(`/api/emails/${draft.id}/alternate`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
       suggestedDraft.current = { subject: next.subject, body: next.body };
       locallyEdited.current = false; setDraft(next); setMessage('Another suggested version. Check it before sending.');
     } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setRegenerating(false); }
   }
   async function send() {
     if (!draft) return;
@@ -2112,9 +2121,15 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
     catch { setError('Could not copy this message. Select the text above and copy it yourself.'); }
   }
   const missingEmail = error === 'Add an email address before creating a draft.';
+  const edited = !!draft && !!suggestedDraft.current && (draft.subject !== suggestedDraft.current.subject || draft.body !== suggestedDraft.current.body);
+  const aiPending = draft?.status === 'draft' && draft.generation === 'pending';
+  const aiWorking = aiPending || regenerating;
+  const aiArrived = useJustFinished(aiWorking, 2600, draft?.id) && draft?.generation === 'ai' && !edited;
+  const fieldsWriting = regenerating || (aiPending && !edited);
   return <div id="person-email" className="email-compose"><div className="section-head"><div><p className="eyebrow">OPTIONAL FOLLOW-UP</p><h2>Email</h2></div>{!draft && !autoOpen && <button type="button" className="button secondary" disabled={busy} onClick={() => void create()}><Mail size={16} />{busy ? 'Preparing…' : 'Draft an email'}</button>}</div>
+    {!draft && busy && <AiDraftSkeleton label="Preparing your draft" />}
     {error && !missingEmail && <p className="form-error" role="alert">{error}</p>}
     {autoOpen && missingEmail && <div className="email-state" role="status"><p>There’s no email address on this person yet. Nothing was sent.</p><button type="button" className="text-button" onClick={onSkip}>Skip email</button></div>}
-    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, subject: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, body: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'pending' ? 'Draft ready now. AI is preparing another suggestion; your edits will stay yours.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Approve email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
+    {draft && <><AiWritingBar writing={aiWorking} tookOver={aiPending && edited && !regenerating} arrived={aiArrived} title={regenerating ? 'Writing another version' : undefined} /><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label className={fieldsWriting ? 'ai-writing-field' : aiArrived ? 'ai-arrived' : undefined}>Subject<input value={draft.subject} maxLength={200} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, subject: event.target.value }); }} disabled={draft.status !== 'draft' || regenerating} /></label><label className={fieldsWriting ? 'ai-writing-field' : aiArrived ? 'ai-arrived' : undefined}>Message<textarea rows={7} maxLength={8000} value={draft.body} aria-busy={fieldsWriting} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, body: event.target.value }); }} disabled={draft.status !== 'draft' || regenerating} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'pending' ? 'Draft ready now. AI is preparing another suggestion; your edits will stay yours.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Approve email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
   </div>;
 }
