@@ -33,7 +33,7 @@ test('light workspace renders without horizontal overflow on core routes', async
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`${name}-${width}.png`), fullPage: true });
       if (name === 'person') {
-        for (const action of ['Email', 'Voice note', 'Follow-up', 'Meeting', 'Deal value', 'Manage', 'Conversation']) {
+        for (const action of ['Email', 'Voice note', 'Follow-up', 'Meeting', 'Deal value', 'More', 'Conversation']) {
           await page.getByRole('navigation', { name: 'Actions for this person' }).getByRole('link', { name: action, exact: true }).click();
           await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
           await page.screenshot({ path: testInfo.outputPath(`person-${action.toLowerCase().replaceAll(' ', '-')}-${width}.png`), fullPage: true });

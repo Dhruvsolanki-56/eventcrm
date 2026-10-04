@@ -561,3 +561,6 @@ body .setup-assist { background: #f7faf5; border-radius: 8px; border-color: #e0e
 .confirm-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .confirm-actions .button { min-height: 44px; }
 @media (max-width: 470px) { .confirm-backdrop { align-items: end; padding: 12px; } .confirm-actions { flex-direction: column-reverse; } .confirm-actions .button { width: 100%; justify-content: center; } }
+
+.person-panel-hint { margin: -8px 0 16px; font-size: 13px; line-height: 1.5; color: #5f7a72; }
+@media (max-width: 780px) { .person-panel-hint { margin: -6px 0 14px; font-size: 12.5px; } }

@@ -913,7 +913,7 @@ test('archiving keeps a person history and is distinct from permanent deletion',
   const dashboardBefore = await (await page.request.get('/api/dashboard')).json() as { counts: { captured_today: number; follow_ups_due: number } };
 
   await page.goto('/people/demo-ns-contact-1');
-  await page.getByRole('link', { name: 'Manage', exact: true }).click();
+  await page.getByRole('link', { name: 'More', exact: true }).click();
   await page.getByRole('button', { name: 'Archive person' }).click();
   await page.locator('[data-confirm-accept]').click();
   await expect(page).toHaveURL(/\/people\?archived=1$/);
@@ -1177,7 +1177,7 @@ test('deleting one person removes their history and media but keeps their shared
 
   await page.goto('/people/demo-ns-contact-1');
   await expect(page.getByRole('heading', { name: 'Tessa Morgan' })).toBeVisible();
-  await page.getByRole('link', { name: 'Manage', exact: true }).click();
+  await page.getByRole('link', { name: 'More', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Delete person' })).toBeDisabled();
   await page.getByLabel('Type DELETE to confirm').fill('DELETE');
   await page.getByRole('button', { name: 'Delete person' }).click();

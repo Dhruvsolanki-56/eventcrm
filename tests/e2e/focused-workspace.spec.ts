@@ -11,7 +11,7 @@ test('person tools preserve unsaved input when switching focused panels', async 
   await expect(page.getByLabel('What did you discuss?')).not.toBeVisible();
   await tools.getByRole('link', { name: 'Conversation', exact: true }).click();
   await expect(page.getByLabel('What did you discuss?')).toHaveValue('Keep this unsaved conversation while checking the record.');
-  await tools.getByRole('link', { name: 'Manage', exact: true }).click();
+  await tools.getByRole('link', { name: 'More', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Archive person' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete person' })).toBeDisabled();
 });
