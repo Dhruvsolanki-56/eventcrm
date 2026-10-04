@@ -659,8 +659,8 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
     const footer = dialog.querySelector('.review-footer');
     return { background, footerPosition: footer ? getComputedStyle(footer).position : '' };
   });
-  expect(reviewSurface.background).toBe('rgb(238, 242, 239)');
-  expect(reviewSurface.footerPosition).toBe('static');
+  expect(reviewSurface.background).toBe('rgb(245, 243, 238)');
+  expect(reviewSurface.footerPosition).toBe('sticky');
   const reviewActionsStayTogether = async () => {
     const layout = await page.locator('.review-save-actions').evaluate((group) => {
       const groupBox = group.getBoundingClientRect();

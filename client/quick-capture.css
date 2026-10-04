@@ -21,14 +21,6 @@
 .when-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .when-chips .quick-chip.is-on { background: #2c6e5d; }
 
-.review-glance { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-radius: 8px; background: #f4f8f5; border: 1px solid #dbe8df; font-size: 13px; line-height: 1.5; color: #44665a; }
-.review-glance.needs-look { background: #fff9ee; border-color: #efdcae; color: #7a5a1c; }
-.review-glance strong { font-weight: 600; }
-.review-form label.field-found input { border-color: transparent; background: #f3f7f5; min-height: 38px; color: #35504a; }
-.review-form label.field-found input:hover { border-color: #d3e0d8; }
-.review-form label.field-found input:focus { border-color: #91b4a7; background: #fff; }
-.review-form label.field-look input { border-color: #e6c985; background: #fffdf7; }
-
 @media (prefers-reduced-motion: reduce) { .dictate-live i { animation: none; transform: scaleY(.7); } .quick-chip { transition: none; } }
 
 .dictate-row .button { width: auto; flex: 1 1 200px; justify-content: center; }
@@ -38,13 +30,3 @@
   .quick-chip { min-height: 36px; padding: 6px 11px; font-size: 12.5px; }
   .dictate-row .button { flex-basis: 0; min-width: 0; }
 }
-
-.offline-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #efdcae; border-radius: 9px; background: #fff9ee; color: #6f5218; }
-.offline-banner.is-back { border-color: #bfe0d1; background: #f2faf6; color: #2f6a58; }
-.offline-banner > svg { flex: none; }
-.offline-banner > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.offline-banner strong { font-size: 13px; font-weight: 600; }
-.offline-banner span { font-size: 12.5px; line-height: 1.5; }
-.offline-banner .button { flex: none; min-height: 40px; }
-.tray-item.is-offline { border-style: dashed; border-color: #e2cf9f; background: #fffdf7; }
-@media (max-width: 470px) { .offline-banner { flex-wrap: wrap; } .offline-banner .button { width: 100%; } }

@@ -17,6 +17,7 @@ import './ui/base.css';
 import './ui/shell.css';
 import './ui/auth.css';
 import './ui/home.css';
+import './ui/capture.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
