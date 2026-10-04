@@ -117,4 +117,15 @@ describe('card text extraction', () => {
     const real = extractCardFields('Sam Patel\nsam@patelfoods.com\n+1 415 555 0132\nwww.patelfoods.com');
     expect(real).toMatchObject({ email: 'sam@patelfoods.com', website: 'www.patelfoods.com' });
   });
+
+  it('reads a person printed in capitals as the name, not the company, when nothing else names the person', () => {
+    const result = extractCardFields('OLIVIA ANDERSON\nyourname@email.com\n+123-456-7890');
+    expect(result).toMatchObject({ name: 'Olivia Anderson', company: '', email: '' });
+  });
+
+  it('keeps company names that start with a first name or use business words', () => {
+    expect(extractCardFields('MARIA FOODS\n+1 415 555 0132\nsales@mariafoods.example').company).toBe('MARIA FOODS');
+    expect(extractCardFields('Sam Patel\nSAM & SONS TRADING\n+1 415 555 0132').company).toBe('SAM & SONS TRADING');
+    expect(extractCardFields('Hiro Tanaka\nBRIGHT FUTURE\n+1 415 555 0132').company).toBe('BRIGHT FUTURE');
+  });
 });

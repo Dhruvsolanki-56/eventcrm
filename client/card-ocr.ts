@@ -1,5 +1,6 @@
 import Tesseract from 'tesseract.js';
 import type { CardReadOutput } from '../shared/contracts.js';
+import { isGivenName } from '../shared/given-names.js';
 
 const companyEndings = /\b(inc\.?|llc|ltd\.?|limited|corp\.?|corporation|company|co\.?|group|gmbh|plc|studio|studios|technologies|technology|systems|solutions|labs?|partners|industries|holdings|associates)\b/i;
 const roleWords = /\b(ceo|cto|cfo|coo|chief|officer|founder|president|vice president|vp|head of|director|manager|engineer|designer|sales|marketing|consultant|owner|partner|lead|specialist|executive|developer|buyer|architect|analyst|coordinator|representative|account executive|business development|product manager|project manager|customer success|human resources|operations)\b/i;
@@ -10,6 +11,7 @@ const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 const emailLikePattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]*/gi;
 const websitePattern = /(?:https?:\/\/)?(?:www\.)?[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}(?:\/[A-Z0-9._~:/?#[\]@!$&'()*+,;=-]*)?/gi;
 const phonePattern = /(?:\+?\d[\d().\s-]{7,}\d)/g;
+const businessWords = /\b(foods?|bakery|cafe|café|motors?|market|markets|trading|travels?|tours|textiles?|stores?|mart|hotels?|clinic|hospital|pharma|designs?|events?|media|networks?|digital|software|tech|print|printers|press|logistics|freight|packaging|builders|constructions?|enterprises?|traders|exports?|imports?|agro|fashion|jewell?ers|salon|school|academy|institute|foundation|bank|products|brands|creative|consulting|services)\b/i;
 const nameShape = /^[\p{Lu}][\p{L}'’.\-]+(?:\s+[\p{Lu}][\p{L}'’.\-]+){1,3}$/u;
 
 function labeledValue(line: string, label: RegExp) {
@@ -113,7 +115,7 @@ export function extractCardFields(rawText: string): CardReadOutput {
     const score = !allowed ? 0 : line.explicitName ? 100 : (localPartMatches ? 70 : 0) + (nearTitle ? 60 : 0);
     return { ...line, value, score };
   }).filter((line) => line.score > 0).sort((a, b) => b.score - a.score || a.index - b.index);
-  const name = nameCandidates[0]?.value ?? '';
+  const nameFound = nameCandidates[0]?.value ?? '';
   const nameLineIndex = nameCandidates[0]?.index;
 
   const companyCandidates = candidates.map((line) => {
@@ -129,7 +131,22 @@ export function extractCardFields(rawText: string): CardReadOutput {
             : isAllCaps(value) && looksLikeCompany && !ambiguousAllCapsName ? 60 : 0;
     return { ...line, value, score };
   }).filter((line) => line.score > 0).sort((a, b) => b.score - a.score || a.index - b.index);
-  const company = companyCandidates[0]?.value ?? '';
+  // With no name found, a line of a known first name plus a surname is a person even if it is printed in capitals,
+  // and must not be taken as the company. Company-looking words (llc, group, studio...) keep a line as a company.
+  const personLike = (value: string) => {
+    const tokens = value.match(/[\p{L}][\p{L}'’.-]*/gu) ?? [];
+    return tokens.length >= 2 && tokens.length <= 3 && tokens.join(' ').length === value.replace(/\s+/g, ' ').trim().length && isGivenName(tokens[0] ?? '') && !companyEndings.test(value) && !businessWords.test(value) && !roleWords.test(value);
+  };
+  const titleCase = (value: string) => value.toLowerCase().replace(/(^|[\s'’-])(\p{L})/gu, (_all, lead: string, letter: string) => `${lead}${letter.toUpperCase()}`);
+  let name = nameFound;
+  let company = companyCandidates[0]?.value ?? '';
+  if (!name) {
+    const person = candidates.find((line) => !contactLine(line.raw) && personLike(line.explicitName || line.value) && (line.value === company || !line.explicitCompany));
+    if (person) {
+      name = isAllCaps(person.value) ? titleCase(person.value) : person.value;
+      if (person.value === company) company = companyCandidates.find((line) => line.value !== person.value)?.value ?? '';
+    }
+  }
   const companyKey = normalized(company);
   let fixedEmail = email;
   let fixedWebsite = website;
