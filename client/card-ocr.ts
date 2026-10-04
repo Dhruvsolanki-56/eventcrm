@@ -31,7 +31,18 @@ function repairContactText(text: string) {
   return text
     .replace(/([A-Za-z0-9._%+-])[ \t]+@[ \t]*(?=[A-Za-z0-9])/g, '$1@')
     .replace(/@[ \t]+(?=[A-Za-z0-9-]+\.)/g, '@')
-    .replace(/\bwww\.[ \t]+(?=[a-z0-9])/gi, 'www.');
+    .replace(/\bwww\.[ \t]+(?=[a-z0-9])/gi, 'www.')
+    // "rosa. rivera@company. example": a space after a dot inside an address.
+    .replace(/([A-Za-z0-9])\.[ \t]+(?=[A-Za-z0-9-]+@)/g, '$1.')
+    .replace(/(@[A-Za-z0-9.-]*[A-Za-z0-9])\.[ \t]+(?=(?:com|net|org|io|co|in|ai|app|dev|biz|info|us|uk|ca|au|de|me|tech|xyz|example)\b)/gi, '$1.')
+    .replace(/(\b(?:www\.)?[A-Za-z0-9-]{3,}(?:\.[A-Za-z0-9-]+)*)\.[ \t]+(?=(?:com|net|org|io|co\.in|in|example)\b)/gi, '$1.');
+}
+
+// A logo mark next to the company name is often read as a stray character ("@ Ironwood", "8 Copper Commerce").
+function dropLogoGlyph(line: string) {
+  const glyph = line.replace(/^\s*[@&|\[\]()©®•*#~=<>]{1,2}\s+(?=\p{L})/u, '');
+  if (glyph !== line) return glyph;
+  return line.replace(/^\s*[\dOo]\s+(?=\p{Lu}\p{L}+\s+\p{Lu}\p{L}+)/u, '');
 }
 
 function editDistance(a: string, b: string) {
@@ -61,7 +72,8 @@ function snapToCompany(host: string, companyKey: string) {
 
 export function extractCardFields(rawText: string): CardReadOutput {
   const text = repairContactText(rawText);
-  const sourceLines = text.split(/\r?\n/).flatMap((line) => line.split(/\s+\|\s+/));
+  // Cards with columns come out as one line with a wide gap in the middle; treat each side as its own line.
+  const sourceLines = text.split(/\r?\n/).flatMap((line) => line.split(/\s+\|\s+/)).flatMap((line) => line.split(/\s{4,}/));
   const sourceText = sourceLines.join('\n');
   const email = sourceText.match(emailPattern)?.[0] ?? '';
   const emailLikeLocal = sourceText.match(emailLikePattern)?.[0]?.split('@')[0] ?? '';
@@ -72,6 +84,7 @@ export function extractCardFields(rawText: string): CardReadOutput {
       .replace(/^\s*(?:\([A-Z0-9]\s*(?:\]|\|)|\[[A-Z0-9]\]|[A-Z0-9]\])\s*/i, '')
       .replace(/^[\s([{,;:!?.~`'’»«|]+|[|¦]+\s*$/gu, '')
       .replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim())
+    .map(dropLogoGlyph)
     .filter((line) => line.length > 1);
   const emailLocal = (email || emailLikeLocal).split('@')[0]?.toLowerCase().split(/[._+-]+/).filter(Boolean) ?? [];
   const contactDomain = [email.split('@')[1]?.split('.')[0], website.match(/(?:https?:\/\/)?(?:www\.)?([^./?#]+)/i)?.[1]]
@@ -88,7 +101,9 @@ export function extractCardFields(rawText: string): CardReadOutput {
     value: labeledValue(raw, nameLabel) || labeledValue(raw, companyLabel) || labeledValue(raw, titleLabel) || raw,
   }));
   const contactLine = (line: string) => /@|https?:|www\./i.test(line) || (line.match(/\d/g)?.length ?? 0) >= 7;
-  const titleLine = candidates.find((line) => (line.explicitTitle || roleWords.test(line.value)) && !companyEndings.test(line.value));
+  // A slogan under the company name ("Your partner in growth") can contain a role word. It is not a job title.
+  const taglineLike = (value: string) => /^(?:your|our|we|the|making|designed|innovative|quality|since|serving|building|creating|delivering|leading|trusted|empowering)\b/i.test(value) || /\bsince\s+\d{4}\b/i.test(value) || /[.!]$/.test(value);
+  const titleLine = candidates.find((line) => (line.explicitTitle || (roleWords.test(line.value) && !taglineLike(line.value))) && !companyEndings.test(line.value));
   const title = titleLine?.explicitTitle || titleLine?.value || '';
   const domainMatch = (value: string) => {
     const key = normalized(value);
@@ -145,6 +160,19 @@ export function extractCardFields(rawText: string): CardReadOutput {
     if (person) {
       name = isAllCaps(person.value) ? titleCase(person.value) : person.value;
       if (person.value === company) company = companyCandidates.find((line) => line.value !== person.value)?.value ?? '';
+    }
+  }
+  // A company set on two or three lines ("Willow" / "Networks Systems") is found by checking that the lines together
+  // spell the card's own web address.
+  const addressWord = contactDomain[0];
+  if (addressWord && addressWord.length >= 8 && normalized(company) !== addressWord) {
+    const usable = candidates.filter((line) => !contactLine(line.raw) && line.index !== nameLineIndex && !roleWords.test(line.value));
+    search: for (let start = 0; start < usable.length; start += 1) {
+      for (let size = 2; size <= 4 && start + size <= usable.length; size += 1) {
+        const run = usable.slice(start, start + size);
+        const joined = normalized(run.map((line) => line.value).join(''));
+        if (joined === addressWord || (joined.length >= 8 && editDistance(joined, addressWord) <= 1)) { company = run.map((line) => line.value).join(' '); break search; }
+      }
     }
   }
   const companyKey = normalized(company);

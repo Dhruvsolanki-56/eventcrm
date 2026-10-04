@@ -61,3 +61,29 @@ The benchmark refuses to overwrite image output and result files. Use a new `--r
 - `npm run test:manual-reading` — 5 passed, including phone and desktop layouts, normal upload, split-column name fallback, and footer-company fallback.
 
 This work improves tested cases; it does not make OCR perfect or establish production-grade recognition. A real-world validation set should consist of consented event cards, with exact labels and images kept in an appropriately protected workspace.
+
+## Other card formats and company positions (2026-10-04)
+
+The main benchmark uses one card size. `scripts/generate_ocr_formats.py` adds two stress sets of fictional cards, scored with the same `benchmark:ocr` command:
+
+```powershell
+python scripts/generate_ocr_formats.py --output data/ocr-formats                         # 12 formats x 40 cards
+python scripts/generate_ocr_formats.py --set positions --output data/ocr-positions       # 10 company positions x 40 cards
+npm run benchmark:ocr -- data/ocr-formats --split=test --mode=single-block --workers=4 --run=my-run
+```
+
+Formats: portrait, dark background, centered, minimal, labeled E/T/W lines, names in capitals, Indian formats (+91, .co.in, Pvt. Ltd.), address and tagline lines, accents and hyphens, phone-photo distortion, low resolution, and two phone numbers. Company positions: top-right, middle, bottom, under the title, colored sidebar, company larger than the name, top band, footer bar, split over two lines, small beside a corner logo.
+
+Whole-card exact match (every field that exists on the card correct), using the app's real order of passes (a missing name is filled from the sparse-text pass):
+
+| Set | Before this work | After |
+| --- | ---: | ---: |
+| 12 formats (480 cards) | 75% | 86% |
+| Names in capitals | 30% | 95% |
+| Dark background | 82% | 95% |
+| Slogan or address lines | 70% | 88% |
+| 10 company positions (400 cards) | 75% | 88% |
+| Company split over two lines | 0% | 90% |
+| Main 240-card held-out set: name / company / email | 91.2 / 96.7 / 84.2% | 94.6 / 98.8 / 94.2% |
+
+Still weak: phone-photo distortion (45%) and low resolution (50%), mostly email and website characters; the colored-sidebar layout (company 35%, white text on colour that the reader often misses). Enlarging small images, or flipping dark ones, was tried and did not help overall, so it is not used. All cards are synthetic; real photos have more variety.

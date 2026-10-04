@@ -128,4 +128,25 @@ describe('card text extraction', () => {
     expect(extractCardFields('Sam Patel\nSAM & SONS TRADING\n+1 415 555 0132').company).toBe('SAM & SONS TRADING');
     expect(extractCardFields('Hiro Tanaka\nBRIGHT FUTURE\n+1 415 555 0132').company).toBe('BRIGHT FUTURE');
   });
+
+  it('joins a company set on several lines when together they spell the card\'s web address', () => {
+    const twoLine = extractCardFields('Willow\n\nNetworks Systems\n\nArjun Olsen\n\nDirector of Operations\narjun.olsen@willownetworkssystems.example\n+1 (617) 555-1910\nwww.willownetworkssystems.example');
+    expect(twoLine).toMatchObject({ name: 'Arjun Olsen', company: 'Willow Networks Systems' });
+    const sidebar = extractCardFields('Atlas\n\nCommerce         Avery Cohen\n\nInc.                          VP of Sales\navery.cohen@atlascommerceinc.example\n+1 (503) 555-7739\nwww.atlascommerceinc.example');
+    expect(sidebar).toMatchObject({ name: 'Avery Cohen', company: 'Atlas Commerce Inc.' });
+  });
+
+  it('splits a two-column line and ignores a stray mark beside the name', () => {
+    const result = extractCardFields('Noah Gupta                                                                         0\nStrategic Accounts Lead\nnoah.gupta@harborengineeringsystems.example\n+1 (503) 555-7365\nwww.harborengineeringsystems.example\nHarbor Engineering Systems\n');
+    expect(result).toMatchObject({ name: 'Noah Gupta', company: 'Harbor Engineering Systems' });
+  });
+
+  it('removes a logo mark read as a character in front of the company', () => {
+    expect(extractCardFields('@  Ironwood Research\nZara Williams\nOperations Manager\nhello@ironwoodresearch.example').company).toBe('Ironwood Research');
+  });
+
+  it('does not take a slogan for the job title', () => {
+    const result = extractCardFields('FOXGLOVE TRADING STUDIO\n\nYour partner in growth\n\nAmara Williams\n\nProduct Designer\namara.williams@foxglovetradingstudio.example');
+    expect(result.title).toBe('Product Designer');
+  });
 });
