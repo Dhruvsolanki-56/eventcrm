@@ -45,11 +45,7 @@ describe('Groq email drafts', () => {
 
   it('replaces non-breaking hyphens and spaces with plain ones', async () => {
     enable();
-    vi.stubGlobal('fetch', vi.fn(async () => groqReply('Hi Olivia,
-
-A follow‑up note.
-
-Maya')));
+    vi.stubGlobal('fetch', vi.fn(async () => groqReply('Hi Olivia,\n\nA follow\u2011up\u00a0note.\n\nMaya')));
     const draft = await draftEmailWithGroq(context);
     expect(draft?.body).toContain('A follow-up note.');
   });
