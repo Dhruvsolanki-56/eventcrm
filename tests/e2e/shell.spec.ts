@@ -1006,7 +1006,7 @@ test('voice notes save, play back, accept manual text only, and can be deleted',
   await page.getByRole('button', { name: 'Draft an email' }).click();
   await expect(page.locator('.email-sources')).toContainText('Typed manually after the event.');
   // The existing safe fallback uses the source but does not quote raw internal notes into the email.
-  await expect(page.locator('.email-compose textarea')).toHaveValue(/Hi Tessa,[\s\S]*Could you confirm what you need from us next/);
+  await expect(page.locator('.email-compose textarea')).toHaveValue(/Hi Tessa,[\s\S]*What would be most useful for me to send you next\?/);
   await expect(page.locator('.email-compose textarea')).not.toHaveValue(/Typed manually after the event/);
   await page.getByRole('link', { name: 'Voice note', exact: true }).click();
   await newRecording.getByRole('button', { name: 'Delete recording' }).click();

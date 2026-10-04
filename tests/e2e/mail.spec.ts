@@ -71,7 +71,7 @@ test('a scanned demo card can be reviewed, saved, and emailed after explicit app
 
   const composer = page.locator('.email-compose');
   await expect(composer.getByLabel('Subject')).toHaveValue(/Following up/);
-  await expect(composer.getByRole('textbox', { name: 'Message' })).toHaveValue(/Hi Demo,[\s\S]*Could you confirm what you need from us next/);
+  await expect(composer.getByRole('textbox', { name: 'Message' })).toHaveValue(/Hi Demo,[\s\S]*What would be most useful for me to send you next\?/);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   const subject = `Approved scanned-card follow-up ${Date.now()}`;

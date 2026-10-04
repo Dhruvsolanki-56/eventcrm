@@ -5,6 +5,7 @@ import { basename, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AnalyticsData } from '../shared/analytics.js';
 import { AsyncSqliteDatabase } from './sqlite-async.js';
+import { composeTemplateEmail } from './email-template.js';
 import { PostgresDatabase } from './postgres-compat.js';
 import { closePostgres, isPostgresConfigured, migratePostgres } from './postgres.js';
 
@@ -1637,15 +1638,11 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
   const safeRoughRequest = /\b(?:send|promise|offer|agree|paid|payment|accepted|confirmed)\b/i.test(roughRequest) ? '' : roughRequest;
   const checkedTopic = latest?.summary?.match(/\b(?:needs|wants|asked for|interested in)\s+([^.;!?\n]{5,140})/i)?.[1]?.trim() ?? '';
   const relevantPoint = (checkedTopic || safeRoughRequest).slice(0, 180);
-  const subject = requestedWrittenFollowUp ? 'Following up on your project request' : variant === 'alternate' ? 'A quick follow-up' : 'Following up on our conversation';
-  const opening = tone === 'Professional' ? 'Thank you for speaking with me.' : 'Thanks for speaking with me.';
-  const topicSentence = relevantPoint ? ` I’m following up about ${relevantPoint.replace(/[.?!]+$/, '')}.` : '';
-  const requestForClarity = requestedWrittenFollowUp
-    ? 'I’m following up in writing as requested. Could you confirm the scope you would like us to cover and any questions you want addressed?'
-    : variant === 'alternate'
-    ? 'I want to make sure my next message covers what you need. Could you confirm the main point you would like us to address?'
-    : 'I want to make sure I follow up on the right details. Could you confirm what you need from us next?';
-  const body = `Hi ${greeting},\n\n${opening}${topicSentence} ${requestForClarity}\n\n${profileSignature || await (getActorName(actorId))}`;
+  const { subject, body } = composeTemplateEmail({
+    firstName: greeting, tone, variant, eventName: emailEventName, topic: relevantPoint,
+    productsOfInterest: interestedProductNames, requestedWrittenFollowUp,
+    signature: profileSignature || await (getActorName(actorId)),
+  });
   const sourcesUsed = [
     ...(emailEventName ? [{ label: 'Event', excerpt: emailEventName }] : []),
     ...recentConversations.slice(0, 3).map((item, index) => ({ label: `${index === 0 ? 'Latest' : 'Earlier'} ${item.kind === 'audio' ? 'checked voice transcript' : 'conversation'}${item.event_name ? ` · ${item.event_name}` : ''}`, excerpt: item.text.trim().slice(0, 180) })),
@@ -2744,8 +2741,18 @@ export async function seedDemoData(passwordHash: string) {
     await (updateVoiceUsage.run('__service__', serviceVoiceCount));
     const sampleMailDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 18, 0)).toISOString();
     await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,provider_message_id,error_message,approved_at,sent_to_server_at,created_at,created_by) VALUES
-      ('demo-email-tessa-draft','demo-northstar','demo-ns-contact-1','demo-encounter-1','tessa@acmepackaging.example','Sample options for your next run','I enjoyed our conversation. I can share sample options for your team to review.','draft',NULL,NULL,NULL,NULL,?,'demo-owner'),
-      ('demo-email-tessa-sent','demo-northstar','demo-ns-contact-1','demo-encounter-tessa-ended','tessa@acmepackaging.example','Following up from the retail show','Thanks for speaking with us again. Here are the sample details we discussed.','sent','sample-mail-server-accepted',NULL,?, ?,?,'demo-owner'),
+      ('demo-email-tessa-draft','demo-northstar','demo-ns-contact-1','demo-encounter-1','tessa@acmepackaging.example','Sample options for your next run','Hi Tessa,
+
+It was great meeting you at Pacific Packaging Expo. I noted your interest in sample options for your next run. What would be most useful for me to send you next?
+
+Best,
+Maya','draft',NULL,NULL,NULL,NULL,?,'demo-owner'),
+      ('demo-email-tessa-sent','demo-northstar','demo-ns-contact-1','demo-encounter-tessa-ended','tessa@acmepackaging.example','Following up from the retail show','Hi Tessa,
+
+Thank you for speaking with us again at the retail show. Here are the sample details we went over. Let me know if anything looks off.
+
+Best,
+Maya','sent','sample-mail-server-accepted',NULL,?, ?,?,'demo-owner'),
       ('demo-email-noah-failed','demo-northstar','demo-ns-contact-2','demo-encounter-2','noah@acmepackaging.example','Mailer sizes and lead times','Here are the mailer sizes we discussed.','failed',NULL,'Sample data: test message was not accepted.',NULL,NULL,?,'demo-rep'),
       ('demo-email-mina-replied','demo-northstar','demo-ns-contact-3','demo-encounter-3','mina@juniperfoods.example','Seasonal case-size notes','I have attached the case-size notes from our conversation.','replied','sample-reply-recorded',NULL,?, ?,?,'demo-rep')
       ON CONFLICT(id) DO UPDATE SET recipient=excluded.recipient,subject=excluded.subject,body=excluded.body,status=excluded.status,provider_message_id=excluded.provider_message_id,error_message=excluded.error_message,approved_at=excluded.approved_at,sent_to_server_at=excluded.sent_to_server_at,created_at=excluded.created_at,created_by=excluded.created_by`).run(sampleMailDate, sampleMailDate, sampleMailDate, sampleMailDate, sampleMailDate, sampleMailDate, sampleMailDate, sampleMailDate));

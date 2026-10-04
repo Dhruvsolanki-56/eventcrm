@@ -46,7 +46,7 @@ test('an attendee privately scans a card, keeps the conversation, and follows up
   await expect(page.getByText('Supplier said the minimum order is 500 pieces and will send a sample.')).toBeVisible();
   await page.getByRole('navigation', { name: 'Actions for this person' }).getByRole('link', { name: 'Email', exact: true }).click();
   await page.getByRole('button', { name: 'Draft an email' }).click();
-  await expect(page.getByLabel('Subject')).toHaveValue(/Following up/);
+  await expect(page.getByLabel('Subject')).toHaveValue(/Following up|Great to meet you/);
   await page.getByRole('button', { name: 'Approve email' }).click();
   await expect(page.locator('.email-state')).toContainText('No mail server');
   await expect(page.locator('.email-state')).not.toContainText('delivered');
