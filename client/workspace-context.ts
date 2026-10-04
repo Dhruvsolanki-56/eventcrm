@@ -10,6 +10,8 @@ export type WorkspaceContextValue = {
   switchWorkspace: (id: string) => Promise<void>;
   logout: () => Promise<void>;
   notify: (message: string, action?: ToastAction) => void;
+  /** True when the app opened without a signal from a saved copy of the session. */
+  offlineStart?: boolean;
 };
 
 export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);

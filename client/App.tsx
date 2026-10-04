@@ -8,6 +8,8 @@ import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-o
 import { askConfirm } from './confirm.js';
 import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
 import { DictateButton, NoteChips } from './quick-capture-ui.js';
+import { InstallPrompt } from './install-app.js';
+import { cacheSession, clearCachedSession, readCachedSession } from './offline-session.js';
 import { isOfflineError, listQueuedPhotos, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
 import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas, remember, rememberedNumber } from './quick-capture.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
@@ -52,6 +54,7 @@ export default function App() {
   const location = useLocation();
   const [session, setSession] = useState<SessionData | null | undefined>(undefined);
   const [csrfToken, setCsrfToken] = useState('');
+  const [offlineStart, setOfflineStart] = useState(false);
   const [toast, setToast] = useState<{ message: string; action?: ToastAction } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const [workspaceId, setWorkspaceId] = useState(localStorage.getItem('gather-workspace') ?? '');
@@ -67,8 +70,10 @@ export default function App() {
       setCsrfToken(currentCsrf);
       const targetWorkspaceId = preferredWorkspaceId || workspaceId;
       const next = await getSession(targetWorkspaceId || undefined);
-      if (!next) { setSession(null); return; }
+      if (!next) { clearCachedSession(); setSession(null); return; }
       setSession(next);
+      setOfflineStart(false);
+      cacheSession(next);
       if (preferredWorkspaceId && next.availableWorkspaces.some((item) => item.id === preferredWorkspaceId)) {
         setWorkspaceId(preferredWorkspaceId);
         localStorage.setItem('gather-workspace', preferredWorkspaceId);
@@ -78,11 +83,26 @@ export default function App() {
       }
       if (next.csrfToken) setCsrfToken(next.csrfToken);
     } catch (error) {
-      if ((error as { status?: number }).status === 401) setSession(null);
+      if (isOfflineError(error)) {
+        const saved = readCachedSession();
+        if (saved) {
+          setCsrfToken('');
+          setSession((current) => current ?? saved);
+          setOfflineStart(true);
+          return;
+        }
+      }
+      if ((error as { status?: number }).status === 401) { clearCachedSession(); setSession(null); }
       else { setSession(null); notify((error as Error).message); }
     }
   }, [csrfToken, notify, workspaceId]);
   useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    if (!offlineStart) return;
+    const back = () => void refresh();
+    window.addEventListener('online', back);
+    return () => window.removeEventListener('online', back);
+  }, [offlineStart, refresh]);
 
   const switchWorkspace = useCallback(async (id: string) => {
     const next = await getSession(id);
@@ -95,22 +115,24 @@ export default function App() {
   const logout = useCallback(async () => {
     const token = csrfToken || await getCsrfToken();
     await request('/api/auth/logout', { method: 'POST' }, { csrfToken: token });
+    clearCachedSession();
     setSession(null);
     setWorkspaceId('');
     localStorage.removeItem('gather-workspace');
   }, [csrfToken]);
 
   const resetCompleted = useCallback(() => {
+    clearCachedSession();
     setSession(null);
     setWorkspaceId('');
     localStorage.removeItem('gather-workspace');
   }, []);
 
-  const context = useMemo(() => session ? { session, csrfToken, refresh, switchWorkspace, logout, notify } : null,
-    [session, csrfToken, refresh, switchWorkspace, logout, notify]);
+  const context = useMemo(() => session ? { session, csrfToken, refresh, switchWorkspace, logout, notify, offlineStart } : null,
+    [session, csrfToken, refresh, switchWorkspace, logout, notify, offlineStart]);
   if (session === undefined) return <main className="loading-screen"><span className="brand-mark">G</span><p>Opening your space…</p></main>;
   return <WorkspaceContext.Provider value={context}>
-    {session && !['/reset-password', '/verify-email'].includes(location.pathname) ? <WorkspaceShell /> : <AuthScreen onSignedIn={refresh} onCsrf={setCsrfToken} onPasswordReset={resetCompleted} />}
+    {session && offlineStart && location.pathname !== '/scan' ? <Navigate to="/scan" replace /> : session && !['/reset-password', '/verify-email'].includes(location.pathname) ? <WorkspaceShell /> : <AuthScreen onSignedIn={refresh} onCsrf={setCsrfToken} onPasswordReset={resetCompleted} />}
     {toast && <div className="toast"><span role="status"><Check size={16} />{toast.message}</span>{toast.action && <button type="button" className="toast-action" onClick={() => { const action = toast.action; setToast(null); action?.onClick(); }}>{toast.action.label}</button>}<button aria-label="Dismiss message" onClick={() => setToast(null)}><X size={16} /></button></div>}
   </WorkspaceContext.Provider>;
 }
@@ -518,6 +540,7 @@ function HomePage({ onShowTour }: { onShowTour: () => void }) {
         ? { title: isPersonal ? 'Add a little about yourself.' : 'Add what you sell so emails sound like you.', body: 'A few short details help make your messages more useful.', label: isPersonal ? 'Add your details' : 'Add work details', href: '/settings' }
         : { title: 'Start with the card you just collected.', body: 'Take a photo or choose a picture. Check each detail before it is saved.', label: 'Open camera', href: '/scan' };
   return <section className="home-view">
+    <InstallPrompt />
     <div className="page-heading-row"><div><p className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>Good morning, {session.user.name.split(' ')[0]}.</h1><p className="page-lede">Capture the conversation, prepare a personal email, and keep moving.</p></div><Link className="button primary desktop-capture" to="/scan"><ScanLine size={18} /> Capture a card</Link></div>
     <section className="next-action-card">
       <div className="action-illustration"><ScanLine size={30} strokeWidth={1.6} /></div>
@@ -1492,7 +1515,7 @@ function ScanPage() {
   scansNow.current = scans;
   const flushing = useRef(false);
   const flushQueue = useCallback(async () => {
-    if (flushing.current) return;
+    if (flushing.current || !csrfToken) return;
     flushing.current = true;
     try {
       for (const queued of await listQueuedPhotos(session.workspace.id)) {
@@ -1504,7 +1527,7 @@ function ScanPage() {
         if (await uploadFile(file, queued.source, local, false, queued.eventId) === 'queued') break;
       }
     } finally { flushing.current = false; }
-  }, [session.workspace.id, uploadFile]);
+  }, [csrfToken, session.workspace.id, uploadFile]);
   useEffect(() => {
     const goOnline = () => { setOnline(true); void flushQueue(); };
     const goOffline = () => setOnline(false);

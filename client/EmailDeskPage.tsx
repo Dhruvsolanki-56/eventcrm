@@ -30,6 +30,8 @@ export default function EmailDeskPage() {
   const [edit, setEdit] = useState({ subject: '', body: '' });
   const [savedEdit, setSavedEdit] = useState({ subject: '', body: '' });
   const [generation, setGeneration] = useState<'pending' | 'ai' | 'fallback' | 'template' | ''>('');
+  const [picked, setPicked] = useState<string[]>([]);
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const load = async () => {
     setLoading(true); setError('');
     try { setDesk(await request<Desk>('/api/email-desk', {}, { workspaceId: session.workspace.id })); }
@@ -68,7 +70,7 @@ export default function EmailDeskPage() {
     return () => { active = false; if (timer) window.clearTimeout(timer); };
   }, [selectedId, selected?.status, session.workspace.id]);
   const visibleDrafts = useMemo(() => desk.drafts.filter((draft) => (filter === 'draft' ? draft.status === 'draft' : draft.status !== 'draft') && `${draft.person_name} ${draft.company_name} ${draft.subject}`.toLowerCase().includes(search.toLowerCase())), [desk.drafts, filter, search]);
-  const visiblePeople = useMemo(() => desk.people.filter((person) => `${person.name} ${person.company_name}`.toLowerCase().includes(search.toLowerCase())), [desk.people, search]);
+  const visiblePeople = useMemo(() => desk.people.filter((person) => `${person.name} ${person.company_name}`.toLowerCase().includes(search.toLowerCase())).sort((a, b) => Number(b.hasContext) - Number(a.hasContext)), [desk.people, search]);
   async function saveDraft() {
     if (!selected || !edit.subject.trim() || !edit.body.trim()) return;
     setBusy(true);
@@ -90,6 +92,29 @@ export default function EmailDeskPage() {
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
   }
+  const readyPeople = visiblePeople.filter((person) => person.hasContext);
+  const BULK_MAX = 10;
+  const togglePicked = (id: string) => setPicked((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < BULK_MAX ? [...current, id] : current);
+  async function prepareSelected() {
+    const chosen = readyPeople.filter((person) => picked.includes(person.id)).slice(0, BULK_MAX);
+    if (!chosen.length) return;
+    setBusy(true); setError(''); setBulk({ done: 0, total: chosen.length });
+    let made = 0; let firstId = '';
+    for (const person of chosen) {
+      try {
+        const draft = await request<{ id: string }>(`/api/contacts/${person.id}/email-draft`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
+        made += 1; firstId ||= draft.id; setBulk({ done: made, total: chosen.length });
+      } catch (issue) {
+        const limited = (issue as { status?: number }).status === 429;
+        setError(`Prepared ${made} of ${chosen.length}. ${limited ? 'Too many drafts were requested at once. Wait a few minutes, then prepare the rest.' : (issue as Error).message}`);
+        break;
+      }
+    }
+    setBulk(null); setPicked([]);
+    await load();
+    if (made) { setFilter('draft'); setSelectedId(firstId); notify(`${made} draft${made === 1 ? '' : 's'} ready to review. Nothing has been sent.`); }
+    setBusy(false);
+  }
   async function prepare(person: Person) {
     setBusy(true); setError('');
     try {
@@ -104,6 +129,23 @@ export default function EmailDeskPage() {
   async function confirmLeave() {
     return !dirty || askConfirm({ title: 'Leave this unsaved draft?', body: 'Your edits have not been saved.', confirmLabel: 'Leave without saving', cancelLabel: 'Keep editing', danger: true });
   }
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (filter !== 'draft' || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) && target.tagName !== 'BUTTON' || target.isContentEditable)) return;
+      if (document.querySelector('.confirm-backdrop')) return;
+      const key = event.key.toLowerCase();
+      if ((key !== 'j' && key !== 'k') || !visibleDrafts.length) return;
+      const index = visibleDrafts.findIndex((draft) => draft.id === selectedId);
+      const next = visibleDrafts[key === 'j' ? Math.min(visibleDrafts.length - 1, index + 1) : Math.max(0, index < 0 ? 0 : index - 1)];
+      if (!next || next.id === selectedId) return;
+      event.preventDefault();
+      void (async () => { if (await confirmLeave()) setSelectedId(next.id); })();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
   async function chooseQueue(next: typeof filter) {
     if (!await confirmLeave()) return;
     setFilter(next); setSelectedId('');
@@ -112,7 +154,7 @@ export default function EmailDeskPage() {
     <div className="email-desk-toolbar"><div className="email-desk-tabs" role="group" aria-label="Email queue"><button aria-pressed={filter === 'draft'} onClick={() => chooseQueue('draft')}>Drafts <span>{desk.drafts.filter((draft) => draft.status === 'draft').length}</span></button><button aria-pressed={filter === 'reviewed'} onClick={() => chooseQueue('reviewed')}>Approved &amp; outbox <span>{desk.drafts.filter((draft) => draft.status !== 'draft').length}</span></button><button aria-pressed={filter === 'people'} onClick={() => chooseQueue('people')}>Prepare next <span>{desk.people.length}</span></button></div><label className="email-desk-search"><Search size={17} /><span className="sr-only">Search email queue</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find a person or company" /></label></div>
     {selected && filter !== 'people' && <button className="button secondary email-queue-back" onClick={async () => { if (!await confirmLeave()) return; setSelectedId(''); }}>← Back to queue</button>}
     {error && <p className="form-error" role="alert">{error}</p>}{loading && <p role="status" className="subtle">Updating email queue…</p>}
-    <div className="email-desk-layout"><div className="email-desk-list" aria-label="Email queue">{filter === 'people' ? visiblePeople.map((person) => <article className="email-desk-row" key={person.id}><div><strong>{person.name}</strong><small>{person.company_name} · {person.hasContext ? `${person.encounters} saved conversations` : 'Needs conversation context'}</small></div>{person.hasContext ? <button className="button secondary" disabled={busy} onClick={() => void prepare(person)}>{busy ? 'Preparing…' : 'Prepare draft'}</button> : <Link className="button secondary" to={`/people/${person.id}?newConversation=1`}>Add context</Link>}</article>) : visibleDrafts.map((draft) => <button className={`email-desk-row ${selectedId === draft.id ? 'is-selected' : ''}`} data-draft-id={draft.id} type="button" key={draft.id} onClick={async () => { if (!await confirmLeave()) return; setSelectedId(draft.id); }}><span><strong>{draft.person_name}</strong><small>{draft.company_name}{draft.event_name ? ` · ${draft.event_name}` : ''}</small><em>{draft.subject}</em></span><span className="email-desk-status">{draft.status === 'sent' ? 'Mail server accepted' : draft.status}</span></button>)}{!loading && (filter === 'people' ? visiblePeople : visibleDrafts).length === 0 && <div className="email-desk-empty"><Mail size={24} /><strong>{filter === 'draft' ? 'No drafts waiting for review' : filter === 'people' ? 'No people ready for a draft' : 'No approved emails yet'}</strong><p>{filter === 'people' ? 'Save a person with an email address, then prepare their draft here.' : 'Use Prepare next to start with a saved conversation.'}</p></div>}</div>
+    <div className="email-desk-layout"><div className="email-desk-list" aria-label="Email queue">{filter === 'people' && readyPeople.length > 1 && <div className="bulk-bar"><label className="bulk-all"><input type="checkbox" checked={picked.length > 0 && readyPeople.slice(0, BULK_MAX).every((person) => picked.includes(person.id))} onChange={(event) => setPicked(event.target.checked ? readyPeople.slice(0, BULK_MAX).map((person) => person.id) : [])} /> Select up to {BULK_MAX}</label><span aria-live="polite">{picked.length ? `${picked.length} selected` : 'Tick people to prepare several drafts at once'}</span><button type="button" className="button primary" disabled={!picked.length || busy} onClick={() => void prepareSelected()}>{bulk ? `Preparing ${Math.min(bulk.done + 1, bulk.total)} of ${bulk.total}…` : picked.length ? `Prepare ${picked.length} selected` : 'Prepare selected'}</button></div>}{filter === 'draft' && visibleDrafts.length > 1 && <p className="kbd-hint">Tip: press <kbd>J</kbd> and <kbd>K</kbd> to move between drafts.</p>}{filter === 'people' ? visiblePeople.map((person) => <article className="email-desk-row" key={person.id}>{person.hasContext && readyPeople.length > 1 && <input type="checkbox" className="bulk-check" aria-label={`Select ${person.name}`} checked={picked.includes(person.id)} onChange={() => togglePicked(person.id)} />}<div><strong>{person.name}</strong><small>{person.company_name} · {person.hasContext ? `${person.encounters} saved conversations` : 'Needs conversation context'}</small></div>{person.hasContext ? <button className="button secondary" disabled={busy} onClick={() => void prepare(person)}>{busy ? 'Preparing…' : 'Prepare draft'}</button> : <Link className="button secondary" to={`/people/${person.id}?newConversation=1`}>Add context</Link>}</article>) : visibleDrafts.map((draft) => <button className={`email-desk-row ${selectedId === draft.id ? 'is-selected' : ''}`} data-draft-id={draft.id} type="button" key={draft.id} onClick={async () => { if (!await confirmLeave()) return; setSelectedId(draft.id); }}><span><strong>{draft.person_name}</strong><small>{draft.company_name}{draft.event_name ? ` · ${draft.event_name}` : ''}</small><em>{draft.subject}</em></span><span className="email-desk-status">{draft.status === 'sent' ? 'Mail server accepted' : draft.status}</span></button>)}{!loading && (filter === 'people' ? visiblePeople : visibleDrafts).length === 0 && <div className="email-desk-empty"><Mail size={24} /><strong>{filter === 'draft' ? 'No drafts waiting for review' : filter === 'people' ? 'No people ready for a draft' : 'No approved emails yet'}</strong><p>{filter === 'people' ? 'Save a person with an email address, then prepare their draft here.' : 'Use Prepare next to start with a saved conversation.'}</p></div>}</div>
       <aside className="email-desk-preview">{selected && filter !== 'people' ? <><div className="email-desk-preview-head"><p className="eyebrow">{selected.status === 'draft' ? 'REVIEW DRAFT' : 'EMAIL RECORD'}</p><h2>{selected.person_name}</h2><p>{selected.company_name} · {selected.recipient}</p><Link to={`/people/${selected.contact_id}`} className="subtle-link">Open person record →</Link></div>{selected.status === 'draft' && <AiWritingBar writing={aiPending} tookOver={aiPending && dirty} arrived={aiArrived} />}<DraftContext draft={selected} /><div className="email-desk-editor">{selected.status === 'draft' && generation && !aiPending && !aiArrived && <p className="email-desk-generation" role="status">{generation === 'pending' ? 'Draft ready. AI is preparing another suggestion; your edits will not be overwritten.' : generation === 'ai' ? 'AI suggested this draft. Check it against the conversation before approving.' : generation === 'fallback' ? 'AI could not improve this draft. The template is still saved and editable.' : 'Editable template draft.'}</p>}<label className={fieldsWriting ? 'ai-writing-field' : aiArrived ? 'ai-arrived' : undefined}>Subject<input maxLength={200} value={edit.subject} disabled={selected.status !== 'draft'} onChange={(event) => setEdit({ ...edit, subject: event.target.value })} /></label><label className={fieldsWriting ? 'ai-writing-field' : aiArrived ? 'ai-arrived' : undefined}>Message<textarea rows={9} maxLength={8000} aria-busy={fieldsWriting} value={edit.body} disabled={selected.status !== 'draft'} onChange={(event) => setEdit({ ...edit, body: event.target.value })} /></label>{selected.status === 'draft' ? <div className="email-desk-editor-footer"><span>{dirty ? 'Unsaved edits' : 'Saved draft · not sent'}</span><div className="email-desk-review-actions"><button className="button secondary" disabled={busy || !dirty || !edit.subject.trim() || !edit.body.trim()} onClick={() => void saveDraft()}>{busy ? 'Saving…' : 'Save draft'}</button><button className="button primary" disabled={busy || !edit.subject.trim() || !edit.body.trim()} onClick={() => void approveDraft()}>{busy ? 'Working…' : 'Approve email'}</button></div></div> : <p className="subtle">{selected.sent_to_server_at ? 'Mail server accepted this message; inbox delivery is not confirmed.' : selected.status === 'outbox' ? 'Approved for outbox. No mail server sent this message.' : `Status: ${selected.status}.`}</p>}</div></> : <div className="email-desk-placeholder"><Mail size={26} /><h2>Keep the context beside the message.</h2><p>Select a draft to check the conversation facts and wording before saving. For a new person, choose Prepare next.</p></div>}</aside></div>
   </section>;
 }

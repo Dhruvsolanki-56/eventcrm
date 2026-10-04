@@ -261,7 +261,7 @@ body .email-desk-tabs button[aria-pressed="true"] { color: #326b5e; background: 
 body .email-desk-tabs span { padding: 2px 5px; background: #edf2ef; color: #688174; border-radius: 4px; font-size: 10px; }
 body .email-desk-search { min-width: 230px; border-color: var(--line); border-radius: 7px; color: #7b9390; }
 body .email-desk-search input { min-height: 41px; font-size: 12px; }
-body .email-desk-layout { grid-template-columns: minmax(270px,.65fr) minmax(0,1.35fr); gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #fff; align-items: stretch; }
+body .email-desk-layout { grid-template-columns: minmax(270px,.65fr) minmax(0,1.35fr); gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: clip; background: #fff; align-items: stretch; }
 body .email-desk-list,body .email-desk-preview { border: 0; border-radius: 0; }
 body .email-desk-list { border-right: 1px solid var(--line); background: #fcfdfc; }
 body .email-desk-row { padding: 19px; background: transparent; gap: 12px; border-bottom: 1px solid #edf1ee; }

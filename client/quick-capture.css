@@ -51,3 +51,15 @@
 .offline-banner .button { flex: none; min-height: 40px; }
 .tray-item.is-offline { border-style: dashed; border-color: #e2cf9f; background: #fffdf7; }
 @media (max-width: 470px) { .offline-banner { flex-wrap: wrap; } .offline-banner .button { width: 100%; } }
+
+/* Install prompt */
+.install-prompt { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 14px; border: 1px solid #bfe0d1; border-radius: 10px; background: #f2faf6; color: #2f6a58; }
+.install-prompt > svg { flex: none; }
+.install-prompt > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.install-prompt strong { font-size: 13.5px; font-weight: 600; }
+.install-prompt span { font-size: 12.5px; line-height: 1.5; color: #4d7767; }
+.install-prompt span svg { vertical-align: -2px; }
+.install-prompt .button { flex: none; min-height: 40px; }
+.install-close { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; background: transparent; color: #4d7767; border-radius: 8px; cursor: pointer; }
+.install-close:hover { background: #e2f1ea; }
+@media (max-width: 470px) { .install-prompt { flex-wrap: wrap; } .install-prompt .button { order: 3; width: 100%; } }
