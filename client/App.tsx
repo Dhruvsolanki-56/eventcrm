@@ -7,6 +7,8 @@ import { getCsrfToken, getSession, request, requestDownload, saveDownload } from
 import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-ocr.js';
 import { askConfirm } from './confirm.js';
 import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
+import { DictateButton, NoteChips } from './quick-capture-ui.js';
+import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas } from './quick-capture.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
@@ -736,6 +738,13 @@ function PersonPage() {
   const { session, csrfToken, notify } = useWorkspace();
   const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>; conversationMemories: Array<{ id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }> } | null>(null);
   const [note, setNote] = useState('');
+  const [workspaceProducts, setWorkspaceProducts] = useState<string[]>([]);
+  useEffect(() => {
+    let active = true;
+    void request<{ products: ProductChoice[] }>('/api/products', {}, { workspaceId: session.workspace.id }).then((result) => { if (active) setWorkspaceProducts(result.products.map((item) => item.name)); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [session.workspace.id]);
+  const changeNote = (value: string) => { setNote(value); conversationRequestId.current = crypto.randomUUID(); };
   const [conversationMemory, setConversationMemory] = useState({ summary: '', openQuestion: '', promisedNextStep: '', changedSinceLast: '' });
   const [suggestingMemory, setSuggestingMemory] = useState(false);
   const [conversationEvents, setConversationEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
@@ -866,7 +875,9 @@ function PersonPage() {
           {conversationEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}
         </select>
         <label htmlFor="person-note">What did you discuss?</label>
-        <textarea id="person-note" rows={4} maxLength={4000} value={note} onChange={(event) => { setNote(event.target.value); conversationRequestId.current = crypto.randomUUID(); }} placeholder="Their question, current need, or next step — in your own words" required />
+        <NoteChips value={note} onChange={changeNote} productNames={[...detail.products.map((item) => item.name), ...workspaceProducts]} />
+        <textarea id="person-note" rows={4} maxLength={4000} value={note} onChange={(event) => changeNote(event.target.value)} placeholder="Tap a choice above, speak, or type — in your own words" required />
+        <DictateButton disabled={saving} onText={(text) => changeNote(appendText(note, text))} />
         <details className="conversation-memory"><summary>Add checked details (optional)</summary><p className="subtle">Your note alone is enough to prepare a draft. Add only facts you want to explicitly confirm.</p><button type="button" className="button secondary" disabled={suggestingMemory || !note.trim()} onClick={() => { setSuggestingMemory(true); void request<typeof conversationMemory>(`/api/contacts/${contactId}/conversation-context-suggestion`, { method: 'POST', body: JSON.stringify({ text: note }) }, { csrfToken, workspaceId: session.workspace.id }).then((suggestion) => { setConversationMemory(suggestion); notify('AI suggested conversation context. Check every field before saving.'); }).catch((issue) => notify((issue as Error).message)).finally(() => setSuggestingMemory(false)); }}>{suggestingMemory ? 'Understanding…' : 'Suggest conversation context'}</button><p className="subtle">Suggestions send this note and limited workspace context to the configured AI provider. Check anything suggested before saving. It may misunderstand who promised what.</p><label>What matters most<textarea rows={2} maxLength={700} value={conversationMemory.summary} onChange={(event) => setConversationMemory({ ...conversationMemory, summary: event.target.value })} placeholder="A checked summary in your words" /></label><label>Open question<input maxLength={400} value={conversationMemory.openQuestion} onChange={(event) => setConversationMemory({ ...conversationMemory, openQuestion: event.target.value })} placeholder="What still needs an answer?" /></label><label>Agreed next step<input maxLength={400} value={conversationMemory.promisedNextStep} onChange={(event) => setConversationMemory({ ...conversationMemory, promisedNextStep: event.target.value })} placeholder="Only something you actually agreed to do" /></label><label>What changed since last time<input maxLength={400} value={conversationMemory.changedSinceLast} onChange={(event) => setConversationMemory({ ...conversationMemory, changedSinceLast: event.target.value })} placeholder="New need, decision or timing" /></label></details>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button primary" data-action="email" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add & prepare email'}</button>
@@ -1022,7 +1033,9 @@ function TaskPlanner({ contactId, kind, onKindChange, onSaved }: { contactId: st
     <p className="eyebrow">NEXT STEP</p><h2>Keep the conversation moving.</h2>
     <label>What would you like to add?<select value={kind} onChange={(event) => { onKindChange(event.target.value as typeof kind); setError(''); setOverlap(false); }}><option value="follow_up">Follow-up</option><option value="meeting">Meeting</option></select></label>
     <label>{kind === 'meeting' ? 'Meeting time' : 'Follow-up time'}<input aria-label={kind === 'meeting' ? 'Meeting time' : 'Follow-up time'} type="datetime-local" required value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
+    <div className="when-chips" role="group" aria-label="Quick dates">{followUpChips.map((chip) => { const day = dateInTimeZoneDays(timeZone, chip.days); const on = dueAt.slice(0, 10) === day; return <button type="button" key={chip.label} className={`quick-chip${on ? ' is-on' : ''}`} aria-pressed={on} onClick={() => setDueAt(`${day}T${dueAt.split('T')[1] || '10:00'}`)}>{chip.label}</button>; })}</div>
     <small>Time shown in {timeZone}.</small>
+    <div className="when-chips" role="group" aria-label="Quick notes">{(kind === 'meeting' ? meetingIdeas : followUpIdeas).map((idea) => <button type="button" key={idea} className="quick-chip" onClick={() => setNote(applyIdea(note, idea, [...followUpIdeas, ...meetingIdeas]))}>{idea}</button>)}</div>
     <label>Note (optional)<textarea rows={2} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder={kind === 'meeting' ? 'What should you cover?' : 'What should you follow up about?'} /></label>
     {aiSuggestionsAvailable && <button type="button" className="text-button suggestion-action" disabled={suggestionBusy} onClick={() => void askForSuggestion()}>{suggestionBusy ? <><Sparkles size={14} className="status-spin" aria-hidden="true" /> Preparing a suggestion…</> : 'Suggest a next step'}</button>}
     {!aiSuggestionsAvailable && aiSuggestionsAvailable !== null && <p className="subtle suggestion-message">AI suggestions are not set up. Choose a date and write the next step yourself.</p>}
@@ -1981,6 +1994,16 @@ function ReviewPage() {
   const status = String(scan?.status ?? 'loading');
   const reviewPending = status === 'queued' || status === 'reading' || status === 'loading' || ocrRunning;
   const justRead = useJustFinished(reviewPending, 2400);
+  const personKeys = ['name', 'title', 'company', 'email', 'phone', 'website'] as const;
+  const needsLook = status === 'ready' && reviewMode === 'person' ? fieldsNeedingLook(personKeys, lead, lead.uncertain) : [];
+  const fieldWords = { name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' } as const;
+  const focusedLook = useRef('');
+  useEffect(() => {
+    if (status !== 'ready' || reviewMode !== 'person' || focusedLook.current === scanId || !window.matchMedia('(pointer: fine)').matches) return;
+    focusedLook.current = scanId;
+    const first = needsLook[0];
+    if (first) window.setTimeout(() => document.querySelector<HTMLInputElement>(`.review-form [data-field="${first}"]`)?.focus({ preventScroll: true }), 150);
+  }, [status, reviewMode, scanId]);
   const materialAlreadySaved = typeof scan?.materialCompanyId === 'string' && !!scan.materialCompanyId;
   const fieldsDisabled = status === 'saved' && (reviewMode === 'person' || materialAlreadySaved);
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
@@ -2002,9 +2025,10 @@ function ReviewPage() {
         <div className="review-form-heading"><div><p className="eyebrow">{reviewMode === 'brochure' ? 'COMPANY MATERIAL' : 'PERSON'}</p><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
         {reviewPending && <div className="review-reading-note" role="status"><RotateCw size={17} aria-hidden="true" /><div><strong>Start checking the photo now.</strong><span>{ocrRunning ? sentence(ocrStage) : 'Reading is starting.'} You can type while it finishes; your edits will stay. Save becomes available when reading ends.</span>{ocrRunning && !ocrStage.includes('Gemini') && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="On-device reading progress" />}</div></div>}
         {(status === 'ready' || status === 'failed') && <p className="review-check-note"><CircleCheck size={17} aria-hidden="true" /><span>Each field shows what the reader found: suggested, uncertain, or missing. These are not verified facts. Check them against the photo before saving.</span></p>}
-        {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key, index) => <Fragment key={key}><label style={{ '--i': index } as CSSProperties} className={[lead.uncertain.includes(key) ? 'uncertain-field' : '', reviewPending && !lead[key]?.trim() ? 'field-reading' : '', justRead && lead[key]?.trim() ? 'field-arrived' : ''].filter(Boolean).join(' ')}>
+        {status === 'ready' && reviewMode === 'person' && !fieldsDisabled && <p className={`review-glance${needsLook.length ? ' needs-look' : ''}`} role="status"><CircleCheck size={17} aria-hidden="true" /><span>{needsLook.length === 0 ? <><strong>Everything was found on the card.</strong> Compare it with the photo, then save.</> : <><strong>{personKeys.length - needsLook.length} of {personKeys.length} details were found.</strong> Take a look at: {needsLook.map((key) => fieldWords[key]).join(', ')}.</>}</span></p>}
+        {reviewMode === 'person' && (['name','title','company','email','phone','website'] as const).map((key, index) => <Fragment key={key}><label style={{ '--i': index } as CSSProperties} className={[lead.uncertain.includes(key) ? 'uncertain-field' : '', reviewPending && !lead[key]?.trim() ? 'field-reading' : '', justRead && lead[key]?.trim() ? 'field-arrived' : '', status === 'ready' && !fieldsDisabled && !needsLook.includes(key) ? 'field-found' : '', status === 'ready' && needsLook.includes(key) ? 'field-look' : ''].filter(Boolean).join(' ')}>
           <span>{({ name: 'Name', title: 'Job title', company: 'Company', email: 'Email', phone: 'Phone', website: 'Website' })[key]}{key === 'name' ? ' *' : ''}<em className={lead.uncertain.includes(key) ? '' : 'field-evidence'}>{lead.uncertain.includes(key) ? 'Check this' : lead[key]?.trim() ? 'Suggested' : reviewPending ? 'Reading' : 'Not found'}</em></span>
-          <input value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
+          <input data-field={key} value={lead[key]} onChange={(event) => update(key, event.target.value)} type={key === 'email' ? 'email' : key === 'phone' ? 'tel' : 'text'} inputMode={key === 'website' ? 'url' : undefined} maxLength={key === 'website' ? 300 : 200} required={key === 'name'} disabled={fieldsDisabled} />
         </label>{key === 'company' && companyMatches()}</Fragment>)}
         {reviewMode === 'brochure' && <><label>Company name<input value={lead.company} onChange={(event) => update('company', event.target.value)} maxLength={160} required disabled={fieldsDisabled} /></label>{companyMatches()}<label>Website<input value={lead.website} onChange={(event) => update('website', event.target.value)} type="text" inputMode="url" maxLength={300} placeholder="example.com" disabled={fieldsDisabled} /></label><label>Products or topics shown <span className="optional-label">one per line; check the words against the photo</span><textarea rows={3} value={brochureItems} maxLength={1500} onChange={(event) => { brochureEdited.current = true; setBrochureItems(event.target.value); }} placeholder="Recyclable cartons" disabled={fieldsDisabled} /></label><p className="subtle">This photo and the details you confirm will be saved under the company, not as a person. Similar company names are shown for confirmation.</p></>}
         {reviewMode === 'person' && (lead.products.length + lead.topics.length > 0) && <div className="extracted-context"><strong>Other details spotted — check before using</strong><p>{[...lead.products, ...lead.topics].join(' · ')}</p></div>}
