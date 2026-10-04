@@ -283,7 +283,7 @@ test('Email now from Save & scan next sends only after approval and returns to c
   await dialog.getByRole('textbox', { name: 'Message' }).fill('This was approved from the optional Email now toast.');
   await dialog.getByRole('button', { name: 'Approve email' }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'queued for the mail server' })).toBeVisible();
   await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain(subject);
   const acceptedMessage = readFileSync(capturePath!, 'utf8');
@@ -323,7 +323,7 @@ test('password reset uses a one-time link, changes the credential, and revokes o
     await recoveryPage.getByLabel('Email').fill('maya@gather.test');
     await recoveryPage.getByLabel('Password').fill(newPassword);
     await recoveryPage.getByRole('button', { name: 'Sign in' }).click();
-    await expect(recoveryPage.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(recoveryPage.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     const csrf = await (await recoveryPage.request.get('/api/auth/csrf')).json() as { csrfToken: string };
     const reused = await recoveryPage.request.post('/api/auth/password-reset/confirm', {
       data: { token: new URL(resetUrl!).hash.slice('#reset='.length), password: newPassword },

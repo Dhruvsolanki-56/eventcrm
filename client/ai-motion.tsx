@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Check, LoaderCircle, PenLine } from 'lucide-react';
 import './ai-motion.css';
 
 /** True for `ms` after `active` turns from true to false, so a result can briefly highlight itself. */
@@ -33,7 +33,7 @@ export function AiWritingBar({ writing, tookOver = false, arrived = false, title
   if (!writing && !arrived) return null;
   const mode = arrived ? 'is-done' : tookOver ? 'is-calm' : '';
   return <div className={`ai-bar ${mode}`.trim()} role="status" aria-live="polite">
-    <Sparkles size={18} aria-hidden="true" />
+    {arrived ? <Check size={16} aria-hidden="true" /> : tookOver ? <PenLine size={16} aria-hidden="true" /> : <LoaderCircle size={16} className="status-spin" aria-hidden="true" />}
     <div>
       {arrived ? <><strong>The AI draft is ready</strong><span>Read it against the conversation, then edit anything you like.</span></>
         : tookOver ? <><strong>You are editing</strong><span>The AI is still working, but it will not replace your text.</span></>
@@ -45,7 +45,7 @@ export function AiWritingBar({ writing, tookOver = false, arrived = false, title
 /** Placeholder lines shown while the first draft is being created. */
 export function AiDraftSkeleton({ label = 'Preparing your draft' }: { label?: string }) {
   return <div role="status" aria-live="polite">
-    <div className="ai-bar"><Sparkles size={18} aria-hidden="true" /><div><strong>{label}<span className="ai-dots" aria-hidden="true" /></strong><span>Reading your saved conversation. This takes a few seconds.</span></div></div>
+    <div className="ai-bar"><LoaderCircle size={16} className="status-spin" aria-hidden="true" /><div><strong>{label}<span className="ai-dots" aria-hidden="true" /></strong><span>Reading your saved conversation. This takes a few seconds.</span></div></div>
     <div className="ai-skeleton" aria-hidden="true"><i /><i /><i /><i /></div>
   </div>;
 }

@@ -21,7 +21,7 @@ test('an admin combines duplicate companies without losing people or deal accoun
   try {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   const headers = { 'X-Workspace-Id': 'demo-northstar' };
   const sourceResponse = await page.request.get(`/api/companies/${sourceId}`, { headers });
   const targetResponse = await page.request.get(`/api/companies/${targetId}`, { headers });

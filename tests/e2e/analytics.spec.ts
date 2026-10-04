@@ -53,7 +53,7 @@ test('analytics counts over 200 records, deduplicates companies and respects eve
       }
     })();
     await page.goto('/'); await page.getByRole('button',{name:/Maya Chen/}).click();
-    await expect(page.getByRole('heading',{name:'Keep the next conversation.'})).toBeVisible();
+    await expect(page.getByRole('heading',{ name: 'Scan cards', exact: true })).toBeVisible();
     const data=await (await page.request.get(`/api/analytics?days=7&eventId=${eventId}`)).json() as AnalyticsData;
     expect(data.metrics).toMatchObject({people:205,previousPeople:1,companies:1,conversations:206,wonValue:990000,wonCompanies:1});
     expect(data.daily).toHaveLength(7);
@@ -62,18 +62,18 @@ test('analytics counts over 200 records, deduplicates companies and respects eve
     expect((await page.request.get('/api/analytics?days=999')).status()).toBe(400);
     await page.locator('.profile-button').click(); await page.getByRole('menuitem',{name:'Sign out'}).click();
     await page.getByRole('button',{name:/Priya Shah/}).click();
-    await expect(page.getByRole('heading',{name:'Keep the next conversation.'})).toBeVisible();
+    await expect(page.getByRole('heading',{ name: 'Scan cards', exact: true })).toBeVisible();
     expect((await page.request.get(`/api/analytics?days=7&eventId=${eventId}`)).status()).toBe(400);
     const scoped=await (await page.request.get('/api/analytics')).json() as AnalyticsData;
     expect(scoped.events.some((event)=>event.id===eventId)).toBe(false);
     expect(scoped.sources.some((event)=>event.id===eventId)).toBe(false);
     await page.locator('.profile-button').click(); await page.getByRole('menuitem',{name:'Sign out'}).click();
     await page.getByRole('button',{name:/Jordan Lee/}).click();
-    await expect(page.getByRole('heading',{name:'Keep the next conversation.'})).toBeVisible();
+    await expect(page.getByRole('heading',{ name: 'Scan cards', exact: true })).toBeVisible();
     expect((await page.request.get('/api/analytics')).status()).toBe(403);
     await page.locator('.profile-button').click(); await page.getByRole('menuitem',{name:'Sign out'}).click();
     await page.getByRole('button',{name:/Sam Patel/}).click();
-    await expect(page.getByRole('heading',{name:'Keep the next conversation.'})).toBeVisible();
+    await expect(page.getByRole('heading',{ name: 'Scan cards', exact: true })).toBeVisible();
     const personal=await (await page.request.get('/api/analytics')).json() as AnalyticsData;
     expect(personal.recent.every((person)=>person.id.startsWith('demo-sam'))).toBe(true);
     expect(personal.events.some((event)=>event.id===eventId)).toBe(false);

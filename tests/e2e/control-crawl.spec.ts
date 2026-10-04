@@ -15,7 +15,7 @@ async function signIn(page: Page, account: RegExp) {
     await page.getByRole('menuitem', { name: 'Sign out' }).click();
   }
   await page.getByRole('button', { name: account }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   if (targetViewport) await page.setViewportSize(targetViewport);
 }
 
@@ -181,15 +181,15 @@ test('click visible buttons and in-app links across company and private routes a
   const companyRoutes: CrawlRoute[] = [
     { path: '/home', heading: /Good morning, Maya/ },
     { path: '/setup', heading: /Make Gather yours/ },
-    { path: '/scan', heading: /Keep the next conversation/ },
+    { path: '/scan', heading: /^Scan cards$/ },
     { path: '/email', heading: /^Email Desk$/ },
-    { path: '/people', heading: /Keep the person close/ },
+    { path: '/people', heading: /^People$/ },
     { path: '/people/demo-ns-contact-1', heading: /Tessa Morgan/ },
-    { path: '/companies', heading: /One company, many people/ },
+    { path: '/companies', heading: /^Companies$/ },
     { path: '/companies/demo-ns-acme', heading: /Acme Packaging/ },
-    { path: '/follow-ups', heading: /Keep the next step from slipping/ },
-    { path: '/pipeline', heading: /Move the conversation forward/ },
-    { path: '/reports', heading: /See the work at a glance/ },
+    { path: '/follow-ups', heading: /^Follow-ups$/ },
+    { path: '/pipeline', heading: /^Pipeline$/ },
+    { path: '/reports', heading: /^Reports$/ },
     { path: '/analytics', heading: /^Analytics$/ },
     { path: '/settings', heading: /What your team sells/ },
     { path: '/reset-password', heading: /Choose a new password/ },
@@ -198,12 +198,12 @@ test('click visible buttons and in-app links across company and private routes a
   const attendeeRoutes: CrawlRoute[] = [
     { path: '/home', heading: /Good morning, Sam/ },
     { path: '/setup', heading: /Make Gather yours/ },
-    { path: '/scan', heading: /Keep the next conversation/ },
+    { path: '/scan', heading: /^Scan cards$/ },
     { path: '/email', heading: /^Email Desk$/ },
-    { path: '/people', heading: /Keep the person close/ },
+    { path: '/people', heading: /^People$/ },
     { path: '/people/demo-sam-contact-1', heading: /Morgan Ellis/ },
     { path: '/analytics', heading: /^Analytics$/ },
-    { path: '/follow-ups', heading: /Keep the next step from slipping/ },
+    { path: '/follow-ups', heading: /^Follow-ups$/ },
     { path: '/settings', heading: /About me/ },
     { path: '/reset-password', heading: /Choose a new password/ },
     { path: '/verify-email', heading: /Verify your email/ },
@@ -281,7 +281,7 @@ test('every repeated follow-up and meeting-row action works on desktop and phone
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
       await signIn(page, /Maya Chen/);
       await page.goto('/follow-ups');
-      await expect(page.getByRole('heading', { name: /Keep the next step from slipping/ })).toBeVisible();
+      await expect(page.getByRole('heading', { name: /^Follow-ups$/ })).toBeVisible();
 
       for (const [taskId, action] of [
         ['demo-task-noah', '1 day'],

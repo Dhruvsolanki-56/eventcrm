@@ -27,7 +27,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
   expect(otherCompanyCounts.contacts).toBeGreaterThan(0);
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Data & activity/ }).click();
   const clearPanel = page.locator('.sample-clear-panel');
@@ -51,7 +51,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.getByRole('button', { name: /Sam Patel Attendee/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.locator('.sample-clear-panel')).toBeVisible();

@@ -39,7 +39,7 @@ test('voice recording and transcript quotas bound persistent workspace/service g
     const initial = counts();
     expect(initial).toMatchObject({ northstarRows: 1, totalRows: 3, northstarCreated: 1, serviceCreated: 3 });
     await page.getByRole('button', { name: /Maya Chen/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     let csrfState = await csrf();
     expect(csrfState.cookieMatches).toBe(true);
     let token = csrfState.csrfToken;
@@ -73,7 +73,7 @@ test('voice recording and transcript quotas bound persistent workspace/service g
     expect(await page.evaluate(async (token) => (await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': token } })).status, token)).toBe(200);
     await page.goto('/');
     await page.getByRole('button', { name: /Sam Patel/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     csrfState = await csrf();
     expect(csrfState.cookieMatches).toBe(true);
     token = csrfState.csrfToken;

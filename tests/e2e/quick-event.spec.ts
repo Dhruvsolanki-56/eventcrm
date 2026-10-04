@@ -4,7 +4,7 @@ test('an admin can create an event from the capture screen in a few taps', async
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.goto('/scan');
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'New event' }).click();
   await page.getByRole('button', { name: 'Expo', exact: true }).click();
   await expect(page.getByLabel('Event name')).toHaveValue(/^Expo /);
@@ -30,7 +30,7 @@ test('a name is required, and people who are not admins do not see the button', 
   await page.goto('/');
   await page.getByRole('button', { name: /Jordan Lee/ }).click();
   await page.goto('/scan');
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'New event' })).toHaveCount(0);
 });
 

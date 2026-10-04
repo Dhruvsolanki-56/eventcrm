@@ -7,7 +7,7 @@ test('card-photo workspace quota rejects the upload before a scan row is kept', 
   expect(process.env.SCAN_STORAGE_WORKSPACE_LIMIT_BYTES).toBe('70000');
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
   const invalidClientScanId = crypto.randomUUID();
   const invalidPhoto = await page.request.post('/api/scans', {

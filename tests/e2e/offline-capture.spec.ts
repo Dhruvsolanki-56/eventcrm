@@ -5,7 +5,7 @@ test('a photo taken offline is kept on the phone and uploads once when the conne
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.goto('/scan');
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   const before = await page.locator('.tray-item').count();
 
   const image = await page.evaluate(async () => {

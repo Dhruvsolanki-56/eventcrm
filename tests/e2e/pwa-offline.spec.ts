@@ -40,7 +40,7 @@ test('the installed app opens offline on the capture screen and refreshes its se
   try {
     await page.route('**/api/**', fakeApi);
     await page.goto(`${base}/scan`);
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
     // The installable parts exist and the service worker takes over.
     const manifest = await (await page.request.get(`${base}/manifest.webmanifest`)).json() as { display: string; icons: Array<{ src: string }>; start_url: string };
@@ -62,7 +62,7 @@ test('the installed app opens offline on the capture screen and refreshes its se
     await page.unroute('**/api/**');
     await context.setOffline(true);
     await page.goto(`${base}/home`);
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible({ timeout: 20_000 });
     await expect(page).toHaveURL(/\/scan$/);
     await expect(page.getByText('You are offline')).toBeVisible();
 

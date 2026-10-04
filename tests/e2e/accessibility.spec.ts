@@ -44,7 +44,7 @@ test('company and private attendee routes retain named controls, labeled fields,
   test.setTimeout(120_000);
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   const companyRoutes = ['/home', '/scan', '/email', '/people', '/people/demo-ns-contact-1', '/companies', '/companies/demo-ns-acme', '/pipeline', '/analytics', '/reports', '/follow-ups', '/settings'];
   for (const width of [1440, 390]) for (const route of companyRoutes) await inspectRoute(page, route, width);
@@ -54,7 +54,7 @@ test('company and private attendee routes retain named controls, labeled fields,
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.getByRole('button', { name: /Sam Patel/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   const attendeeRoutes = ['/home', '/setup', '/scan', '/people', '/people/demo-sam-contact-1', '/companies', '/pipeline', '/analytics', '/reports', '/follow-ups', '/settings'];
   for (const width of [1440, 390]) for (const route of attendeeRoutes) await inspectRoute(page, route, width);

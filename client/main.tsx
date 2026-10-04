@@ -7,9 +7,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.js';
 import { ConfirmHost } from './confirm.js';
-import './styles.css';
-import './workspace-design.css';
-import './calm-workspace.css';
+import './app.css';
 import { warmOfflineReading } from './offline-warm.js';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

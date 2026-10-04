@@ -34,7 +34,7 @@ test('an attendee privately scans a card, keeps the conversation, and follows up
   await expect(page).toHaveURL(/\/review\/[^/]+$/);
   await page.getByLabel('Conversation note').fill('Supplier said the minimum order is 500 pieces and will send a sample.');
   await page.getByRole('button', { name: 'Save & scan next' }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   const privateExport = await (await page.request.get('/api/export/data.json')).json() as { data: { workspace: { kind: string }; notes: Array<{ body: string }>; contacts: Array<{ name: string }> } };
   expect(privateExport.data.workspace.kind).toBe('personal');

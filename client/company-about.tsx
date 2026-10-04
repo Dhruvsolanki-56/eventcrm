@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Globe, Sparkles } from 'lucide-react';
+import { Globe, LoaderCircle } from 'lucide-react';
 import { request } from './api.js';
 import './company-about.css';
 
@@ -35,8 +35,8 @@ export function CompanyAbout({ companyId, companyName, initial, hasWebsite, csrf
   }
 
   return <section className="company-about" aria-labelledby={`about-${companyId}`}>
-    <div className="company-about-head"><div><p className="eyebrow">ABOUT THE COMPANY</p><h3 id={`about-${companyId}`}>What {companyName} does</h3></div>
-      <button type="button" className="button secondary" disabled={reading} onClick={() => void suggest()}>{reading ? <><Sparkles size={14} className="status-spin" aria-hidden="true" /> Reading website…</> : <><Globe size={14} aria-hidden="true" /> {hasWebsite ? 'Suggest from website' : 'Try from their email'}</>}</button></div>
+    <div className="company-about-head"><div><h3 id={`about-${companyId}`}>What {companyName} does</h3></div>
+      <button type="button" className="button secondary" disabled={reading} onClick={() => void suggest()}>{reading ? <><LoaderCircle size={14} className="status-spin" aria-hidden="true" /> Reading website…</> : <><Globe size={14} aria-hidden="true" /> {hasWebsite ? 'Suggest from website' : 'Try from their email'}</>}</button></div>
     <label className="sr-only" htmlFor={`about-text-${companyId}`}>Short description of {companyName}</label>
     <textarea id={`about-text-${companyId}`} rows={3} maxLength={400} value={text} onChange={(event) => setText(event.target.value)} placeholder="One or two sentences, for example: Makes packaging for beauty brands." />
     {message && <p className="company-about-note" role="status">{message}</p>}

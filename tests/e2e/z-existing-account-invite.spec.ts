@@ -23,7 +23,7 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   await page.getByLabel('Email').fill('sam@gather.test');
   await page.getByLabel('Password').fill(process.env.DEMO_PASSWORD ?? 'Gather-Demo-2026!');
   await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   await page.locator('.profile-button').click();
   const privateSpace = page.getByRole('menuitem', { name: /Sam's private space/ });

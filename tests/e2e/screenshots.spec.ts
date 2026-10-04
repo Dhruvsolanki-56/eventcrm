@@ -15,7 +15,7 @@ test('refresh documented desktop and phone capture screenshots', async ({ page }
   await page.setViewportSize({ width: 1440, height: 960 });
 
   await page.getByRole('link', { name: /^Scan/ }).first().click();
-  await expect(page.getByRole('heading', { name: /Keep the next conversation/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Scan cards$/ })).toBeVisible();
   await page.screenshot({ path: resolve('docs/screenshots/capture-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

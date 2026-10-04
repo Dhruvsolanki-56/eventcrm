@@ -8,7 +8,7 @@ test('text-note count limits are enforced per workspace and service-wide', async
   expect(process.env.NOTE_COUNT_TOTAL_LIMIT).toBe('7');
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   const database = new Database(resolve(process.env.DATABASE_PATH ?? ''), { readonly: true });
   const state = (workspaceId: string, contactId: string) => ({
@@ -51,7 +51,7 @@ test('text-note count limits are enforced per workspace and service-wide', async
     expect(await logout(csrf.csrfToken)).toBe(200);
     await page.goto('/');
     await page.getByRole('button', { name: /Alex Rivera/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     csrf = await csrfToken();
     expect(csrf.cookieMatches).toBe(true);
     const riverbend = 'demo-rb-contact-1';
@@ -64,7 +64,7 @@ test('text-note count limits are enforced per workspace and service-wide', async
     expect(await logout(csrf.csrfToken)).toBe(200);
     await page.goto('/');
     await page.getByRole('button', { name: /Sam Patel/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     csrf = await csrfToken();
     expect(csrf.cookieMatches).toBe(true);
     const sam = 'demo-sam-contact-1';

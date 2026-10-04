@@ -7,7 +7,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await page.goto('/');
   page.on('request', (request) => { if (/SettingsPage(?:[-.]|\.tsx)/i.test(request.url())) settingsChunkRequests.push(request.url()); });
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   expect(settingsChunkRequests, 'the capture-first route does not download Settings code').toEqual([]);
   page.on('response', (response) => { if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`); });
   page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()); });
@@ -18,12 +18,12 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   });
   for (const item of [
     { label: 'Home', heading: /Good morning, Maya/ },
-    { label: 'Scan', heading: /Keep the next conversation/ },
-    { label: 'People', heading: /Keep the person close/ },
-    { label: 'Companies', heading: /One company, many people/ },
-    { label: 'Follow-ups', heading: /Keep the next step from slipping/ },
-    { label: 'Pipeline', heading: /Move the conversation forward/ },
-    { label: 'Reports', heading: /See the work at a glance/ },
+    { label: 'Scan', heading: /^Scan cards$/ },
+    { label: 'People', heading: /^People$/ },
+    { label: 'Companies', heading: /^Companies$/ },
+    { label: 'Follow-ups', heading: /^Follow-ups$/ },
+    { label: 'Pipeline', heading: /^Pipeline$/ },
+    { label: 'Reports', heading: /^Reports$/ },
     { label: 'Analytics', heading: /^Analytics$/ },
     { label: 'Settings', heading: /What your team sells/ },
   ]) {
@@ -86,7 +86,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await page.getByLabel('Event spend (USD)').fill('10000');
   await page.getByRole('button', { name: 'Save event' }).click();
   await page.getByRole('link', { name: 'Reports', exact: true }).click();
-  await expect(page.getByText('CAPTURES · ACTIVE EVENT')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
   await expect(page.locator('.metric-card').filter({ hasText: 'Follow-ups done' })).toBeVisible();
   await expect(page.locator('.metric-card').filter({ hasText: 'Won companies' }).locator('.metric-number')).toHaveText('1');
   await expect(page.locator('.metric-card').filter({ hasText: 'Won deal value' }).locator('.metric-number')).toHaveText('$1,250');
@@ -105,12 +105,12 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await page.setViewportSize({ width: 390, height: 844 });
   for (const item of [
     { label: 'Home', heading: /Good morning, Maya/ },
-    { label: 'Scan', heading: /Keep the next conversation/ },
-    { label: 'People', heading: /Keep the person close/ },
-    { label: 'Companies', heading: /One company, many people/ },
-    { label: 'Follow-ups', heading: /Keep the next step from slipping/ },
-    { label: 'Pipeline', heading: /Move the conversation forward/ },
-    { label: 'Reports', heading: /See the work at a glance/ },
+    { label: 'Scan', heading: /^Scan cards$/ },
+    { label: 'People', heading: /^People$/ },
+    { label: 'Companies', heading: /^Companies$/ },
+    { label: 'Follow-ups', heading: /^Follow-ups$/ },
+    { label: 'Pipeline', heading: /^Pipeline$/ },
+    { label: 'Reports', heading: /^Reports$/ },
   ]) {
     const phoneLink = page.getByRole('navigation', { name: 'Phone navigation' }).getByRole('link', { name: item.label, exact: true });
     if (await phoneLink.count() && await phoneLink.isVisible()) await phoneLink.click();
@@ -132,9 +132,9 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await page.getByRole('button', { name: /Sam Patel/ }).click();
   for (const item of [
     { label: 'Home', heading: /Good morning, Sam/ },
-    { label: 'Scan', heading: /Keep the next conversation/ },
-    { label: 'People', heading: /Keep the person close/ },
-    { label: 'Follow-ups', heading: /Keep the next step from slipping/ },
+    { label: 'Scan', heading: /^Scan cards$/ },
+    { label: 'People', heading: /^People$/ },
+    { label: 'Follow-ups', heading: /^Follow-ups$/ },
     { label: 'Settings', heading: /About me/ },
   ]) {
     await page.getByRole('link', { name: item.label === 'Scan' ? /^Scan/ : item.label, exact: item.label !== 'Scan' }).first().click();

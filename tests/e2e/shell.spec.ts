@@ -12,7 +12,7 @@ test('expired local session cookies do not block a fresh sample-account sign-in'
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Maya/ })).toBeVisible();
 });
@@ -34,7 +34,7 @@ test('sample company and attendee accounts enter their own spaces', async ({ pag
     { name: /Riley Morgan/, heading: /Good morning, Riley/, strip: /Only you can see this/ },
   ]) {
     await page.getByRole('button', { name: account.name }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Home' }).click();
     await expect(page.getByRole('heading', { name: account.heading })).toBeVisible();
     await expect(page.getByText(account.strip).first()).toBeVisible();
@@ -137,7 +137,7 @@ test('event-scoped members cannot read private encounter notes through drafts or
   try {
   await page.goto('/');
   await page.getByRole('button', { name: /Jordan Lee/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   const browserApi = (url: string, method = 'GET', data?: Record<string, string>) => page.evaluate(async ({ url, method, data }) => {
     const headers = new Headers({ 'X-Workspace-Id': 'demo-northstar' });
     if (data) {
@@ -223,7 +223,7 @@ test('event-limited members cannot link hidden companies or act on another event
 
   await page.goto('/');
   await page.getByRole('button', { name: /Jordan Lee/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Jordan/ })).toBeVisible();
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
@@ -281,7 +281,7 @@ test('event-scoped managers cannot change the deal for an inaccessible company',
 
   await page.goto('/');
   await page.getByRole('button', { name: /Jordan Lee/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Jordan/ })).toBeVisible();
   const csrf = await page.evaluate(async () => await (await fetch('/api/auth/csrf', { credentials: 'same-origin' })).json() as { csrfToken: string });
@@ -305,7 +305,7 @@ test('event-scoped managers cannot change the deal for an inaccessible company',
 test('keyboard users can open the camera, take a photo, and reach the review tray', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   async function tabToAccessibleName(name: string) {
     for (let step = 0; step < 60; step += 1) {
@@ -336,7 +336,7 @@ test('keyboard users can open the camera, take a photo, and reach the review tra
 test('concurrent captures add two people under one new company', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Maya/ })).toBeVisible();
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
@@ -458,7 +458,7 @@ test('knowledge settings save and the shell fits desktop and phone widths', asyn
   await expect(page.getByRole('navigation', { name: 'Phone navigation' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole('link', { name: 'Scan', exact: true }).last().click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -618,7 +618,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByRole('heading', { name: 'Make Gather yours.' })).toBeVisible();
   await page.getByRole('button', { name: 'Skip setup and go to Scan' }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   const image = await page.evaluate(async () => {
     const canvas = document.createElement('canvas'); canvas.width = 840; canvas.height = 480;
@@ -659,7 +659,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
     const footer = dialog.querySelector('.review-footer');
     return { background, footerPosition: footer ? getComputedStyle(footer).position : '' };
   });
-  expect(reviewSurface.background).toBe('rgb(238, 242, 239)');
+  expect(reviewSurface.background).toBe('rgb(245, 245, 242)');
   expect(reviewSurface.footerPosition).toBe('static');
   const reviewActionsStayTogether = async () => {
     const layout = await page.locator('.review-save-actions').evaluate((group) => {
@@ -756,14 +756,14 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.getByRole('button', { name: 'Choose', exact: false }).filter({ hasText: 'Acme Packaging' }).click();
   await page.getByRole('button', { name: 'Use selected company' }).click();
   await page.getByRole('button', { name: 'Save & scan next' }).click();
-  await expect(page.getByRole('heading', { name: /Keep the next conversation/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Scan cards$/ })).toBeVisible();
   await page.getByRole('button', { name: 'Email now' }).click();
   const emailNowDialog = page.getByRole('dialog', { name: 'Email this person' });
   await expect(emailNowDialog).toBeVisible();
   await expect(emailNowDialog.getByLabel('Subject')).toHaveValue(/Following up/);
   await emailNowDialog.getByRole('button', { name: 'Skip' }).click();
   await expect(emailNowDialog).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: /Keep the next conversation/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Scan cards$/ })).toBeVisible();
   const batchFiles = await Promise.all(Array.from({ length: 5 }, async (_, index) => ({ name: `batch-card-${index + 1}.jpg`, mimeType: 'image/jpeg', buffer: await imageVariant(index + 2) })));
   await page.evaluate(() => {
     const ids: string[] = [];
@@ -867,7 +867,7 @@ test('people, company hierarchy, contact notes, stage updates, Help, and tour co
   await page.getByRole('button', { name: 'Next step' }).click();
   await page.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('button', { name: 'Help' }).click();
-  await expect(page.getByRole('dialog', { name: /Keep the next conversation/ })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /^Help$/ })).toBeVisible();
   await expect(page.getByText('Reading starts when it uploads.')).toBeVisible();
   await expect(page.getByText('A reminder date you choose.')).toBeVisible();
   await page.getByRole('button', { name: 'Close help' }).click();
@@ -890,10 +890,10 @@ test('people, company hierarchy, contact notes, stage updates, Help, and tour co
   await expect(page.locator('.person-card .stage-pill')).toHaveText('Replied');
   await expect(page.locator('.timeline-item').getByText('You marked that they replied').first()).toBeVisible();
   await page.getByRole('link', { name: 'Companies' }).click();
-  await expect(page.getByRole('heading', { name: 'One company, many people.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Companies', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Acme Packaging' }).first()).toBeVisible();
   await page.getByRole('link', { name: 'Follow-ups' }).first().click();
-  await expect(page.getByRole('heading', { name: /Keep the next step/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Follow-ups$/ })).toBeVisible();
   const followUp = page.locator('.task-row').filter({ hasText: 'Send sample options' });
   await expect(followUp).toBeVisible();
   await followUp.getByRole('button', { name: '1 day' }).click();
@@ -1181,7 +1181,7 @@ test('deleting one person removes their history and media but keeps their shared
   await expect(page.getByRole('button', { name: 'Delete person' })).toBeDisabled();
   await page.getByLabel('Type DELETE to confirm').fill('DELETE');
   await page.getByRole('button', { name: 'Delete person' }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the person close to the conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: /Tessa Morgan/ })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /Noah Price/ })).toBeVisible();
   await expect(page.getByText('Acme Packaging', { exact: true }).first()).toBeVisible();

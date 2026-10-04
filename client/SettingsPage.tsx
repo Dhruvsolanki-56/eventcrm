@@ -32,9 +32,9 @@ export default function SettingsPage() {
     finally { setSaving(false); }
   }
   return <section className="settings-view">
-    <div className="page-heading-row"><div><p className="eyebrow">SETTINGS</p><h1>{section === 'email' ? 'Email & reminders' : section === 'team' ? 'Events & team' : section === 'data' ? 'Data & activity' : personal ? 'About me' : 'What your team sells'}</h1><p className="page-lede">{section === 'email' ? 'Your sender, draft preferences, and follow-up reminders.' : section === 'team' ? 'Keep your events and team access in one place.' : section === 'data' ? 'Export your records and review anything that needs attention.' : 'Only the details used for follow-up and email drafts.'}</p></div></div>
+    <div className="page-heading-row"><div><h1>{section === 'email' ? 'Email & reminders' : section === 'team' ? 'Events & team' : section === 'data' ? 'Data & activity' : personal ? 'About me' : 'What your team sells'}</h1><p className="page-lede">{section === 'email' ? 'Your sender, draft preferences, and follow-up reminders.' : section === 'team' ? 'Keep your events and team access in one place.' : section === 'data' ? 'Export your records and review anything that needs attention.' : 'Only the details used for follow-up and email drafts.'}</p></div></div>
     <div className="settings-workspace"><nav className="settings-navigation" aria-label="Settings sections">
-      <p className="eyebrow">YOUR WORKSPACE</p>
+      
       <button aria-pressed={section === 'profile'} onClick={() => setSection('profile')}>{personal ? 'My profile' : 'Business profile'}<small>Your voice and offerings</small></button>
       <button aria-pressed={section === 'email'} onClick={() => setSection('email')}>Email & reminders<small>Sender and draft preferences</small></button>
       {!personal && session.workspace.role === 'admin' && <button aria-pressed={section === 'team'} onClick={() => setSection('team')}>Events & team<small>People, access, and events</small></button>}
@@ -96,7 +96,7 @@ function DraftAutomationSettings() {
     } catch (error) { notify((error as Error).message); }
     finally { setSaving(false); }
   }
-  return <section className="surface-card draft-automation-settings" aria-labelledby="draft-automation-title"><p className="eyebrow">EMAIL WORKFLOW</p><h2 id="draft-automation-title">Have a draft ready after each conversation.</h2><p className="subtle">Gather uses the latest saved conversation and earlier context to prepare an editable draft. With AI enabled, relevant contact, company, event, and conversation details are sent to the AI provider (Google Gemini, and Groq if it is set up); free-tier content may be used to improve their products. If AI is unavailable, you get a clearly labelled template. Nothing is sent automatically. People without an email address or who opted out get no draft.</p>{!loading && <><label className="draft-automation-choice"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft for that conversation. You decide whether to send it.</small></span></label><button type="button" className="button primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save email workflow'}</button></>}</section>;
+  return <section className="surface-card draft-automation-settings" aria-labelledby="draft-automation-title"><h2 id="draft-automation-title">Have a draft ready after each conversation.</h2><p className="subtle">Gather uses the latest saved conversation and earlier context to prepare an editable draft. With AI enabled, relevant contact, company, event, and conversation details are sent to the AI provider (Google Gemini, and Groq if it is set up); free-tier content may be used to improve their products. If AI is unavailable, you get a clearly labelled template. Nothing is sent automatically. People without an email address or who opted out get no draft.</p>{!loading && <><label className="draft-automation-choice"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft for that conversation. You decide whether to send it.</small></span></label><button type="button" className="button primary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save email workflow'}</button></>}</section>;
 }
 
 function EmailSettingsPanel() {
@@ -138,7 +138,7 @@ function EmailSettingsPanel() {
     finally { setBusy(false); }
   }
   return <section className="surface-card email-settings-panel">
-    <p className="eyebrow">EMAIL</p><h2>Choose how your messages appear.</h2>
+    <h2>Choose how your messages appear.</h2>
     <p>These details are used for lead and reminder email in this workspace. SMTP host and credentials are set by the server administrator and are never shown here.</p>
     {loading ? <p className="task-group-empty">Checking mail settings…</p> : <>
       <div className="field-grid"><label>From name<input value={sender.fromName} maxLength={100} onChange={(event) => setSender({ ...sender, fromName: event.target.value })} /></label><label>From email<input type="email" value={sender.fromAddress} maxLength={254} onChange={(event) => setSender({ ...sender, fromAddress: event.target.value })} /></label></div>
@@ -163,7 +163,7 @@ function DataExportPanel({ personal }: { personal: boolean }) {
     finally { setBusy(false); }
   }
   return <section className="surface-card data-export-panel">
-    <div><p className="eyebrow">YOUR DATA</p><h2>Keep a copy of your work.</h2><p>The file includes people, companies, events, notes, emails, follow-ups, settings, and stored photos or voice notes when those files are available.</p></div>
+    <div><h2>Keep a copy of your work.</h2><p>The file includes people, companies, events, notes, emails, follow-ups, settings, and stored photos or voice notes when those files are available.</p></div>
     <div>{error && <p className="form-error" role="alert">{error}</p>}<button type="button" className="button secondary" disabled={busy} onClick={() => void downloadExport()}>{busy ? 'Preparing…' : `Export ${personal ? 'my data' : 'company data'}`}</button></div>
   </section>;
 }
@@ -196,7 +196,7 @@ function ClearSampleDataPanel() {
   }
   if (!sampleData || done) return null;
   return <section className="surface-card data-delete-panel sample-clear-panel">
-    <div><p className="eyebrow">SAMPLE WORKSPACE</p><h2>Clear sample data.</h2><p>This removes sample people, companies, notes, recordings, card photos, emails, follow-ups, events, products and settings from this workspace only. Your sign-in, team and other workspaces stay in place. This action is for development sample accounts; it is not shown in production.</p></div>
+    <div><h2>Clear sample data.</h2><p>This removes sample people, companies, notes, recordings, card photos, emails, follow-ups, events, products and settings from this workspace only. Your sign-in, team and other workspaces stay in place. This action is for development sample accounts; it is not shown in production.</p></div>
     <label>Type CLEAR to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label>
     {error && <p className="form-error" role="alert">{error}</p>}
     <button type="button" className="button danger" disabled={busy || confirmation !== 'CLEAR'} onClick={() => void clearData()}>{busy ? 'Clearing…' : 'Clear sample data'}</button>
@@ -218,7 +218,7 @@ function DeletePrivateDataPanel() {
     finally { setBusy(false); }
   }
   return <section className="surface-card data-delete-panel">
-    <div><p className="eyebrow">REMOVE PRIVATE DATA</p><h2>Clear this private space.</h2><p>This permanently removes its people, event notes, recordings, card photos, emails, follow-ups, events, and settings. Your sign-in and any company space are kept. Copies you exported or backups already made are not erased.</p></div>
+    <div><h2>Clear this private space.</h2><p>This permanently removes its people, event notes, recordings, card photos, emails, follow-ups, events, and settings. Your sign-in and any company space are kept. Copies you exported or backups already made are not erased.</p></div>
     <label>Type DELETE to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label>
     {error && <p className="form-error" role="alert">{error}</p>}
     <button type="button" className="button danger" disabled={busy || confirmation !== 'DELETE'} onClick={() => void removeData()}>{busy ? 'Removing…' : 'Delete private-space data'}</button>
@@ -254,7 +254,7 @@ function ReminderSettings() {
   }
   const digestStatus = !latest ? 'No daily digest has run yet.' : latest.status === 'sent_to_server' ? `${statusWords.email.sent} (${latest.local_date} digest)` : latest.status === 'queued' ? `The ${latest.local_date} digest is being prepared.` : latest.status === 'failed' ? `The ${latest.local_date} digest failed. Open Problems below to retry it.` : latest.last_error || 'No email was sent.';
   return <section className="surface-card reminder-settings">
-    <p className="eyebrow">FOLLOW-UP REMINDERS</p><h2>Choose how Gather nudges you.</h2>
+    <h2>Choose how Gather nudges you.</h2>
     {loading ? <p className="task-group-empty">Loading reminder settings…</p> : <form onSubmit={(event) => void submit(event)}>
       <label className="reminder-choice"><input type="checkbox" checked={settings.inAppEnabled} onChange={(event) => { setSettings({ ...settings, inAppEnabled: event.target.checked }); setSaved(false); }} /><span><strong>Show an in-app reminder</strong><small>When an open follow-up is due and no reply is logged.</small></span></label>
       <label className="reminder-choice"><input type="checkbox" checked={settings.dailyDigestEnabled} onChange={(event) => { setSettings({ ...settings, dailyDigestEnabled: event.target.checked }); setSaved(false); }} /><span><strong>Email me a daily digest</strong><small>{emailSending ? 'A digest is sent only after you turn this on.' : 'Mail is not set up, so Gather will save a “not sent” status and send no email.'}</small></span></label>
@@ -313,7 +313,7 @@ function EventSettings() {
     finally { setSaving(false); }
   }
   return <section className="surface-card event-settings">
-    <div className="section-head"><div><p className="eyebrow">COMPANY ONLY</p><h2>Events</h2><p>Keep each event’s dates, local time zone, and optional spend.</p></div><button type="button" className="button secondary" onClick={newEvent}>Add event</button></div>
+    <div className="section-head"><div><h2>Events</h2><p>Keep each event’s dates, local time zone, and optional spend.</p></div><button type="button" className="button secondary" onClick={newEvent}>Add event</button></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {loading ? <p className="task-group-empty">Loading events…</p> : <>
       <div className="event-choice-list">{events.map((event) => <button className={`event-choice${draft?.id === event.id ? ' selected' : ''}`} type="button" key={event.id} onClick={() => { setDraft(eventEditor(event)); setError(''); }}><span><strong>{event.name}</strong><small>{event.starts_at.slice(0, 10)} to {event.ends_at.slice(0, 10)} · {event.time_zone}</small></span>{event.is_active ? <span className="active-event-label">Active</span> : null}</button>)}{!events.length && <p className="task-group-empty">No events yet. Add the event you are attending.</p>}</div>
@@ -388,7 +388,7 @@ function TeamSettings() {
     catch { setError('Could not copy the link. Select it and copy it yourself.'); }
   }
   return <section className="surface-card team-settings">
-    <div className="section-head"><div><p className="eyebrow">COMPANY ONLY</p><h2>Team access</h2><p>Invite people to only the events they work at.</p></div></div>
+    <div className="section-head"><div><h2>Team access</h2><p>Invite people to only the events they work at.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {!data ? <p className="task-group-empty">Loading team access…</p> : <>
       <form className="team-invite-form" onSubmit={(event) => void createInvite(event)}>
@@ -420,7 +420,7 @@ function ProblemsPanel() {
     catch (issue) { setError((issue as Error).message); }
     finally { setBusyId(''); }
   }
-  return <section className="surface-card problems-panel"><div className="section-head"><div><p className="eyebrow">PROBLEMS</p><h2>Work that needs another try.</h2></div><button type="button" className="text-button" onClick={() => void load()}>Refresh</button></div>
+  return <section className="surface-card problems-panel"><div className="section-head"><div><h2>Work that needs another try.</h2></div><button type="button" className="text-button" onClick={() => void load()}>Refresh</button></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {loading ? <p className="task-group-empty">Checking for failed work…</p> : jobs.length ? jobs.map((job) => <article className="problem-row" key={job.id}><div><strong>{job.type === 'email_send' ? 'Email' : job.type === 'daily_digest' ? 'Daily digest' : 'Card reading'}</strong><p>{job.message}</p><small>Try {job.attempts} of {job.max_attempts}</small></div><button type="button" className="button secondary" disabled={busyId === job.id} onClick={() => void retry(job.id)}>{busyId === job.id ? 'Retrying…' : 'Retry'}</button></article>) : <p className="task-group-empty">{error ? 'Could not check failed work. Refresh to try again.' : 'Nothing needs your attention right now.'}</p>}
   </section>;

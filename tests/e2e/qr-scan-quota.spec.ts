@@ -20,7 +20,7 @@ test('QR-only scans obey workspace and service count quotas and discard releases
 
   try {
     await page.getByRole('button', { name: /Maya Chen/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     let token = await csrf();
     const firstId = 'b1000000-0000-4000-8000-000000000001';
     const secondId = 'b1000000-0000-4000-8000-000000000002';
@@ -52,7 +52,7 @@ test('QR-only scans obey workspace and service count quotas and discard releases
     expect((await page.request.post('/api/auth/logout', { headers: { 'X-CSRF-Token': token } })).status()).toBe(200);
     await page.goto('/');
     await page.getByRole('button', { name: /Alex Rivera/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     token = await csrf();
     expect((await submit(fourthId, 'demo-riverbend', token)).status()).toBe(201);
     expect(counts()).toBe(3);
@@ -60,7 +60,7 @@ test('QR-only scans obey workspace and service count quotas and discard releases
     expect((await page.request.post('/api/auth/logout', { headers: { 'X-CSRF-Token': token } })).status()).toBe(200);
     await page.goto('/');
     await page.getByRole('button', { name: /Sam Patel/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     token = await csrf();
     const serviceRejected = await submit(fifthId, 'demo-sam-space', token);
     expect(serviceRejected.status()).toBe(413);

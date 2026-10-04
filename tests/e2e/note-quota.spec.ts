@@ -8,7 +8,7 @@ test('text-note workspace and shared-service quotas reject writes atomically', a
   expect(process.env.NOTE_STORAGE_TOTAL_LIMIT_BYTES).toBe('5000');
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
   const database = new Database(resolve(process.env.DATABASE_PATH ?? ''), { readonly: true });
   const state = (workspaceId: string, contactId: string) => ({
@@ -40,7 +40,7 @@ test('text-note workspace and shared-service quotas reject writes atomically', a
     expect(logout.status()).toBe(200);
     await page.goto('/');
     await page.getByRole('button', { name: /Alex Rivera/ }).click();
-    await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
     const riverbendContact = 'demo-rb-contact-1';
     const riverbendBefore = state('demo-riverbend', riverbendContact);
     const riverbendCsrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
