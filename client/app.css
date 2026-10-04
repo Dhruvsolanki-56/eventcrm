@@ -1044,3 +1044,36 @@ a.records-row:hover { background: var(--surface-2); }
   .snooze-group button { flex: 1; padding: 0 6px; }
   .snooze-group button:first-of-type { border-left: 0; }
 }
+
+/* ---------- Reports ---------- */
+.report-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.report-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+.report-chart, .report-events { min-width: 0; padding: 18px 20px; }
+.report-chart h2, .report-events h2 { margin: 0 0 4px; font-size: 15px; }
+.report-events { grid-column: 1 / -1; }
+.chart-wrap { width: 100%; height: 260px; margin-top: 12px; }
+.report-chart .records-empty { padding: 40px 12px; }
+.event-report-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.event-report-row:last-child { border-bottom: 0; }
+.event-report-row strong { font-weight: 500; }
+.event-report-row span { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.event-report-row small { color: var(--muted); font-size: 12.5px; text-align: right; }
+
+/* ---------- A new card opens as a pop-up over the app ---------- */
+.review-dialog-page { padding: 40px 20px; background: rgb(24 28 33 / 40%); }
+.review-dialog-page > .page-heading-row { margin: 0; padding: 18px 24px 14px; border: 1px solid var(--line); border-bottom: 0; border-radius: 14px 14px 0 0; background: var(--surface); }
+.review-dialog-page > .review-error { margin: 0; padding: 0 24px 12px; border-inline: 1px solid var(--line); background: var(--surface); }
+.review-dialog-page > .review-layout, .review-dialog-page > .review-wait { padding: 4px 24px 24px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 14px 14px; background: var(--surface); box-shadow: 0 24px 64px rgb(24 28 33 / 22%); }
+.review-dialog-page .review-source { top: 0; background: var(--surface-2); }
+.review-dialog-page .review-form { padding: 0; border: 0; }
+@media (max-width: 1000px) { .report-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 780px) {
+  .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-metrics .metric-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .event-report-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .event-report-row small { text-align: left; }
+  .review-dialog-page { padding: 8px 8px max(16px, env(safe-area-inset-bottom)); }
+  .review-dialog-page > .page-heading-row { padding: 14px 16px 10px; }
+  .review-dialog-page > .review-layout, .review-dialog-page > .review-wait { padding: 4px 14px 18px; }
+  .review-dialog-page > .review-error { padding-inline: 14px; }
+}

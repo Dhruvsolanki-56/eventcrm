@@ -2075,7 +2075,7 @@ function ReviewPage() {
   const materialAlreadySaved = typeof scan?.materialCompanyId === 'string' && !!scan.materialCompanyId;
   const fieldsDisabled = status === 'saved' && (reviewMode === 'person' || materialAlreadySaved);
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
-  return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title">
+  return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title" onKeyDown={(event) => { if (singleCapture && event.key === 'Escape' && !photoExpanded) navigate('/scan'); }}>
     <div className="page-heading-row"><div><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : reviewMode === 'brochure' ? 'Review this brochure' : 'Review this card'}</h1><p className="page-lede">Compare the details with the photo. Nothing is saved until you confirm.</p></div><Link className="button secondary review-close" to="/scan"><X size={16} aria-hidden="true" />{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
     {error && <p className="form-error review-error" role="alert">{error}</p>}
     {!scan ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>Opening your photo…</strong><p>Review will appear as soon as the upload is ready.</p></div> :
