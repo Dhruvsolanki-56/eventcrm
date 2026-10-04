@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isGeminiCardEnabled } from './gemini-card.js';
-import { emailWritingInstruction, rejectInternalNoteLanguage, tidyEmailBody, type EmailDraftContext } from './email-writing.js';
+import { EMAIL_ATTEMPT_TIMEOUTS_MS, RetryableEmailError, emailWritingInstruction, rejectInternalNoteLanguage, tidyEmailBody, type EmailDraftContext } from './email-writing.js';
 
 const GeminiEmailSchema = z.object({
   subject: z.string().trim().min(1).max(200),
@@ -8,11 +8,6 @@ const GeminiEmailSchema = z.object({
 }).strict();
 
 const MAX_RESPONSE_BYTES = 32 * 1024;
-// The hosted site waits about 26 seconds for the server, so two tries must fit inside that.
-const EMAIL_ATTEMPT_TIMEOUTS_MS = [14_000, 9_000];
-
-class RetryableEmailError extends Error {}
-
 // Drafts need no deep reasoning; thinking makes the small models slow and unreliable.
 const thinkingFor = (model: string) => /^gemini-3/.test(model) ? { thinkingLevel: 'minimal' } : /^gemini-2\.5-flash/.test(model) ? { thinkingBudget: 0 } : undefined;
 
@@ -46,15 +41,15 @@ async function requestDraft(model: string, key: string, context: EmailDraftConte
   return GeminiEmailSchema.parse(parsed);
 }
 
-export async function draftEmailWithGemini(context: EmailDraftContext, alternate = false) {
+export async function draftEmailWithGemini(context: EmailDraftContext, alternate = false, timeouts: number[] = EMAIL_ATTEMPT_TIMEOUTS_MS) {
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!isGeminiEmailEnabled() || !key) return null;
   const model = process.env.GEMINI_EMAIL_MODEL?.trim() || 'gemini-3.1-flash-lite';
   if (!/^[a-zA-Z0-9._-]+$/.test(model)) throw new Error('The email AI model name is invalid.');
   let draft: z.infer<typeof GeminiEmailSchema> | undefined;
-  for (const [attempt, timeoutMs] of EMAIL_ATTEMPT_TIMEOUTS_MS.entries()) {
+  for (const [attempt, timeoutMs] of timeouts.entries()) {
     try { draft = await requestDraft(model, key, context, alternate, timeoutMs); break; }
-    catch (error) { if (!(error instanceof RetryableEmailError) || attempt === EMAIL_ATTEMPT_TIMEOUTS_MS.length - 1) throw error; }
+    catch (error) { if (!(error instanceof RetryableEmailError) || attempt === timeouts.length - 1) throw error; }
   }
   if (!draft) throw new Error('AI email writing is unavailable.');
   const tidy = { ...draft, body: tidyEmailBody(draft.body, context.signature) };

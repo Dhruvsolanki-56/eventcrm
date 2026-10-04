@@ -55,3 +55,11 @@ export function tidyEmailBody(body: string, signature: string) {
   }
   return text.includes('\n') ? text : greeting(text);
 }
+
+// The hosted site waits about 26 seconds for the server, so every try must fit inside that.
+export const EMAIL_ATTEMPT_TIMEOUTS_MS = [14_000, 9_000];
+// Used when a second provider can take over: one quick try each.
+export const EMAIL_SINGLE_TRY_MS = [11_000];
+
+/** A failure worth trying again (timeout, server error, cut-off answer). */
+export class RetryableEmailError extends Error {}

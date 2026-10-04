@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { CardReadOutputSchema } from '../shared/contracts.js';
 import { isGeminiCardEnabled, readCardWithGemini } from './gemini-card.js';
 import { draftEmailWithGemini, isGeminiEmailEnabled } from './gemini-email.js';
-import { emailWritingInstruction, rejectInternalNoteLanguage, type EmailDraftContext } from './email-writing.js';
+import { draftEmailWithGroq, isGroqEmailEnabled } from './groq-email.js';
+import { EMAIL_SINGLE_TRY_MS, emailWritingInstruction, rejectInternalNoteLanguage, type EmailDraftContext } from './email-writing.js';
 export type { EmailDraftContext } from './email-writing.js';
 
 export const EmailDraftOutputSchema = z.object({
@@ -36,7 +37,7 @@ export function parseModelJson<T>(raw: string, schema: z.ZodType<T>): T {
 }
 
 export const isAIProviderEnabled = () => process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY);
-export const isEmailDraftAIEnabled = () => isGeminiEmailEnabled() || isAIProviderEnabled();
+export const isEmailDraftAIEnabled = () => isGeminiEmailEnabled() || isGroqEmailEnabled() || isAIProviderEnabled();
 export const isCardAIEnabled = () => isGeminiCardEnabled() || isAIProviderEnabled();
 
 const client = isAIProviderEnabled()
@@ -70,7 +71,19 @@ export async function readCard(imagePath: string, mediaType: string) {
 }
 
 export async function draftEmail(context: EmailDraftContext, alternate = false) {
-  if (isGeminiEmailEnabled()) return draftEmailWithGemini(context, alternate);
+  // Groq first when it is set up, Gemini as the backup, so a quota error on one does not lose the AI draft.
+  const writers = [
+    ...(isGroqEmailEnabled() ? [(timeouts?: number[]) => draftEmailWithGroq(context, alternate, timeouts)] : []),
+    ...(isGeminiEmailEnabled() ? [(timeouts?: number[]) => draftEmailWithGemini(context, alternate, timeouts)] : []),
+  ];
+  if (writers.length === 1) return writers[0]();
+  if (writers.length > 1) {
+    let lastError: unknown;
+    for (const write of writers) {
+      try { const draft = await write(EMAIL_SINGLE_TRY_MS); if (draft) return draft; } catch (error) { lastError = error; }
+    }
+    throw lastError ?? new Error('AI email writing is unavailable.');
+  }
   if (!client) return null;
   const response = await client.messages.create({
     model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5', max_tokens: 600,

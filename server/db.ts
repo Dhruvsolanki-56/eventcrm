@@ -7,6 +7,7 @@ import type { AnalyticsData } from '../shared/analytics.js';
 import { AsyncSqliteDatabase } from './sqlite-async.js';
 import { composeTemplateEmail } from './email-template.js';
 import { PostgresDatabase } from './postgres-compat.js';
+import { isGroqEmailEnabled } from './groq-email.js';
 import { closePostgres, isPostgresConfigured, migratePostgres } from './postgres.js';
 
 export type WorkspaceRole = 'admin' | 'manager' | 'representative' | 'attendee';
@@ -1680,7 +1681,7 @@ export async function createEmailDraft(actorId: string, workspaceId: string, con
   await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by,sources_json) VALUES (?,?,?,?,?,?,?,'draft',?,?)`)
     .run(id, workspaceId, contactId, draft.encounterId, draft.recipient, draft.subject, draft.body, actorId, JSON.stringify(draft.sourcesUsed)));
   const { aiContext: _aiContext, encounterId: _encounterId, ...publicDraft } = draft;
-  const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
+  const aiConfigured = isGroqEmailEnabled() || process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
   const generation = generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const;
   return { id, ...publicDraft, generation, status: 'draft' as const };
 }
@@ -1742,7 +1743,7 @@ export async function createAlternateEmailDraft(actorId: string, workspaceId: st
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL AND archived_at IS NULL)`)
     .run(generated?.subject ?? suggestion.subject, generated?.body ?? suggestion.body, JSON.stringify(suggestion.sourcesUsed), workspaceId, emailId, workspaceId));
   const { aiContext: _aiContext, ...publicSuggestion } = suggestion;
-  const aiConfigured = process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
+  const aiConfigured = isGroqEmailEnabled() || process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
   return updated.changes ? { id: emailId, ...publicSuggestion, subject: generated?.subject ?? suggestion.subject, body: generated?.body ?? suggestion.body, generation: generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const, status: 'draft' as const } : undefined;
 }
 

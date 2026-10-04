@@ -26,6 +26,11 @@ services:
         value: gemini-2.5-flash
       - key: GEMINI_EMAIL_MODEL
         value: gemini-3.1-flash-lite
+      # Optional second email writer. Add the key in the Render dashboard (sync: false keeps it out of git).
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_EMAIL_MODEL
+        value: llama-3.3-70b-versatile
       # Browser transcription uses onnxruntime-web. The server does not need
       # the extra Linux CUDA binaries downloaded by onnxruntime-node at install.
       - key: ONNXRUNTIME_NODE_INSTALL
