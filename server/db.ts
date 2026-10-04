@@ -2693,6 +2693,15 @@ export async function seedDemoData(passwordHash: string) {
     ] as const;
     const insertProduct = db.prepare(`INSERT INTO products(id,workspace_id,name,description) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description`);
     for (const product of products) await (insertProduct.run(...product));
+    // The sample company's details, so AI drafts show how a filled-in profile reads. Edits made in Settings are kept.
+    await (db.prepare(`INSERT INTO workspace_settings(workspace_id,key,value_json) VALUES ('demo-northstar','knowledge',?) ON CONFLICT(workspace_id,key) DO NOTHING`).run(JSON.stringify({
+      whatYouSell: 'Recyclable and custom-printed packaging for retail and ecommerce brands: recycled mailers, flexible cartons and retail displays. Short runs from 500 units, printed at our own plant in California.',
+      ourRole: 'We are a packaging manufacturer. We meet retail and ecommerce brands at trade shows, send samples and help them choose packaging for a product launch.',
+      tone: 'Friendly',
+      signature: 'The Northstar Packaging Team\nnorthstarpackaging.example · +1 415 555 0100',
+      neverPromise: 'Prices, discounts, delivery dates, or free samples. A team member confirms these personally.',
+      productsText: 'Flexible cartons — short production runs with recyclable materials\nRecycled mailers — lightweight shipping mailers for ecommerce\nRetail displays — counter and shelf display packaging',
+    })));
     await (db.prepare(`INSERT OR IGNORE INTO contact_products(workspace_id,contact_id,product_id) VALUES ('demo-northstar','demo-ns-contact-1','demo-product-carton'),('demo-northstar','demo-ns-contact-2','demo-product-mailer'),('demo-northstar','demo-ns-contact-5','demo-product-display')`).run());
     const followUpAt = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 17, 0)).toISOString();
     await (db.prepare(`INSERT INTO tasks(id,workspace_id,contact_id,event_id,kind,status,due_at,time_zone,title,note,created_by)

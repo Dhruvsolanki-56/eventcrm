@@ -58,6 +58,7 @@ test('settings chips fill the profile and the follow-up date is remembered', asy
   await expect(page.locator('.settings-form')).toBeVisible();
   await page.getByRole('button', { name: 'We are their supplier', exact: true }).click();
   await expect(page.getByLabel('Our role in client conversations')).toHaveValue('We are their supplier');
+  await page.getByLabel('Never promise').fill('');
   await page.getByRole('button', { name: 'Prices', exact: true }).click();
   await page.getByRole('button', { name: 'Delivery dates', exact: true }).click();
   await page.getByRole('button', { name: 'Prices', exact: true }).click();
