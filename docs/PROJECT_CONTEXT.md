@@ -100,3 +100,7 @@ npm run test:production-smoke
 ## Repository hygiene
 
 Local-only items that are not part of the project and should not be committed: `.env`, `data/`, `uploads/`, `backups/`, `dist*/`, `node_modules/`, test output and leftover restore-drill folders. Stray copies such as `eng.traineddata` at the repo root (the app uses `public/ocr/eng.traineddata.gz`) and old staging folders can be deleted.
+
+## AI draft quality changes (2026-10-03)
+- `server/gemini-email.ts`: minimal thinking (`thinkingLevel: minimal` for gemini-3, `thinkingBudget: 0` for 2.5-flash), 2048 output tokens, two attempts (14 s then 9 s, kept under the ~26 s Netlify proxy limit) retried only on timeout, 5xx or cut-off JSON. Quota (429) is not retried.
+- `server/email-writing.ts`: `tidyEmailBody` puts greeting, paragraphs and sign-off on separate lines; `rejectInternalNoteLanguage` also rejects unsupported "attached/enclosed" claims and price or discount wording when `neverPromise` forbids it (the app then falls back to the template draft). Prompt now says a contact's request is not our promise, nothing is attached, and team reminders in notes are never repeated.
