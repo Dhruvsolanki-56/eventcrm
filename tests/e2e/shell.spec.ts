@@ -88,7 +88,7 @@ test('sample company and attendee accounts enter their own spaces', async ({ pag
       expect((await page.request.get('/api/settings')).status()).toBe(403);
       expect((await page.request.get('/api/export/data.json')).status()).toBe(403);
     }
-    await page.locator('.profile-button').click();
+    await page.locator('[data-account-trigger]').click();
     await page.getByRole('menuitem', { name: 'Sign out' }).click();
     await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   }
@@ -488,7 +488,7 @@ test('company invite links create scoped team access and removal takes effect im
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
 
@@ -559,7 +559,7 @@ test('company admins can create events, set dates and spend, and switch the acti
   await page.getByLabel('Make this the active event').check();
   await page.getByRole('button', { name: 'Add event' }).last().click();
   await expect(page.getByText(eventName).first()).toBeVisible();
-  await expect(page.locator('.topbar-event')).toHaveText(eventName);
+  await expect(page.locator('[data-event-chip]')).toHaveText(eventName);
   await page.getByRole('link', { name: 'Reports' }).click();
   await expect(page.getByText('Event spend: $12,345').first()).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
@@ -567,7 +567,7 @@ test('company admins can create events, set dates and spend, and switch the acti
   await page.getByRole('button', { name: /Pacific Packaging Expo/ }).first().click();
   await page.getByLabel('Make this the active event').check();
   await page.getByRole('button', { name: 'Save event' }).click();
-  await expect(page.locator('.topbar-event')).toHaveText('Pacific Packaging Expo');
+  await expect(page.locator('[data-event-chip]')).toHaveText('Pacific Packaging Expo');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -722,10 +722,10 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await expect(page.locator('.email-state')).toContainText('No mail server');
   await page.getByRole('button', { name: 'Next item' }).click();
 
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('button', { name: 'Never ask' }).click();
   await expect(page.getByRole('button', { name: 'Never ask' })).toHaveAttribute('aria-pressed', 'true');
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
 
   await input.setInputFiles({ name: 'repeat-business-card.jpg', mimeType: 'image/jpeg', buffer });
   await expect(page).toHaveURL(/\/people\//, { timeout: 15_000 });

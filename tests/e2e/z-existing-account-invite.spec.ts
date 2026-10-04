@@ -16,7 +16,7 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   await expect(inviteInput).toBeVisible();
   const inviteUrl = await inviteInput.inputValue();
 
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await page.goto(inviteUrl);
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -25,7 +25,7 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
 
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   const privateSpace = page.getByRole('menuitem', { name: /Sam's private space/ });
   const companySpace = page.getByRole('menuitem', { name: /Northstar Packaging.*representative/ });
   await expect(privateSpace).toBeVisible();
@@ -34,13 +34,13 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   expect((await page.request.get('/api/reports', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).status()).toBe(403);
 
   await privateSpace.click();
-  await expect(page.locator('.topbar-mode')).toContainText("Sam's private space");
-  await expect(page.locator('.mode-strip')).toContainText('Only you can see this');
+  await expect(page.locator('[data-crumb]')).toContainText("Sam's private space");
+  await expect(page.locator('[data-space-card]')).toContainText('Only you can see this');
   await page.getByRole('link', { name: 'Home', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Good morning, Sam.' })).toBeVisible();
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('menuitem', { name: /Northstar Packaging.*representative/ }).click();
-  await expect(page.locator('.topbar-mode')).toContainText('Northstar Packaging');
-  await expect(page.locator('.mode-strip')).toContainText('Company: Northstar Packaging');
+  await expect(page.locator('[data-crumb]')).toContainText('Northstar Packaging');
+  await expect(page.locator('[data-space-card]')).toContainText('Company: Northstar Packaging');
   expect(duplicateKeyWarnings).toEqual([]);
 });

@@ -8,7 +8,7 @@ import { useWorkspace } from './workspace-context.js';
 
 const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value / 100);
 const label = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
-const colors = ['#447767', '#739886', '#9eb7aa', '#d1ddd6'];
+const colors = ['#0b5d4b', '#14806a', '#7fc2a9', '#cfe5da'];
 
 function useAnalytics(days: string, eventId: string, refresh: number) {
   const { session } = useWorkspace();
@@ -30,11 +30,11 @@ function useAnalytics(days: string, eventId: string, refresh: number) {
 function ActivityChart({ data, metric = 'people' }: { data: AnalyticsData; metric?: 'people' | 'conversations' }) {
   return <div className="analytics-chart" role="img" aria-label={`Daily ${metric} from ${data.period.from} to ${data.period.to}. ${data.metrics[metric]} in the selected period.`}>
     <ResponsiveContainer width="100%" height="100%"><AreaChart data={data.daily} margin={{ top: 12, right: 8, left: -24, bottom: 0 }}>
-      <CartesianGrid vertical={false} stroke="#e9ece9" strokeDasharray="3 4" />
-      <XAxis dataKey="day" axisLine={false} tickLine={false} minTickGap={32} tick={{ fill: '#7c8580', fontSize: 11 }} tickFormatter={(day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })} dy={10} />
-      <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: '#7c8580', fontSize: 11 }} />
-      <Tooltip contentStyle={{ border: '1px solid #dfe5df', borderRadius: 8, fontSize: 12, boxShadow: '0 4px 16px #18291d12' }} labelFormatter={(day) => String(day)} />
-      <Area type="linear" dataKey={metric} name={metric === 'people' ? 'People met' : 'Conversations'} stroke="#447767" strokeWidth={2.2} fill="#eaf1ec" fillOpacity={1} activeDot={{ r: 4, stroke: '#fff', strokeWidth: 2 }} isAnimationActive={false} />
+      <CartesianGrid vertical={false} stroke="#ece8de" strokeDasharray="3 5" />
+      <XAxis dataKey="day" axisLine={false} tickLine={false} minTickGap={32} tick={{ fill: '#98a39d', fontSize: 11 }} tickFormatter={(day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })} dy={10} />
+      <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: '#98a39d', fontSize: 11 }} />
+      <Tooltip contentStyle={{ border: '1px solid #e7e3d9', borderRadius: 12, fontSize: 12, boxShadow: '0 10px 28px rgb(16 33 27 / 12%)' }} labelFormatter={(day) => String(day)} />
+      <defs><linearGradient id="g-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#14806a" stopOpacity={0.28} /><stop offset="100%" stopColor="#14806a" stopOpacity={0.02} /></linearGradient></defs><Area type="monotone" dataKey={metric} name={metric === 'people' ? 'People met' : 'Conversations'} stroke="#0b5d4b" strokeWidth={2.4} fill="url(#g-area)" fillOpacity={1} activeDot={{ r: 5, stroke: '#fff', strokeWidth: 2.5 }} isAnimationActive={true} animationDuration={900} />
     </AreaChart></ResponsiveContainer>
   </div>;
 }
@@ -51,8 +51,8 @@ export function OverviewActivity() {
   if (error) return <p className="form-error">{error}</p>;
   if (!data) return <div className="analytics-loading" role="status">Loading workspace activity…</div>;
   return <div className="overview-insights">
-    <article className="insight-panel overview-activity"><div className="insight-heading"><div><h2>Capture activity</h2><p>People met each day · last 30 days</p></div><Link to="/analytics" className="subtle-link">Analytics <ArrowUpRight size={14} /></Link></div><div className="chart-total"><strong>{data.metrics.people}</strong><span>people across {data.metrics.companies} companies</span></div><ActivityChart data={data} /></article>
-    <article className="insight-panel overview-pipeline"><div className="insight-heading"><div><h2>Conversation stages</h2><p>Current status of people met in the last 30 days</p></div></div><div className="stage-bars">{data.stages.map((item) => <div className="stage-bar-row" key={item.stage}><span><i className={`stage-dot stage-${item.stage}`} />{label(item.stage)}</span><div><i style={{ width: `${data.metrics.people ? item.people / data.metrics.people * 100 : 0}%` }} /></div><strong>{item.people}</strong></div>)}</div><Link to="/people" className="panel-footer-link">View people <ArrowRight size={14} /></Link></article>
+    <article className="panel overview-activity"><div className="panel-head"><div><h2>Capture activity</h2><p>People met each day · last 30 days</p></div><Link to="/analytics" className="subtle-link">Analytics <ArrowUpRight size={14} /></Link></div><div className="chart-total"><strong>{data.metrics.people}</strong><span>people across {data.metrics.companies} companies</span></div><ActivityChart data={data} /></article>
+    <article className="panel overview-pipeline"><div className="panel-head"><div><h2>Conversation stages</h2><p>Where the people you met are now</p></div></div><div className="stage-bars">{data.stages.map((item) => <div className="stage-bar-row" key={item.stage}><span><i className={`stage-dot stage-${item.stage}`} />{label(item.stage)}</span><div><i style={{ width: `${data.metrics.people ? item.people / data.metrics.people * 100 : 0}%` }} /></div><strong>{item.people}</strong></div>)}</div><Link to="/people" className="panel-footer-link">View people <ArrowRight size={14} /></Link></article>
   </div>;
 }
 

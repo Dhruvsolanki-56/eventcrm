@@ -50,7 +50,7 @@ test('company and private attendee routes retain named controls, labeled fields,
   for (const width of [1440, 390]) for (const route of companyRoutes) await inspectRoute(page, route, width);
 
   await page.setViewportSize({ width: 1440, height: 950 });
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.getByRole('button', { name: /Sam Patel/ }).click();

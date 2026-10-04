@@ -47,7 +47,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
   await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.locator('.sample-clear-panel')).toHaveCount(0);
 
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.getByRole('button', { name: /Sam Patel Attendee/ }).click();

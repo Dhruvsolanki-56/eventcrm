@@ -116,7 +116,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
     if (await phoneLink.count() && await phoneLink.isVisible()) await phoneLink.click();
     else {
       await page.getByRole('button', { name: 'Open navigation' }).click();
-      await page.locator('.sidebar').getByRole('link', { name: item.label, exact: true }).click();
+      await page.locator('[data-rail]').getByRole('link', { name: item.label, exact: true }).click();
     }
     await expect(page.getByRole('heading', { name: item.heading })).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -126,7 +126,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await expect(page.locator('.search-company-matches').getByRole('link', { name: 'Company details' }).first()).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.locator('.profile-button').click();
+  await page.locator('[data-account-trigger]').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.getByRole('button', { name: /Sam Patel/ }).click();

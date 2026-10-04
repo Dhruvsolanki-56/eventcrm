@@ -1,7 +1,7 @@
 import { Fragment, forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, Sparkles, Thermometer, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
-import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
+import { statusWords, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
 import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-ocr.js';
@@ -9,7 +9,8 @@ import { askConfirm } from './confirm.js';
 import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
 import { DictateButton, NoteChips } from './quick-capture-ui.js';
 import { CompanyAbout } from './company-about.js';
-import { InstallPrompt } from './install-app.js';
+import { AuthScreen } from './screens/Auth.js';
+import { HomePage, NotFoundPage } from './screens/Home.js';
 import { cacheSession, clearCachedSession, readCachedSession } from './offline-session.js';
 import { isOfflineError, listQueuedPhotos, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
 import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas, remember, rememberedNumber } from './quick-capture.js';
@@ -22,7 +23,6 @@ const SettingsRoute = lazy(() => import('./SettingsPage.js'));
 const OnboardingRoute = lazy(() => import('./OnboardingPage.js'));
 const AnalyticsRoute = lazy(() => import('./AnalyticsPage.js'));
 const EmailDeskRoute = lazy(() => import('./EmailDeskPage.js'));
-const OverviewActivity = lazy(() => import('./AnalyticsPage.js').then((module) => ({ default: module.OverviewActivity })));
 const TOUR_STEPS = [
   { title: 'Capture one card at a time.', body: 'Take a picture or choose a card photo. Upload starts reading right away, while you can keep adding the next card.' },
   { title: 'Check every detail.', body: 'Open one ready card, correct the name and contact details, and confirm the company before saving.' },
@@ -138,215 +138,6 @@ export default function App() {
   </WorkspaceContext.Provider>;
 }
 
-function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (preferredWorkspaceId?: string) => Promise<void>; onCsrf: (value: string) => void; onPasswordReset: () => void }) {
-  const location = useLocation();
-  const showDemoAccounts = import.meta.env.DEV || import.meta.env.VITE_PUBLIC_DEMO === 'true';
-  const [searchParams] = useSearchParams();
-  const inviteToken = searchParams.get('invite') ?? '';
-  const [recoveryMode, setRecoveryMode] = useState<'request' | 'reset' | 'verify' | null>(() => location.pathname === '/reset-password' ? 'reset' : location.pathname === '/verify-email' ? 'verify' : null);
-  const [resetToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('reset') ?? '');
-  const [verificationToken] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('verify') ?? '');
-  const [recoveryMessage, setRecoveryMessage] = useState('');
-  const [verificationEmail, setVerificationEmail] = useState('');
-  const [mode, setMode] = useState<'signin' | 'signup'>(inviteToken ? 'signup' : 'signin');
-  const [csrfToken, setToken] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [accounts, setAccounts] = useState<DemoAccount[]>([]);
-  const [accountLoading, setAccountLoading] = useState(false);
-  const navigate = useNavigate();
-  useEffect(() => {
-    void getCsrfToken().then((token) => { setToken(token); onCsrf(token); });
-    if (showDemoAccounts) {
-      setAccountLoading(true);
-      void request<{ accounts: DemoAccount[] }>('/api/dev/demo-accounts')
-        .then((result) => setAccounts(result.accounts))
-        .catch(() => setAccounts([]))
-        .finally(() => setAccountLoading(false));
-    }
-  }, [onCsrf]);
-
-  async function signIn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true); setError('');
-    const data = new FormData(event.currentTarget);
-    try {
-      const result = await request<{ csrfToken: string }>('/api/auth/login', {
-        method: 'POST', body: JSON.stringify({ email: data.get('email'), password: data.get('password') }),
-      }, { csrfToken });
-      onCsrf(result.csrfToken);
-      const invite = inviteToken ? await request<{ workspaceId: string }>('/api/invites/accept', {
-        method: 'POST', body: JSON.stringify({ token: inviteToken }),
-      }, { csrfToken: result.csrfToken }) : null;
-      await onSignedIn(invite?.workspaceId);
-      navigate('/scan', { replace: true });
-    } catch (issue) {
-      if ((issue as { code?: string }).code === 'email_unverified') {
-        setVerificationEmail(String(data.get('email')));
-        setRecoveryMessage((issue as Error).message);
-        setError('');
-      } else setError((issue as Error).message);
-    }
-    finally { setBusy(false); }
-  }
-  async function signUp(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true); setError('');
-    const data = new FormData(event.currentTarget);
-    const workspaceKind = inviteToken ? 'company' : String(data.get('workspaceKind'));
-    try {
-      const result = await request<{ csrfToken?: string; workspaceId?: string; requiresVerification?: boolean; message?: string }>('/api/auth/signup', {
-        method: 'POST', body: JSON.stringify({
-          name: data.get('name'), email: data.get('email'), password: data.get('password'),
-          workspaceKind, workspaceName: data.get('workspaceName') || undefined,
-          inviteToken: inviteToken || undefined,
-        }),
-      }, { csrfToken });
-      if (result.requiresVerification) {
-        setVerificationEmail(String(data.get('email')));
-        setRecoveryMessage(result.message ?? 'Check your email for a one-time verification link.');
-        setMode('signin');
-        return;
-      }
-      if (result.csrfToken) onCsrf(result.csrfToken);
-      navigate('/setup', { replace: true });
-      await onSignedIn(result.workspaceId);
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
-  }
-  async function requestPasswordReset(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true); setError(''); setRecoveryMessage('');
-    const data = new FormData(event.currentTarget);
-    try {
-      const result = await request<{ message: string }>('/api/auth/password-reset', {
-        method: 'POST', body: JSON.stringify({ email: data.get('email') }),
-      }, { csrfToken });
-      setRecoveryMessage(result.message);
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
-  }
-  async function resetPassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true); setError('');
-    const data = new FormData(event.currentTarget);
-    try {
-      const result = await request<{ message: string }>('/api/auth/password-reset/confirm', {
-        method: 'POST', body: JSON.stringify({ token: resetToken, password: data.get('password') }),
-      }, { csrfToken });
-      const freshCsrfToken = await getCsrfToken();
-      setToken(freshCsrfToken);
-      onCsrf(freshCsrfToken);
-      onPasswordReset();
-      setRecoveryMode(null); setMode('signin'); setRecoveryMessage(result.message);
-      navigate('/', { replace: true });
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
-  }
-  async function resendVerification() {
-    setBusy(true); setError(''); setRecoveryMessage('');
-    try {
-      const result = await request<{ message: string }>('/api/auth/email-verification/resend', {
-        method: 'POST', body: JSON.stringify({ email: verificationEmail }),
-      }, { csrfToken });
-      setRecoveryMessage(result.message);
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
-  }
-  async function verifyEmail() {
-    setBusy(true); setError('');
-    try {
-      if (!verificationToken) throw new Error('This verification link is missing or expired. Request a new one.');
-      const result = await request<{ csrfToken: string }>('/api/auth/email-verification/confirm', {
-        method: 'POST', body: JSON.stringify({ token: verificationToken }),
-      }, { csrfToken });
-      setToken(result.csrfToken); onCsrf(result.csrfToken);
-      await onSignedIn();
-      navigate('/setup', { replace: true });
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
-  }
-  async function loginAs(account: DemoAccount) {
-    setBusy(true); setError('');
-    try {
-      const result = await request<{ csrfToken: string; workspaceId: string }>('/api/dev/login-as', {
-        method: 'POST', body: JSON.stringify({ accountId: account.id, workspaceId: account.workspaceId }),
-      }, { csrfToken });
-      onCsrf(result.csrfToken);
-      await onSignedIn(result.workspaceId);
-      navigate('/scan', { replace: true });
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setBusy(false); }
-  }
-
-  return <main className="auth-page">
-    <section className="auth-panel">
-      <div className="brand-lockup"><span className="brand-mark">G</span><span>Gather</span></div>
-      <div className="auth-intro">
-        <p className="eyebrow">FROM CONVERSATION TO FOLLOW-UP</p>
-        <h1>{recoveryMode === 'reset' ? 'Choose a new password.' : recoveryMode === 'verify' ? 'Verify your email.' : recoveryMode === 'request' ? 'Get back into Gather.' : mode === 'signin' ? 'Good to see you.' : 'Start with one good conversation.'}</h1>
-        <p>{recoveryMode ? 'Use a one-time link sent to your account email.' : 'Capture the conversation, review the details, and prepare a personal email.'}</p>
-      </div>
-      {recoveryMode === 'request' ? <form className="stack-form" onSubmit={requestPasswordReset}>
-        <label>Email<input name="email" type="email" autoComplete="email" required placeholder="you@company.com" /></label>
-        {recoveryMessage && <p className="form-status" role="status">{recoveryMessage}</p>}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="button primary full" disabled={busy}>{busy ? 'Requesting…' : 'Request a reset link'}</button>
-        <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode(null); setRecoveryMessage(''); setError(''); }}>Back to sign in</button></p>
-      </form> : recoveryMode === 'reset' ? <form className="stack-form" onSubmit={resetPassword}>
-        {resetToken ? <label>New password<input name="password" type="password" autoComplete="new-password" minLength={12} maxLength={200} required /><small>Use at least 12 characters. The reset link works once and expires after one hour.</small></label> : <p className="form-error" role="alert">This reset link is missing or expired. Request a new one.</p>}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        {resetToken && <button className="button primary full" disabled={busy}>{busy ? 'Updating…' : 'Update password'}</button>}
-        <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode('request'); setError(''); }}>Request another link</button></p>
-      </form> : recoveryMode === 'verify' ? <div className="stack-form">
-        {verificationToken ? <p>Verify your email to finish setting up your Gather space.</p> : <p className="form-error" role="alert">This verification link is missing or expired. Ask for another one.</p>}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        {verificationToken && <button className="button primary full" type="button" disabled={busy} onClick={() => void verifyEmail()}>{busy ? 'Verifying…' : 'Verify email'}</button>}
-        <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode(null); setMode('signin'); }}>Back to sign in</button></p>
-      </div> : mode === 'signin' ? <form key="sign-in" className="stack-form" onSubmit={signIn}>
-        <label>Email<input name="email" type="email" autoComplete="email" required placeholder="you@company.com" defaultValue={verificationEmail} /></label>
-        <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
-        {recoveryMessage && <div className="form-status" role="status">{recoveryMessage}{verificationEmail && <button className="text-button" type="button" disabled={busy} onClick={() => void resendVerification()}>Resend verification email</button>}</div>}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="button primary full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode('request'); setError(''); setRecoveryMessage(''); }}>Forgot password?</button></p>
-        <p className="switch-copy">New to Gather? <button className="text-button" type="button" onClick={() => { setMode('signup'); setError(''); }}>Create an account</button></p>
-      </form> : <form key="sign-up" className="stack-form" onSubmit={signUp}>
-        <label>Your name<input name="name" autoComplete="name" required maxLength={100} /></label>
-        <label>Email<input name="email" type="email" autoComplete="email" required /></label>
-        <label>Password<input name="password" type="password" autoComplete="new-password" minLength={12} required /><small>Use at least 12 characters.</small></label>
-        {!inviteToken && <><label>Your space<select name="workspaceKind" defaultValue="company"><option value="company">My company at an event</option><option value="personal">My private attendee space</option></select></label>
-        <label>Company name <span className="optional-label">(for company use)</span><input name="workspaceName" maxLength={120} /></label></>}
-        {inviteToken && <p className="invite-context">You’re joining a company team. Your admin chose which events you can see.</p>}
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <button className="button primary full" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
-        <p className="switch-copy">Already have an account? <button className="text-button" type="button" onClick={() => { setMode('signin'); setError(''); }}>Sign in</button></p>
-      </form>}
-      {showDemoAccounts && <section className="demo-box" aria-label="Sample accounts">
-        <div className="demo-heading"><div><strong>Try a sample account</strong><span>{import.meta.env.DEV ? 'Sample data · development only' : 'Public demo · shared sample data'}</span></div><CircleHelp size={18} aria-hidden="true" /></div>
-        {accountLoading ? <p className="subtle">Loading sample accounts…</p> : accounts.length ? <div className="demo-list">
-          {accounts.map((account) => <button key={`${account.id}:${account.workspaceId}`} className="demo-account" disabled={busy} onClick={() => void loginAs(account)}>
-            <span className="avatar small">{account.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span>
-            <span><strong>{account.name}</strong><small>{account.workspaceKind === 'personal' ? 'Attendee · private space' : `${account.role} · ${account.workspaceName}`}</small></span>
-            <span className="demo-open">Open</span>
-          </button>)}
-        </div> : <p className="subtle">No sample accounts yet. Run the seed command to add them.</p>}
-      </section>}
-      <p className="auth-foot">Your event notes stay in the space where you saved them.</p>
-    </section>
-    <aside className="auth-aside">
-      <div className="aside-top"><span className="aside-dot"></span> {new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}</div>
-      <div className="aside-content">
-        <div className="aside-card-icon"><ScanLine size={24} /></div>
-        <h2>Start with the person in front of you.</h2>
-        <p>Keep the card and conversation together, then review a draft before anything goes out.</p>
-        <div className="aside-flow"><span>Capture</span><i></i><span>Review</span><i></i><span>Draft email</span></div>
-      </div>
-      <span className="aside-wordmark">Gather CRM</span>
-    </aside>
-  </main>;
-}
-
 function WorkspaceShell() {
   const location = useLocation();
   const { session, logout, switchWorkspace, notify } = useWorkspace();
@@ -388,18 +179,38 @@ function WorkspaceShell() {
   }, [workspace.id, notify]);
   useEffect(() => { setMobileMenu(false); setMenuOpen(false); }, [workspace.id]);
 
-  return <div className={`app-frame${location.pathname.startsWith('/review/') ? ' review-mode' : ''}`}>
-    <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
-      <Link to="/home" className="brand-lockup"><span className="brand-mark">G</span><span>Gather</span></Link>
-      <Link to="/scan" className="button primary scan-sidebar"><ScanLine size={18} /> Scan a card</Link>
-      <div className="mode-strip"><span className="mode-indicator"><Building2 size={15} /></span><div><small>{company ? `Company: ${workspace.name}` : 'Private space'}</small><strong>{company ? (workspaceData?.event?.name ?? 'Choose an event') : 'Only you can see this'}</strong></div></div>
-      <nav className="main-nav" aria-label="Main navigation">
-        <span className="nav-caption">WORKSPACE</span>
-        {links.map(({ to, label, icon: Icon }) => <Fragment key={to}>{to === '/people' && <span className="nav-caption nav-caption-secondary">RECORDS & INSIGHTS</span>}<NavLink to={to} onClick={() => setMobileMenu(false)} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{label === 'Scan' && <span className="nav-key">S</span>}</NavLink></Fragment>)}
+  const crumb = links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace');
+  const groups = company
+    ? [['Work', ['/home', '/scan', '/email', '/follow-ups']], ['Records', ['/people', '/companies', '/pipeline']], ['Insights', ['/analytics', '/reports']], ['', ['/settings']]] as const
+    : [['Work', ['/home', '/scan', '/email', '/follow-ups']], ['Records', ['/people']], ['Insights', ['/analytics']], ['', ['/settings']]] as const;
+  const initials = user.name.split(' ').map((part) => part[0]).join('').slice(0, 2);
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 6);
+    onScroll(); window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  const section = location.pathname.split('/')[1] || 'home';
+
+  return <div className={`shell${location.pathname.startsWith('/review/') ? ' is-review' : ''}`}>
+    <aside className={`rail${mobileMenu ? ' is-open' : ''}`} data-rail>
+      <Link to="/home" className="brand"><span className="brand-mark">G</span><span>Gather</span></Link>
+      <Link to="/scan" className="rail-scan" onClick={() => setMobileMenu(false)}><ScanLine size={18} /> Scan a card<kbd>S</kbd></Link>
+      <div className="space-card" data-space-card><span className="space-card-icon">{company ? <Building2 size={16} /> : <UserRound size={16} />}</span><div><small>{company ? `Company: ${workspace.name}` : 'Private space'}</small><strong>{company ? (workspaceData?.event?.name ?? 'Choose an event') : 'Only you can see this'}</strong></div></div>
+      <nav className="rail-nav" aria-label="Main navigation">
+        {groups.map(([group, paths]) => {
+          const items = paths.map((path) => links.find((link) => link.to === path)).filter((link): link is typeof links[number] => Boolean(link) && link!.to !== '/settings');
+          const settings = paths.includes('/settings' as never) ? links.find((link) => link.to === '/settings') : undefined;
+          return <Fragment key={group || 'settings'}>
+            {group && items.length > 0 && <span className="rail-group">{group}</span>}
+            {items.map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} onClick={() => setMobileMenu(false)} className={({ isActive }) => `rail-link${isActive ? ' active' : ''}`}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{label === 'Scan' && <span className="rail-key">S</span>}</NavLink>)}
+            {settings && <NavLink to={settings.to} onClick={() => setMobileMenu(false)} className={({ isActive }) => `rail-link${isActive ? ' active' : ''}`}><settings.icon size={18} strokeWidth={1.8} /><span>{settings.label}</span></NavLink>}
+          </Fragment>;
+        })}
       </nav>
-      <div className="sidebar-spacer" />
-      <button className="help-link" onClick={() => setHelpOpen(true)}><CircleHelp size={18} /> Help</button>
-      <div className="profile-wrap">
+      <div className="rail-spacer" />
+      <button className="rail-help" onClick={() => setHelpOpen(true)}><CircleHelp size={18} /> Help</button>
+      <div className="rail-profile">
         {menuOpen && <div className="account-menu" role="menu">
           <strong className="menu-heading">Your spaces</strong>
           {availableWorkspaces.map((item) => <button key={item.id} role="menuitem" className="space-option" onClick={() => void switchWorkspace(item.id)}>
@@ -411,28 +222,31 @@ function WorkspaceShell() {
           <CaptureEmailPreferenceMenu />
           <button role="menuitem" className="logout-option" onClick={() => void logout()}><LogOut size={16} /> Sign out</button>
         </div>}
-        <button className="profile-button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
-          <span className="avatar">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span className="profile-name"><strong>{user.name}</strong><small>{workspace.role === 'attendee' ? 'Attendee' : workspace.role}</small></span><ChevronDown size={16} />
+        <button className="profile-trigger" data-account-trigger aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
+          <span className="avatar">{initials}</span><span><strong>{user.name}</strong><small>{workspace.role === 'attendee' ? 'Attendee' : workspace.role}</small></span><ChevronDown size={16} />
         </button>
       </div>
     </aside>
-    <div className="app-main">
-      <header className="topbar">
-        <button className="mobile-menu-button" aria-label={mobileMenu ? 'Close navigation' : 'Open navigation'} onClick={() => setMobileMenu((open) => !open)}>{mobileMenu ? <X size={20} /> : <Menu size={20} />}</button>
+    {mobileMenu && <button className="rail-scrim" aria-label="Close navigation" onClick={() => { setMobileMenu(false); setMenuOpen(false); }} />}
+    <div className="main">
+      <header className={`topbar${scrolled ? ' is-scrolled' : ''}`}>
+        <button className="menu-button" aria-label={mobileMenu ? 'Close navigation' : 'Open navigation'} onClick={() => setMobileMenu((open) => !open)}>{mobileMenu ? <X size={20} /> : <Menu size={20} />}</button>
         <div className="mobile-brand"><span className="brand-mark mini">G</span>Gather</div>
-        <div className="topbar-mode"><span className="mode-dot"></span><span className="topbar-workspace-name">{workspace.name}</span><span className="topbar-separator">/</span><strong>{links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace')}</strong></div>
-        {workspaceData?.sampleData && <span className="sample-badge">Sample data</span>}
-        <span className="topbar-event">{workspaceData?.event?.name ?? 'No active event'}</span>
+        <div className="crumb" data-crumb><span className="crumb-dot"></span><span className="crumb-space">{workspace.name}</span><span className="crumb-sep">/</span><strong>{crumb}</strong></div>
+        <span className="topbar-spacer" />
+        {workspaceData?.sampleData && <span className="sample-pill">Sample data</span>}
+        <span className="event-chip" data-event-chip>{workspaceData?.event?.name ?? 'No active event'}</span>
         <NotificationsMenu />
-        <button className="topbar-avatar" aria-label="Open account menu" onClick={() => { setMobileMenu(true); setMenuOpen(true); }}>{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</button>
+        <button className="topbar-avatar" aria-label="Open account menu" onClick={() => { setMobileMenu(true); setMenuOpen(true); }}>{initials}</button>
       </header>
-      <main className="page-content">
+      <main className="page">
+        <div className="page-inner route-enter" key={section}>
         <Routes>
           <Route path="/" element={<Navigate to="/scan" replace />} />
           <Route path="/home" element={<HomePage onShowTour={() => { setTourStep(0); setTourOpen(true); }} />} />
-          <Route path="/setup" element={<Suspense fallback={<div className="surface-card records-empty">Opening setup…</div>}><OnboardingRoute /></Suspense>} />
+          <Route path="/setup" element={<Suspense fallback={<div className="skeleton-block">Opening setup…</div>}><OnboardingRoute /></Suspense>} />
           <Route path="/scan" element={<ScanPage />} />
-          <Route path="/email" element={<Suspense fallback={<div className="surface-card records-empty">Opening email desk…</div>}><EmailDeskRoute /></Suspense>} />
+          <Route path="/email" element={<Suspense fallback={<div className="skeleton-block">Opening email desk…</div>}><EmailDeskRoute /></Suspense>} />
           <Route path="/review/:scanId" element={<ReviewPage />} />
           <Route path="/people" element={<PeoplePage />} />
           <Route path="/people/:contactId" element={<PersonPage />} />
@@ -442,12 +256,13 @@ function WorkspaceShell() {
           <Route path="/reports" element={manager ? <ReportsPage /> : <NotFoundPage />} />
           <Route path="/analytics" element={manager || !company ? <Suspense fallback={<div className="analytics-loading">Opening analytics…</div>}><AnalyticsRoute /></Suspense> : <NotFoundPage />} />
           <Route path="/follow-ups" element={<TasksPage />} />
-          <Route path="/settings" element={!company || admin ? <Suspense fallback={<div className="surface-card records-empty">Opening settings…</div>}><SettingsRoute /></Suspense> : <NotFoundPage />} />
+          <Route path="/settings" element={!company || admin ? <Suspense fallback={<div className="skeleton-block">Opening settings…</div>}><SettingsRoute /></Suspense> : <NotFoundPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </div>
       </main>
     </div>
-    <nav className="phone-tabs" aria-label="Phone navigation">{['/home','/email','/scan','/people','/follow-ups'].map((path) => links.find((link) => link.to === path)!).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => `phone-tab${to === '/scan' ? ' phone-capture' : ''}${isActive ? ' active' : ''}`}><Icon size={19} /><span>{to === '/email' ? 'Email' : label}</span></NavLink>)}</nav>
+    <nav className="phone-tabs" data-phone-tabs aria-label="Phone navigation">{['/home','/email','/scan','/people','/follow-ups'].map((path) => links.find((link) => link.to === path)!).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => `phone-tab${to === '/scan' ? ' phone-capture' : ''}${isActive ? ' active' : ''}`}><Icon size={20} /><span>{to === '/email' ? 'Email' : label}</span></NavLink>)}</nav>
     {helpOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHelpOpen(false); }}><section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close help" onClick={() => setHelpOpen(false)}><X size={19} /></button><p className="eyebrow">GATHER HELP</p><h2 id="help-dialog-title">Keep the next conversation.</h2><p>Short answers to the words you see in Gather.</p><dl className="help-terms"><div><dt>Scan</dt><dd>Choose a photo or take one; reading starts when it uploads.</dd></div><div><dt>Company and person</dt><dd>One company can have many people. Each person keeps their own conversations.</dd></div><div><dt>Follow-up</dt><dd>A reminder date you choose. Gather does not contact anyone by itself.</dd></div><div><dt>Saved, not sent</dt><dd>Your email is stored as a draft. Copy it or open it in your email app.</dd></div><div><dt>Private space</dt><dd>Only you can see the people and notes saved in your attendee space.</dd></div></dl><div className="help-actions"><button className="button secondary" onClick={() => setHelpOpen(false)}>Close</button><Link className="button primary" to="/scan" onClick={() => setHelpOpen(false)}>Open Capture <ScanLine size={16} /></Link></div></section></div>}
     {tourOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTourOpen(false); }}><section className="help-dialog tour-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close tour" onClick={() => setTourOpen(false)}><X size={19} /></button><p className="eyebrow">A QUICK TOUR · {tourStep + 1} OF {TOUR_STEPS.length}</p><h2 id="help-dialog-title">{TOUR_STEPS[tourStep].title}</h2><p>{TOUR_STEPS[tourStep].body}</p><div className="tour-progress" aria-label={`Step ${tourStep + 1} of ${TOUR_STEPS.length}`}>{TOUR_STEPS.map((step, index) => <span key={step.title} className={index <= tourStep ? 'active' : ''} />)}</div><div className="help-actions">{tourStep > 0 && <button className="button secondary" onClick={() => setTourStep((step) => Math.max(0, step - 1))}>Previous</button>}{tourStep < TOUR_STEPS.length - 1 ? <button className="button primary" onClick={() => setTourStep((step) => Math.min(TOUR_STEPS.length - 1, step + 1))}>Next step <ArrowRight size={16} /></button> : <><button className="button secondary" onClick={() => setTourOpen(false)}>Done</button><Link className="button primary" to="/scan" onClick={() => setTourOpen(false)}>Open Scan <ScanLine size={16} /></Link></>}</div></section></div>}
   </div>;
@@ -522,49 +337,6 @@ function NotificationsMenu() {
       {loading ? <p className="task-group-empty">Loading reminders…</p> : items.length ? <div className="notification-list">{items.map((item) => <button type="button" className={`notification-item${item.read_at ? '' : ' unread'}`} key={item.id} onClick={() => void openNotification(item)}><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></button>)}</div> : <p className="task-group-empty">No reminders yet. Due follow-ups will show here when you turn reminders on.</p>}
     </section>}
   </div>;
-}
-
-function HomePage({ onShowTour }: { onShowTour: () => void }) {
-  const { session, notify } = useWorkspace();
-  const isPersonal = session.workspace.kind === 'personal';
-  const [dashboard, setDashboard] = useState<{ counts: { captured_today: number; waiting_review: number; drafts_ready: number; follow_ups_due: number; replies: number }; due: Array<{ id: string; title: string; due_at: string; time_zone: string; kind: string; contact_id: string; contact_name: string; company_name: string }>; nextReviewScanId: string | null; hasPersonalizationDetails: boolean; timeZone: string } | null>(null);
-  useEffect(() => { void request<NonNullable<typeof dashboard>>('/api/dashboard', {}, { workspaceId: session.workspace.id }).then(setDashboard).catch((error) => notify((error as Error).message)); }, [session.workspace.id, notify]);
-  const nextAction = dashboard?.counts.waiting_review
-    ? dashboard.nextReviewScanId
-      ? { title: `${dashboard.counts.waiting_review} ${dashboard.counts.waiting_review === 1 ? 'card is' : 'cards are'} waiting for review.`, body: 'Check each detail before you save it.', label: 'Review next card', href: `/review/${dashboard.nextReviewScanId}` }
-      : { title: 'Your card is being read now.', body: 'You can keep capturing while it finishes.', label: 'Open Capture', href: '/scan' }
-    : dashboard?.counts.drafts_ready
-      ? { title: `${dashboard.counts.drafts_ready} ${dashboard.counts.drafts_ready === 1 ? 'email draft is' : 'email drafts are'} ready to review.`, body: 'Check the conversation and message before you decide whether to send.', label: 'Review drafts', href: '/email' }
-    : dashboard?.counts.follow_ups_due
-      ? { title: `${dashboard.counts.follow_ups_due} ${dashboard.counts.follow_ups_due === 1 ? 'follow-up needs' : 'follow-ups need'} attention.`, body: 'Today’s and overdue conversations are ready for you.', label: 'Open follow-ups', href: '/follow-ups' }
-      : dashboard && !dashboard.hasPersonalizationDetails
-        ? { title: isPersonal ? 'Add a little about yourself.' : 'Add what you sell so emails sound like you.', body: 'A few short details help make your messages more useful.', label: isPersonal ? 'Add your details' : 'Add work details', href: '/settings' }
-        : { title: 'Start with the card you just collected.', body: 'Take a photo or choose a picture. Check each detail before it is saved.', label: 'Open camera', href: '/scan' };
-  return <section className="home-view">
-    <InstallPrompt />
-    <div className="page-heading-row"><div><p className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>Good morning, {session.user.name.split(' ')[0]}.</h1><p className="page-lede">Capture the conversation, prepare a personal email, and keep moving.</p></div><Link className="button primary desktop-capture" to="/scan"><ScanLine size={18} /> Capture a card</Link></div>
-    <section className="next-action-card">
-      <div className="action-illustration"><ScanLine size={30} strokeWidth={1.6} /></div>
-      <div className="action-copy"><span className="eyebrow">NEXT UP</span><h2>{nextAction.title}</h2><p>{nextAction.body}</p></div>
-      <Link className="button primary" to={nextAction.href}>{nextAction.label} <ArrowRight size={16} /></Link>
-    </section>
-    <section className="metric-grid" aria-label="Today's summary">
-      <article className="metric-card"><span>{isPersonal ? 'People saved today' : 'Leads captured today'}</span><strong className="metric-number">{dashboard?.counts.captured_today ?? '—'}</strong><small>In your event’s time zone</small></article>
-      <article className="metric-card"><span>Waiting for review</span><strong className="metric-number">{dashboard?.counts.waiting_review ?? '—'}</strong><small>Each one checked by you</small></article>
-      <article className="metric-card"><span>Follow-ups due</span><strong className="metric-number">{dashboard?.counts.follow_ups_due ?? '—'}</strong><small>Today and overdue</small></article>
-      <article className="metric-card"><span>Drafts to review</span><strong className="metric-number">{dashboard?.counts.drafts_ready ?? '—'}</strong><small>Nothing sends on its own</small></article>
-    </section>
-    {(isPersonal || ['admin','manager'].includes(session.workspace.role)) && <Suspense fallback={<div className="analytics-loading">Loading activity…</div>}><OverviewActivity /></Suspense>}
-    <section className="home-lower-grid">
-      <article className="surface-card today-card"><div className="section-head"><div><p className="eyebrow">YOUR EVENT</p><h2>Follow-ups to handle</h2></div><Link to="/scan" className="subtle-link">Add a person</Link></div>{dashboard?.due.length ? <div className="due-list">{dashboard.due.map((task) => <div className="due-item" key={task.id}><span className="due-dot"></span><div><strong>{task.contact_name}</strong><small>{task.title || (task.kind === 'meeting' ? 'Meeting' : 'Follow up')} · {task.company_name}</small></div><time>{new Date(task.due_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: task.time_zone || dashboard.timeZone })}</time></div>)}</div> : <div className="empty-inline"><span className="empty-icon"><Check size={18} /></span><p>{dashboard ? 'No follow-ups due yet. Save a person and choose when to check in.' : 'Loading your follow-ups…'}</p></div>}</article>
-      <article className="surface-card setup-card"><div className="section-head"><div><p className="eyebrow">MAKE IT SOUND LIKE YOU</p><h2>{isPersonal ? 'Add a little about yourself' : 'Add what your team sells'}</h2></div></div><p className="card-description">A few useful details help make email drafts feel personal. You can skip this and add them later.</p><Link className="button secondary" to="/setup">Continue first-time setup</Link></article>
-    </section>
-    <button className="quiet-tour" onClick={onShowTour}>Show me around</button>
-  </section>;
-}
-
-function NotFoundPage() {
-  return <section className="not-found-view"><span className="empty-icon"><AlertCircle size={18} /></span><p className="eyebrow">NOT FOUND</p><h1>That page isn’t here.</h1><p className="page-lede">Go back to your workspace or start with Capture.</p><div><Link className="button secondary" to="/home">Go to Home</Link><Link className="button primary" to="/scan"><ScanLine size={17} /> Open Capture</Link></div></section>;
 }
 
 type PersonRow = { id: string; name: string; title: string; email: string; phone: string; quality: string | null; stage: string; version: number; updated_at: string; company_id: string; company_name: string; encounters: number; products: string | null };
