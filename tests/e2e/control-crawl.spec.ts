@@ -71,7 +71,7 @@ async function clickVisibleControls(page: Page, path: string, heading: RegExp) {
     const closeNavigation = page.getByRole('button', { name: 'Close navigation' });
     if (await closeNavigation.count()) await closeNavigation.click();
     if (await page.locator('.camera-live').count()) await page.getByRole('button', { name: 'Close camera' }).click();
-    if (new URL(page.url()).pathname !== path || await page.locator('.dialog-backdrop').count()) {
+    if (new URL(page.url()).pathname !== path || await page.locator('.dialog-backdrop, .confirm-backdrop').count()) {
       await page.goto(path);
       await expect(page.getByRole('heading', { name: heading })).toBeVisible();
     }
@@ -105,7 +105,7 @@ async function clickVisibleControls(page: Page, path: string, heading: RegExp) {
     await locator.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest' }));
     await locator.click({ timeout: 5_000 });
     await page.waitForTimeout(100);
-    if (new URL(page.url()).pathname !== path || await page.locator('.dialog-backdrop').count()) {
+    if (new URL(page.url()).pathname !== path || await page.locator('.dialog-backdrop, .confirm-backdrop').count()) {
       await page.goto(path);
       await expect(page.getByRole('heading', { name: heading })).toBeVisible();
     }

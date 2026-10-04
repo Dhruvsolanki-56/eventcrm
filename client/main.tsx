@@ -6,14 +6,16 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.js';
+import { ConfirmHost } from './confirm.js';
 import './styles.css';
 import './workspace-design.css';
-import './redesign.css';
+import './calm-workspace.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
       <App />
+      <ConfirmHost />
     </BrowserRouter>
   </React.StrictMode>,
 );

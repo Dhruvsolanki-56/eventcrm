@@ -49,8 +49,8 @@ test('an uploaded brochure is kept with its company without creating a person', 
   const duplicateCompanies = (await (await page.request.get('/api/companies', { headers: workspaceHeaders })).json() as { companies: Array<{ name: string }> }).companies.filter((company) => company.name === 'Acme Packaging');
   expect(duplicateCompanies).toHaveLength(1);
 
-  page.once('dialog', (dialog) => dialog.accept());
   await material.getByRole('button', { name: 'Remove material' }).click();
+  await page.locator('[data-confirm-accept]').click();
   await expect(material).toHaveCount(0);
   const reusableScan = await (await page.request.get(`/api/scans/${routeScanId}`, { headers: workspaceHeaders })).json() as { scan: { materialCompanyId: string | null; contactId: string | null; status: string } };
   expect(reusableScan.scan).toMatchObject({ materialCompanyId: null, contactId: null, status: 'ready' });

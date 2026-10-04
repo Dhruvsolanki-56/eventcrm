@@ -9,6 +9,7 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Events & team/ }).click();
   await page.locator('.team-event-choice input').first().check();
   await page.getByRole('button', { name: 'Create invite link' }).click();
   const inviteInput = page.getByLabel(/Share this link/);
@@ -33,11 +34,13 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   expect((await page.request.get('/api/reports', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).status()).toBe(403);
 
   await privateSpace.click();
-  await expect(page.locator('.topbar-mode')).toHaveText('Private. Only you can see this.');
+  await expect(page.locator('.topbar-mode')).toContainText("Sam's private space");
+  await expect(page.locator('.mode-strip')).toContainText('Only you can see this');
   await page.getByRole('link', { name: 'Home', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Good morning, Sam.' })).toBeVisible();
   await page.locator('.profile-button').click();
   await page.getByRole('menuitem', { name: /Northstar Packaging.*representative/ }).click();
-  await expect(page.locator('.topbar-mode')).toHaveText('Company: Northstar Packaging');
+  await expect(page.locator('.topbar-mode')).toContainText('Northstar Packaging');
+  await expect(page.locator('.mode-strip')).toContainText('Company: Northstar Packaging');
   expect(duplicateKeyWarnings).toEqual([]);
 });

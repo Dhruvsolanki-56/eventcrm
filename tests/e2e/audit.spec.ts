@@ -49,6 +49,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await expect(page.getByRole('heading', { name: 'Acme Packaging' })).toBeVisible();
   const companyExport = page.waitForEvent('download');
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   await page.getByRole('button', { name: 'Export company data' }).click();
   expect((await companyExport).suggestedFilename()).toBe('gather-company-export.json');
   await page.goto('/people/demo-ns-contact-1');
@@ -80,6 +81,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await page.getByRole('button', { name: 'Save deal' }).click();
   await expect(page.getByRole('status').getByText('Company deal details saved.')).toBeVisible();
   await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: /Events & team/ }).click();
   await page.getByRole('button', { name: /Pacific Packaging Expo/ }).first().click();
   await page.getByLabel('Event spend (USD)').fill('10000');
   await page.getByRole('button', { name: 'Save event' }).click();

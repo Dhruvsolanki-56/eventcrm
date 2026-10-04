@@ -30,8 +30,8 @@ test('sample company and attendee accounts enter their own spaces', async ({ pag
     { name: /Priya Shah/, heading: /Good morning, Priya/, strip: /Company: Northstar Packaging/ },
     { name: /Jordan Lee/, heading: /Good morning, Jordan/, strip: /Company: Northstar Packaging/ },
     { name: /Alex Rivera/, heading: /Good morning, Alex/, strip: /Company: Riverbend Supply/ },
-    { name: /Sam Patel/, heading: /Good morning, Sam/, strip: /Private\. Only you can see this\./ },
-    { name: /Riley Morgan/, heading: /Good morning, Riley/, strip: /Private\. Only you can see this\./ },
+    { name: /Sam Patel/, heading: /Good morning, Sam/, strip: /Only you can see this/ },
+    { name: /Riley Morgan/, heading: /Good morning, Riley/, strip: /Only you can see this/ },
   ]) {
     await page.getByRole('button', { name: account.name }).click();
     await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
@@ -449,11 +449,12 @@ test('knowledge settings save and the shell fits desktop and phone widths', asyn
   await page.getByLabel('What do you sell?').fill('Small-batch recyclable packaging.');
   await page.getByRole('button', { name: 'Save changes' }).click();
   await expect(page.getByRole('status').getByText('Your changes are saved.')).toBeVisible();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.getByText('Nothing needs your attention right now.')).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole('link', { name: 'Scan a card' }).last()).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Phone navigation' }).getByRole('link', { name: 'Scan', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Phone navigation' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.getByRole('link', { name: 'Scan', exact: true }).last().click();
@@ -465,11 +466,12 @@ test('company invite links create scoped team access and removal takes effect im
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Events & team/ }).click();
   await expect(page.getByRole('heading', { name: 'Team access' })).toBeVisible();
   const openInvites = page.locator('.team-list').filter({ has: page.getByRole('heading', { name: 'Open invite links' }) });
   await expect(page.getByRole('button', { name: 'Create invite link' })).toBeVisible();
   const existingInviteCount = await openInvites.locator('.team-row').count();
-  await page.getByLabel('Role').selectOption('representative');
+  await page.locator('.team-settings').getByRole('combobox', { name: /^Role/ }).selectOption('representative');
   const eventChoice = page.locator('.team-event-choice').filter({ hasText: 'Pacific Packaging Expo' }).getByRole('checkbox');
   await eventChoice.check();
   await page.getByRole('button', { name: 'Create invite link' }).click();
@@ -509,6 +511,7 @@ test('company invite links create scoped team access and removal takes effect im
   await adminPage.goto('/');
   await adminPage.getByRole('button', { name: /Maya Chen/ }).click();
   await adminPage.getByRole('link', { name: 'Settings' }).click();
+  await adminPage.getByRole('button', { name: /Events & team/ }).click();
   const memberRow = adminPage.locator('.team-row').filter({ hasText: email });
   await expect(memberRow).toBeVisible();
   await memberRow.getByRole('button', { name: 'Edit access' }).click();
@@ -532,8 +535,8 @@ test('company invite links create scoped team access and removal takes effect im
   expect((await page.request.get('/api/reports', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).status()).toBe(200);
   const scopedContacts = ((await (await page.request.get('/api/contacts', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).json()).people) as Array<{ id: string; name: string }>;
   expect(scopedContacts.map((person) => person.id)).toEqual(['demo-ns-contact-1']);
-  adminPage.on('dialog', (dialog) => dialog.accept());
   await memberRow.getByRole('button', { name: 'Remove' }).click();
+  await adminPage.locator('[data-confirm-accept]').click();
   await expect(memberRow).toHaveCount(0);
   await expect.poll(async () => (await page.request.get('/api/contacts', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).status()).toBe(403);
 
@@ -544,6 +547,7 @@ test('company admins can create events, set dates and spend, and switch the acti
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Events & team/ }).click();
   await expect(page.getByRole('heading', { name: 'Events', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Add event' }).first().click();
   const eventName = `New Event ${Date.now()}`;
@@ -559,6 +563,7 @@ test('company admins can create events, set dates and spend, and switch the acti
   await page.getByRole('link', { name: 'Reports' }).click();
   await expect(page.getByText('Event spend: $12,345').first()).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Events & team/ }).click();
   await page.getByRole('button', { name: /Pacific Packaging Expo/ }).first().click();
   await page.getByLabel('Make this the active event').check();
   await page.getByRole('button', { name: 'Save event' }).click();
@@ -654,7 +659,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
     const footer = dialog.querySelector('.review-footer');
     return { background, footerPosition: footer ? getComputedStyle(footer).position : '' };
   });
-  expect(reviewSurface.background).toBe('rgb(245, 244, 240)');
+  expect(reviewSurface.background).toBe('rgb(238, 242, 239)');
   expect(reviewSurface.footerPosition).toBe('static');
   const reviewActionsStayTogether = async () => {
     const layout = await page.locator('.review-save-actions').evaluate((group) => {
@@ -699,7 +704,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await expect(page.locator('.email-sources')).toContainText('Latest conversation');
   await expect(page.locator('.email-compose textarea')).toHaveValue(/short-run sample/);
   await page.getByRole('button', { name: 'Try another version' }).click();
-  await expect(page.getByLabel('Subject')).toHaveValue(/A quick note about Acme Packaging/);
+  await expect(page.getByLabel('Subject')).toHaveValue('A quick follow-up');
   await expect(page.locator('.email-sources')).toContainText('short-run sample');
   const savedTasks = await (await page.request.get('/api/tasks')).json() as { tasks: Array<{ title: string; due_at: string; time_zone: string; contact_name: string }> };
   const leadFollowUp = savedTasks.tasks.find((task) => task.contact_name === 'Demo Contact');
@@ -713,7 +718,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   expect(exported.data.contacts.some((contact) => contact.name === 'Demo Contact')).toBe(true);
   expect(exported.media.some((media) => media.kind === 'scan_photo' && media.available && Boolean(media.contentBase64))).toBe(true);
   await page.getByRole('textbox', { name: 'Message' }).fill('Thanks for meeting. This revised draft is not sent without a configured mail server.');
-  await page.getByRole('button', { name: 'Send email' }).click();
+  await page.getByRole('button', { name: 'Approve email' }).click();
   await expect(page.locator('.email-state')).toContainText('No mail server');
   await page.getByRole('button', { name: 'Next item' }).click();
 
@@ -734,6 +739,8 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole('link', { name: 'Scan a card' }).first().click();
+  // Repeat photos ask whether they are the same person; keep each as a different photo.
+  await page.evaluate(() => { window.setInterval(() => document.querySelector<HTMLButtonElement>('.confirm-dialog button:not([data-confirm-accept])')?.click(), 100); });
   const thirdUpload = page.waitForRequest((request) => request.url().includes('/api/scans') && request.method() === 'POST');
   await input.setInputFiles({ name: 'similar-company-card.jpg', mimeType: 'image/jpeg', buffer: await imageVariant(1) });
   await thirdUpload;
@@ -742,7 +749,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.getByLabel('Name *').fill('Rae Sample');
   await page.getByLabel('Company').fill('Acme Packagng');
   await page.getByLabel('Email').fill(`rae-${suffix}@newvendor.example`);
-  await page.getByRole('textbox', { name: 'Phone', exact: true }).fill('');
+  await page.locator('.review-form input[type="tel"]').fill('');
   await page.getByLabel('Website').fill('');
   await page.getByRole('button', { name: 'Save person' }).click();
   await expect(page.getByRole('group', { name: 'Possible existing company' })).toBeVisible();
@@ -823,7 +830,7 @@ test('review can save product interests and a manual-text voice note', async ({ 
   await page.getByLabel('Name *').fill('Kai Rivera');
   await page.getByLabel('Company').fill('Acme Packaging');
   await page.getByLabel('Email').fill('kai-interest@example.test');
-  await page.getByRole('textbox', { name: 'Phone', exact: true }).fill('');
+  await page.locator('.review-form input[type="tel"]').fill('');
   await page.getByRole('button', { name: 'Save person' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Voice note and your text are saved' })).toBeVisible();
   await expect(page.locator('.email-sources')).toContainText('Products of interest');
@@ -906,8 +913,9 @@ test('archiving keeps a person history and is distinct from permanent deletion',
   const dashboardBefore = await (await page.request.get('/api/dashboard')).json() as { counts: { captured_today: number; follow_ups_due: number } };
 
   await page.goto('/people/demo-ns-contact-1');
-  page.once('dialog', (dialog) => void dialog.accept());
+  await page.getByRole('link', { name: 'Manage', exact: true }).click();
   await page.getByRole('button', { name: 'Archive person' }).click();
+  await page.locator('[data-confirm-accept]').click();
   await expect(page).toHaveURL(/\/people\?archived=1$/);
   const hidden = await page.request.get('/api/contacts/demo-ns-contact-1');
   expect(hidden.status()).toBe(404);
@@ -949,6 +957,7 @@ test('attendee spaces only show their own people and cannot select a company wor
   const forbiddenWorkspaceStatus = await page.evaluate(async () => (await fetch('/api/contacts', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).status);
   expect(forbiddenWorkspaceStatus).toBe(403);
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.getByRole('button', { name: 'Export my data' })).toBeVisible();
   const exportRequest = page.waitForRequest((request) => request.url().endsWith('/api/export/data.json'));
   const exportDownload = page.waitForEvent('download');
@@ -973,6 +982,7 @@ test('voice notes save, play back, accept manual text only, and can be deleted',
   await page.getByRole('link', { name: /Tessa Morgan/ }).click();
   const initialPersonDetail = await (await page.request.get('/api/contacts/demo-ns-contact-1')).json() as { voiceNotes: Array<{ id: string }> };
   const originalVoiceCount = initialPersonDetail.voiceNotes.length;
+  await page.getByRole('link', { name: 'Voice note', exact: true }).click();
   await page.getByRole('button', { name: 'Record voice note' }).click();
   await expect(page.getByText(/Recording ·/)).toBeVisible();
   await page.waitForTimeout(1300);
@@ -992,11 +1002,15 @@ test('voice notes save, play back, accept manual text only, and can be deleted',
   await newRecording.getByLabel('Text you typed').fill('Typed manually after the event.');
   await newRecording.getByLabel('Text you typed').press('Tab');
   await expect(page.locator('.timeline-item').getByText('Typed manually after the event.')).toBeVisible();
+  await page.getByRole('link', { name: 'Email', exact: true }).click();
   await page.getByRole('button', { name: 'Draft an email' }).click();
   await expect(page.locator('.email-sources')).toContainText('Typed manually after the event.');
-  await expect(page.locator('.email-compose textarea')).toHaveValue(/Typed manually after the event/);
-  page.on('dialog', (dialog) => dialog.accept());
+  // The existing safe fallback uses the source but does not quote raw internal notes into the email.
+  await expect(page.locator('.email-compose textarea')).toHaveValue(/Hi Tessa,[\s\S]*Could you confirm what you need from us next/);
+  await expect(page.locator('.email-compose textarea')).not.toHaveValue(/Typed manually after the event/);
+  await page.getByRole('link', { name: 'Voice note', exact: true }).click();
   await newRecording.getByRole('button', { name: 'Delete recording' }).click();
+  await page.locator('[data-confirm-accept]').click();
   await expect(page.locator('.saved-voice')).toHaveCount(originalVoiceCount);
 });
 
@@ -1014,6 +1028,7 @@ test('follow-ups snooze, complete, and meetings warn on overlap and can be confi
     date.setHours(8 + Math.floor(Math.random() * 10), Math.floor(Math.random() * 60), 0, 0);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   });
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   await page.getByLabel('What would you like to add?').selectOption('meeting');
   await page.getByLabel('Meeting time').fill(day);
   await page.getByLabel('Note (optional)').fill(`Overlap check ${testToken}`);
@@ -1027,6 +1042,7 @@ test('follow-ups snooze, complete, and meetings warn on overlap and can be confi
   await page.getByRole('link', { name: 'People', exact: true }).first().click();
   await page.getByLabel('Search companies and people').fill('Noah Price');
   await page.getByRole('link', { name: /Noah Price/ }).click();
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   await page.getByLabel('What would you like to add?').selectOption('meeting');
   await page.getByLabel('Meeting time').fill(day);
   await page.getByLabel('Note (optional)').fill(`Second meeting ${testToken}`);
@@ -1035,6 +1051,7 @@ test('follow-ups snooze, complete, and meetings warn on overlap and can be confi
   await page.getByRole('button', { name: 'Save meeting anyway' }).click();
   await expect(page.getByRole('status').getByText('Meeting added to this person.')).toBeVisible();
 
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   await page.getByLabel('What would you like to add?').selectOption('follow_up');
   const later = await page.evaluate(() => {
     const date = new Date(Date.now() + 8 * 86400000);
@@ -1045,9 +1062,10 @@ test('follow-ups snooze, complete, and meetings warn on overlap and can be confi
   await page.getByLabel('Note (optional)').fill(`Follow-up test ${testToken}`);
   await page.getByRole('button', { name: 'Add follow-up' }).click();
   await expect(page.getByRole('status').getByText('Follow-up added to this person.')).toBeVisible();
+  await page.getByRole('link', { name: 'Email', exact: true }).click();
   await page.getByRole('button', { name: 'Draft an email' }).click();
   await expect(page.getByLabel('Subject')).toBeVisible();
-  await page.getByRole('button', { name: 'Send email' }).click();
+  await page.getByRole('button', { name: 'Approve email' }).click();
   await expect(page.locator('.email-state')).toContainText('nothing was sent');
   await expect(page.getByRole('link', { name: 'Open in my email app' })).toHaveAttribute('href', /^mailto:/);
   await expect(page.getByRole('button', { name: 'Copy email' })).toBeVisible();
@@ -1079,6 +1097,7 @@ test('private-space data deletion requires confirmation and removes its searchab
   await page.goto('/');
   await page.getByRole('button', { name: /Riley Morgan/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.getByRole('heading', { name: 'Clear this private space.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete private-space data' })).toBeDisabled();
 
@@ -1158,6 +1177,7 @@ test('deleting one person removes their history and media but keeps their shared
 
   await page.goto('/people/demo-ns-contact-1');
   await expect(page.getByRole('heading', { name: 'Tessa Morgan' })).toBeVisible();
+  await page.getByRole('link', { name: 'Manage', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Delete person' })).toBeDisabled();
   await page.getByLabel('Type DELETE to confirm').fill('DELETE');
   await page.getByRole('button', { name: 'Delete person' }).click();
@@ -1191,6 +1211,7 @@ test('due follow-ups create an in-app reminder and an honest daily digest status
     const date = new Date(Date.now() - 86400000);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T00:00`;
   });
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   const followUpTime = page.getByLabel('Follow-up time');
   await expect(followUpTime).toHaveValue(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
   await followUpTime.fill(pastLocalTime);
@@ -1198,6 +1219,7 @@ test('due follow-ups create an in-app reminder and an honest daily digest status
   await expect(page.getByRole('status').getByText('Follow-up added to this person.')).toBeVisible();
 
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await page.locator('.reminder-choice').nth(0).locator('input').check();
   await page.locator('.reminder-choice').nth(1).locator('input').check();
   await page.locator('.reminder-fields input[type=time]').fill('00:00');
@@ -1216,6 +1238,7 @@ test('due follow-ups create an in-app reminder and an honest daily digest status
   }).toBe('not_sent');
 
   await page.reload();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await expect(page.getByRole('status').filter({ hasText: 'No email was sent.' })).toBeVisible();
   await page.getByRole('button', { name: /Open reminders/ }).click();
   const reminder = page.getByRole('button', { name: /Follow up with June Kim at Bluebird Labs/ });
@@ -1254,6 +1277,7 @@ test('a failed card-reading job appears in Problems and Retry completes it', asy
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   const problem = page.locator('.problem-row').filter({ hasText: 'This card could not be read.' });
   await expect(problem).toBeVisible();
   await problem.getByRole('button', { name: 'Retry' }).click();

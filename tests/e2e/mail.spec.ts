@@ -10,7 +10,10 @@ async function distinctCard(page: Page, marker: number) {
     const canvas = document.createElement('canvas'); canvas.width = source.width; canvas.height = source.height;
     const context = canvas.getContext('2d')!; context.drawImage(source, 0, 0);
     context.fillStyle = `rgb(${marker * 31 % 255},${marker * 53 % 255},${marker * 79 % 255})`;
-    context.fillRect(canvas.width - 12, canvas.height - 12, 7, 7);
+    // Use a visible fixture identifier; a tiny corner pixel is intentionally treated as the same card.
+    context.fillRect(0, 0, canvas.width, 80);
+    context.fillStyle = '#fff'; context.font = 'bold 30px sans-serif';
+    context.fillText(`Lifecycle fixture ${marker}`, 20, 50);
     const blob = await new Promise<Blob>((resolve) => canvas.toBlob((value) => resolve(value!), 'image/png'));
     return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
   }, { image, marker });
@@ -68,14 +71,14 @@ test('a scanned demo card can be reviewed, saved, and emailed after explicit app
 
   const composer = page.locator('.email-compose');
   await expect(composer.getByLabel('Subject')).toHaveValue(/Following up/);
-  await expect(composer.getByRole('textbox', { name: 'Message' })).toHaveValue(/Acme Packaging/);
+  await expect(composer.getByRole('textbox', { name: 'Message' })).toHaveValue(/Hi Demo,[\s\S]*Could you confirm what you need from us next/);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
   const subject = `Approved scanned-card follow-up ${Date.now()}`;
   const body = 'Thanks for meeting at the event. I will send the sample details we discussed.';
   await composer.getByLabel('Subject').fill(subject);
   await composer.getByRole('textbox', { name: 'Message' }).fill(body);
-  await composer.getByRole('button', { name: 'Send email' }).click();
+  await composer.getByRole('button', { name: 'Approve email' }).click();
 
   await expect(composer.locator('.email-state')).toContainText('does not confirm inbox delivery', { timeout: 10_000 });
   await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain(subject);
@@ -113,6 +116,7 @@ test('the edited email draft is what the configured mail server accepts', async 
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await expect(page.getByRole('heading', { name: 'Choose how your messages appear.' })).toBeVisible();
   await page.getByLabel('From name').fill('Northstar Team');
   await page.getByLabel('From email').fill('leads@northstar.example');
@@ -147,7 +151,7 @@ test('the edited email draft is what the configured mail server accepts', async 
   const body = 'Thanks for the useful conversation.\nI will send the sample sizes this afternoon.';
   await page.getByLabel('Subject').fill(subject);
   await page.getByRole('textbox', { name: 'Message' }).fill(body);
-  await page.getByRole('button', { name: 'Send email' }).click();
+  await page.getByRole('button', { name: 'Approve email' }).click();
   await expect(page.locator('.email-state')).toContainText('does not confirm inbox delivery', { timeout: 10_000 });
   await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain(subject);
   const acceptedMessage = readFileSync(capturePath!, 'utf8');
@@ -170,6 +174,7 @@ test('a rejected email is labeled failed and the person can retry after fixing t
   await page.goto('/people/demo-ns-contact-1');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.getByRole('navigation', { name: 'Actions for this person' }).getByRole('link', { name: 'Email', exact: true }).click();
   await page.getByRole('button', { name: 'Draft an email' }).click();
   const composer = page.locator('.email-compose');
   await expect(composer.getByLabel('Subject')).toBeVisible();
@@ -178,7 +183,7 @@ test('a rejected email is labeled failed and the person can retry after fixing t
   await composer.getByRole('textbox', { name: 'Message' }).fill('This local test proves the failed-send retry path.');
   writeFileSync(rejectPath!, 'Reject local SMTP recipient commands until the test removes this file.');
   try {
-    await composer.getByRole('button', { name: 'Send email' }).click();
+    await composer.getByRole('button', { name: 'Approve email' }).click();
     await expect(composer.locator('.email-state')).toContainText('The mail server did not accept it. You can retry.', { timeout: 12_000 });
     await expect(composer.getByRole('button', { name: 'Retry send' })).toBeVisible();
   } finally {
@@ -224,6 +229,7 @@ test('Settings lets the demo sender and test recipient be changed without changi
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await expect(page.getByLabel('From email')).toHaveValue('dhruvtube11@gmail.com');
   await expect(page.getByLabel('Test email recipient')).toHaveValue('dhruvtube11@gmail.com');
   const recipient = `demo-test-${Date.now()}@example.test`;
@@ -275,7 +281,7 @@ test('Email now from Save & scan next sends only after approval and returns to c
   const subject = `Approved toast follow-up ${unique}`;
   await dialog.getByLabel('Subject').fill(subject);
   await dialog.getByRole('textbox', { name: 'Message' }).fill('This was approved from the optional Email now toast.');
-  await dialog.getByRole('button', { name: 'Send email' }).click();
+  await dialog.getByRole('button', { name: 'Approve email' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'queued for the mail server' })).toBeVisible();
@@ -373,7 +379,7 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
   const body = `Thanks for stopping by. I noted your request: ${voiceText}`;
   await composer.getByLabel('Subject').fill(subject);
   await composer.getByRole('textbox', { name: 'Message' }).fill(body);
-  await composer.getByRole('button', { name: 'Send email' }).click();
+  await composer.getByRole('button', { name: 'Approve email' }).click();
   await expect(composer.locator('.email-state')).toContainText('does not confirm inbox delivery', { timeout: 10_000 });
   await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain(subject);
   const acceptedMessage = readFileSync(capturePath!, 'utf8').replace(/=\r\n/g, '').replace(/\r\n/g, '\n');
@@ -406,6 +412,7 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
     date.setHours(11, 0, 0, 0);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   });
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   await page.getByLabel('What would you like to add?').selectOption('meeting');
   await page.getByLabel('Meeting time').fill(meetingTime);
   await page.getByLabel('Note (optional)').fill(meetingNote);
@@ -419,6 +426,7 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
   await page.goto(`/people/${contactId}`);
   await page.getByLabel('Change stage').selectOption('won');
   await expect.poll(async () => (((await page.request.get(`/api/contacts/${contactId}`)).json()) as Promise<{ person: { stage: string } }>).then((value) => value.person.stage)).toBe('won');
+  await page.getByRole('link', { name: 'Deal value', exact: true }).click();
   await page.getByLabel('Potential value (USD)').fill('4200');
   await page.getByLabel('Deal status').selectOption('won');
   await page.getByRole('button', { name: 'Save deal' }).click();
@@ -491,6 +499,7 @@ test('daily digest includes due follow-ups and reports mail-server acceptance on
   await page.getByRole('link', { name: 'People', exact: true }).first().click();
   await page.getByLabel('Search companies and people').fill('June Kim');
   await page.getByRole('link', { name: /June Kim/ }).click();
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   const followUpTime = page.getByLabel('Follow-up time');
   await expect(followUpTime).not.toHaveValue('');
   const yesterday = await page.evaluate(() => {
@@ -508,6 +517,7 @@ test('daily digest includes due follow-ups and reports mail-server acceptance on
   } finally { taskDb.close(); }
 
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await page.locator('.reminder-choice').nth(1).locator('input').check();
   await page.locator('.reminder-fields input[type=time]').fill('00:00');
   await page.locator('.reminder-fields label').filter({ hasText: 'Time zone' }).locator('input').fill('UTC');
@@ -532,5 +542,6 @@ test('daily digest includes due follow-ups and reports mail-server acceptance on
   expect(message).not.toContain('inbox delivery is confirmed');
 
   await page.reload();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await expect(page.getByRole('status').filter({ hasText: `Accepted by the mail server; delivery is not confirmed. (${today} digest)` })).toBeVisible();
 });

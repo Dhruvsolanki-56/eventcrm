@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Building2, Mic, UserRound } from 'lucide-react';
 import { statusWords } from '../shared/contracts.js';
 import { request, requestDownload, saveDownload } from './api.js';
+import { askConfirm } from './confirm.js';
 import { useWorkspace } from './workspace-context.js';
 
 export default function SettingsPage() {
@@ -11,6 +12,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [section, setSection] = useState('profile');
   useEffect(() => {
     void request<Record<string, Record<string, unknown> | null>>('/api/settings', {}, { workspaceId: session.workspace.id })
       .then((values) => setForm((values[personal ? 'aboutMe' : 'knowledge'] as Record<string, unknown>) ?? {}))
@@ -28,7 +30,14 @@ export default function SettingsPage() {
     finally { setSaving(false); }
   }
   return <section className="settings-view">
-    <div className="page-heading-row"><div><p className="eyebrow">SETTINGS</p><h1>{personal ? 'About me' : 'What your team sells'}</h1><p className="page-lede">Only the details used for follow-up and email drafts.</p></div></div>
+    <div className="page-heading-row"><div><p className="eyebrow">SETTINGS</p><h1>{section === 'email' ? 'Email & reminders' : section === 'team' ? 'Events & team' : section === 'data' ? 'Data & activity' : personal ? 'About me' : 'What your team sells'}</h1><p className="page-lede">{section === 'email' ? 'Your sender, draft preferences, and follow-up reminders.' : section === 'team' ? 'Keep your events and team access in one place.' : section === 'data' ? 'Export your records and review anything that needs attention.' : 'Only the details used for follow-up and email drafts.'}</p></div></div>
+    <div className="settings-workspace"><nav className="settings-navigation" aria-label="Settings sections">
+      <p className="eyebrow">YOUR WORKSPACE</p>
+      <button aria-pressed={section === 'profile'} onClick={() => setSection('profile')}>{personal ? 'My profile' : 'Business profile'}<small>Your voice and offerings</small></button>
+      <button aria-pressed={section === 'email'} onClick={() => setSection('email')}>Email & reminders<small>Sender and draft preferences</small></button>
+      {!personal && session.workspace.role === 'admin' && <button aria-pressed={section === 'team'} onClick={() => setSection('team')}>Events & team<small>People, access, and events</small></button>}
+      <button aria-pressed={section === 'data'} onClick={() => setSection('data')}>Data & activity<small>Exports and service issues</small></button>
+    </nav><div className="settings-panels"><div hidden={section !== 'profile'}>
     {loading ? <div className="surface-card skeleton-block">Loading your settings…</div> : <form className="surface-card settings-form" onSubmit={(event) => void submit(event)}>
       {personal ? <>
         <div className="form-section-intro"><UserRound size={19} /><div><strong>A little about you</strong><p>Used only to personalize your own messages.</p></div></div>
@@ -46,16 +55,20 @@ export default function SettingsPage() {
       </>}
       <div className="form-footer"><p>If an AI key is set up, card photos may be sent for reading, and saved notes or workspace details may be sent to prepare email and next-step suggestions.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}</button></div>
     </form>}
+    </div><div hidden={section !== 'email'} className="settings-section-stack">
     {(!personal && session.workspace.role === 'admin') || personal ? <EmailSettingsPanel /> : null}
     {(!personal && session.workspace.role === 'admin') || personal ? <DraftAutomationSettings /> : null}
+    {personal || session.workspace.role === 'admin' ? <ReminderSettings /> : null}
+    </div><div hidden={section !== 'team'} className="settings-section-stack">
+    {!personal && session.workspace.role === 'admin' && <><EventSettings /><TeamSettings /></>}
+    </div><div hidden={section !== 'data'} className="settings-section-stack">
     {(!personal && session.workspace.role === 'admin') && <DataExportPanel personal={false} />}
     {personal && <DataExportPanel personal />}
     {(!personal && session.workspace.role === 'admin') || personal ? <ClearSampleDataPanel /> : null}
     {personal && <DeletePrivateDataPanel />}
-    {personal || session.workspace.role === 'admin' ? <ReminderSettings /> : null}
-    {!personal && session.workspace.role === 'admin' && <><EventSettings /><TeamSettings /></>}
     <ProblemsPanel />
     <p className="settings-note"><Mic size={16} /> Voice recordings stay attached to the person you save them with. Transcription is optional; you can type a short note when it is not set up.</p>
+    </div></div></div>
   </section>;
 }
 
@@ -345,7 +358,7 @@ function TeamSettings() {
     finally { setBusy(false); }
   }
   async function removeMember(id: string) {
-    if (!window.confirm('Remove this person from the company? They will lose access on their next request.')) return;
+    if (!await askConfirm({ title: 'Remove this person from the company?', body: 'They will lose access on their next request.', confirmLabel: 'Remove access', danger: true })) return;
     setBusy(true); setError('');
     try { await request(`/api/team/members/${id}`, { method: 'DELETE' }, { csrfToken, workspaceId: session.workspace.id }); await load(); notify('Team access removed.'); }
     catch (issue) { setError((issue as Error).message); }

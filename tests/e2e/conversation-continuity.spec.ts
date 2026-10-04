@@ -95,7 +95,7 @@ test('repeat cards reuse the stored scan; later conversations stay on one person
     await page.getByRole('button', { name: 'Add & prepare email' }).click();
     await expect(page.getByText('At the follow-up, requested the short comparison by email.', { exact: true })).toBeVisible();
     await expect(page.locator('#person-email').getByText(/Latest conversation/)).toBeVisible();
-    await expect(page.locator('#person-email').getByRole('button', { name: 'Send email' })).toBeVisible();
+    await expect(page.locator('#person-email').getByRole('button', { name: 'Approve email' })).toBeVisible();
     expect((database.prepare(`SELECT status FROM emails WHERE workspace_id='demo-northstar' AND contact_id='demo-ns-contact-1' ORDER BY created_at DESC LIMIT 1`).get() as { status: string }).status).toBe('draft');
   } finally {
     try {

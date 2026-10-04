@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('light workspace renders without horizontal overflow on core routes', async ({ page }, testInfo) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
 
@@ -10,6 +10,7 @@ test('light workspace renders without horizontal overflow on core routes', async
     for (const [name, route] of [
       ['home', '/home'],
       ['capture', '/scan'],
+      ['email', '/email'],
       ['people', '/people'],
       ['person', '/people/demo-ns-contact-1'],
       ['companies', '/companies'],
@@ -23,8 +24,28 @@ test('light workspace renders without horizontal overflow on core routes', async
     ] as const) {
       await page.goto(route);
       await expect(page.locator('main h1').first()).toBeVisible();
+      await expect(page.getByText('Loading your settings…', { exact: true })).toHaveCount(0);
+      await expect(page.getByText('Loading activity…', { exact: true })).toHaveCount(0);
+      if (name === 'settings') await expect(page.locator('.settings-form')).toBeVisible();
+      await expect(page.locator('main').getByText(/^Loading /)).toHaveCount(0);
+      // Let chart animations and asynchronous section layouts settle before the visual record.
+      await page.waitForTimeout(1200);
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`${name}-${width}.png`), fullPage: true });
+      if (name === 'person') {
+        for (const action of ['Email', 'Voice note', 'Follow-up', 'Meeting', 'Deal value', 'Manage', 'Conversation']) {
+          await page.getByRole('navigation', { name: 'Actions for this person' }).getByRole('link', { name: action, exact: true }).click();
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+          await page.screenshot({ path: testInfo.outputPath(`person-${action.toLowerCase().replaceAll(' ', '-')}-${width}.png`), fullPage: true });
+        }
+      }
+      if (name === 'settings') {
+        for (const section of ['Email & reminders', 'Events & team', 'Data & activity', 'Business profile']) {
+          await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: new RegExp(section) }).click();
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+          await page.screenshot({ path: testInfo.outputPath(`settings-${section.split(' ')[0].toLowerCase()}-${width}.png`), fullPage: true });
+        }
+      }
     }
   }
 

@@ -5,6 +5,7 @@ import { statusWords, type DemoAccount, type SessionData } from '../shared/contr
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
 import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-ocr.js';
+import { askConfirm } from './confirm.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
@@ -506,7 +507,7 @@ function HomePage({ onShowTour }: { onShowTour: () => void }) {
       ? { title: `${dashboard.counts.waiting_review} ${dashboard.counts.waiting_review === 1 ? 'card is' : 'cards are'} waiting for review.`, body: 'Check each detail before you save it.', label: 'Review next card', href: `/review/${dashboard.nextReviewScanId}` }
       : { title: 'Your card is being read now.', body: 'You can keep capturing while it finishes.', label: 'Open Capture', href: '/scan' }
     : dashboard?.counts.drafts_ready
-      ? { title: `${dashboard.counts.drafts_ready} ${dashboard.counts.drafts_ready === 1 ? 'email draft is' : 'email drafts are'} ready to review.`, body: 'Check the conversation and message before you decide whether to send.', label: 'Review drafts', href: '/email-desk' }
+      ? { title: `${dashboard.counts.drafts_ready} ${dashboard.counts.drafts_ready === 1 ? 'email draft is' : 'email drafts are'} ready to review.`, body: 'Check the conversation and message before you decide whether to send.', label: 'Review drafts', href: '/email' }
     : dashboard?.counts.follow_ups_due
       ? { title: `${dashboard.counts.follow_ups_due} ${dashboard.counts.follow_ups_due === 1 ? 'follow-up needs' : 'follow-ups need'} attention.`, body: 'Today’s and overdue conversations are ready for you.', label: 'Open follow-ups', href: '/follow-ups' }
       : dashboard && !dashboard.hasPersonalizationDetails
@@ -664,7 +665,7 @@ function CompanyPage() {
     finally { setSaving(false); }
   }
   async function removeMaterial(scanId: string) {
-    if (!window.confirm('Remove this brochure from the company? Its photo will stay in your capture tray.')) return;
+    if (!await askConfirm({ title: 'Remove this brochure from the company?', body: 'Its photo will stay in your capture tray.', confirmLabel: 'Remove brochure', danger: true })) return;
     setRemovingMaterialId(scanId); setError('');
     try {
       await request(`/api/scans/${scanId}/material`, { method: 'DELETE' }, { csrfToken, workspaceId: session.workspace.id });
@@ -742,6 +743,11 @@ function PersonPage() {
   const [editError, setEditError] = useState('');
   const [staleEdit, setStaleEdit] = useState(false);
   const [plannerKind, setPlannerKind] = useState<'follow_up' | 'meeting'>('follow_up');
+  const [personPanel, setPersonPanel] = useState('conversation');
+  const handleDraftStateChange = useCallback((open: boolean) => {
+    setEmailHasOpenDraft(open);
+    if (open) setPersonPanel('email');
+  }, []);
   const [dealValue, setDealValue] = useState('');
   const [dealStatus, setDealStatus] = useState<'open' | 'won' | 'lost' | ''>('');
   const [savingDeal, setSavingDeal] = useState(false);
@@ -763,6 +769,7 @@ function PersonPage() {
   }, [requestedEventId, session.workspace.id]);
   useEffect(() => {
     if (!requestedConversation || !detail) return;
+    setPersonPanel('conversation');
     const timer = window.setTimeout(() => {
       document.getElementById('person-conversation')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       document.getElementById('person-note')?.focus({ preventScroll: true });
@@ -804,7 +811,7 @@ function PersonPage() {
   async function addNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prepareEmail = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.dataset.action === 'email';
-    if (emailHasOpenDraft && !window.confirm('Saving this conversation may prepare a new email draft. The draft currently open here will remain saved and unsent, but will close on this page. Continue?')) return;
+    if (emailHasOpenDraft && !await askConfirm({ title: 'Save this conversation?', body: 'Saving may prepare a new email draft. The draft open here stays saved and unsent, but it will close on this page.', confirmLabel: 'Save conversation' })) return;
     setSaving(true); setError('');
     try { const result = await request<{ autoDraft: EmailDraftView | null }>(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current, ...conversationMemory }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); setConversationMemory({ summary: '', openQuestion: '', promisedNextStep: '', changedSinceLast: '' }); await load(); setConversationDraft(result.autoDraft); if (prepareEmail || result.autoDraft) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail || result.autoDraft ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
     catch (issue) { setError((issue as Error).message); } finally { setSaving(false); }
@@ -825,16 +832,18 @@ function PersonPage() {
   if (!detail) return <section className="surface-card skeleton-block">{error || 'Loading this person…'}{error && <p><Link className="subtle-link" to="/people">Back to People</Link></p>}</section>;
   const { person, timeline, products } = detail;
   return <section className="person-view"><div className="page-heading-row"><div><Link className="subtle-link" to="/people">← People</Link><p className="eyebrow">PERSON</p><h1>{String(person.name)}</h1><p className="page-lede">{String(person.title || 'Job title not added')} · {String(person.company_name)}</p></div><Link className="button secondary" to="/scan"><ScanLine size={17} /> Add another conversation</Link></div>
-    <nav className="person-action-row" aria-label="Actions for this person">
-      <a className="button secondary" href="#person-voice-note">Voice note</a>
-      <a className="button secondary" href="#person-email">Email</a>
-      <a className="button secondary" href="#person-next-step" onClick={() => setPlannerKind('follow_up')}>Follow-up</a>
-      <a className="button secondary" href="#person-next-step" onClick={() => setPlannerKind('meeting')}>Meeting</a>
-      {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deal-value">Deal value</a>}
+    <nav className="person-action-row" aria-label="Actions for this person" data-active={personPanel}>
+      <a className="button secondary" href="#person-conversation" aria-current={personPanel === 'conversation' ? 'location' : undefined} onClick={() => setPersonPanel('conversation')}>Conversation</a>
+      <a className="button secondary" href="#person-email" aria-current={personPanel === 'email' ? 'location' : undefined} onClick={() => setPersonPanel('email')}>Email</a>
+      <a className="button secondary" href="#person-voice-note" aria-current={personPanel === 'voice' ? 'location' : undefined} onClick={() => setPersonPanel('voice')}>Voice note</a>
+      <a className="button secondary" href="#person-next-step" aria-current={personPanel === 'follow_up' ? 'location' : undefined} onClick={() => { setPersonPanel('follow_up'); setPlannerKind('follow_up'); }}>Follow-up</a>
+      <a className="button secondary" href="#person-next-step" aria-current={personPanel === 'meeting' ? 'location' : undefined} onClick={() => { setPersonPanel('meeting'); setPlannerKind('meeting'); }}>Meeting</a>
+      {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deal-value" aria-current={personPanel === 'deal' ? 'location' : undefined} onClick={() => setPersonPanel('deal')}>Deal value</a>}
+      <a className="button secondary" href="#person-manage" aria-current={personPanel === 'manage' ? 'location' : undefined} onClick={() => setPersonPanel('manage')}>Manage</a>
     </nav>
     <div className="person-layout"><div className="person-main"><article className="surface-card person-card"><div className="section-head"><div><p className="eyebrow">CONTACT DETAILS</p><h2>{String(person.company_name)}</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{String(person.quality || 'Not set')}</dd><dt>Event conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}<label>Change stage<select value={stageDraft || String(person.stage)} onChange={(event) => { const stage = event.target.value; if (stage === 'lost') { setStageDraft('lost'); setLostReason(''); } else { setStageDraft(''); void changeStage(stage); } }}><option value="new">New</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="meeting">Meeting</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{stageDraft === 'lost' && <div className="lost-reason-form"><label htmlFor="lost-reason">Why was this marked lost?<textarea id="lost-reason" rows={2} maxLength={500} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="A short reason" /></label><button type="button" className="button primary" disabled={!lostReason.trim()} onClick={() => void changeStage('lost', lostReason)}>Save as lost</button><button type="button" className="text-button" onClick={() => { setStageDraft(''); setLostReason(''); }}>Cancel</button></div>}{person.stage === 'lost' && Boolean(person.lost_reason) && <p className="lost-reason-display">Lost because: {String(person.lost_reason)}</p>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}</article>
     <article className="surface-card timeline-card"><p className="eyebrow">HISTORY</p><h2>Conversations and notes</h2>{detail.conversationMemories.length > 0 && <div className="memory-history"><strong>Checked email context</strong>{detail.conversationMemories.map((item) => <ConversationMemoryCard key={item.id} item={item} contactId={contactId} onSaved={() => void load()} />)}</div>}{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
-    <div className="person-side">
+    <div className="person-side" data-panel={personPanel}>
       {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><p className="eyebrow">PIPELINE · COMPANY VALUE</p><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (USD)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(person.deal_value_minor) / 100)} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
       <form id="person-conversation" className="surface-card note-form" onSubmit={(event) => void addNote(event)}>
         <p className="eyebrow">NEW CONVERSATION</p><h2>Pick up where you left off.</h2>
@@ -851,12 +860,11 @@ function PersonPage() {
         <button className="button primary" data-action="email" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add & prepare email'}</button>
         <button className="button secondary" data-action="note" disabled={saving || !note.trim()}>{saving ? 'Saving…' : 'Add conversation'}</button>
       </form>
-      <FollowUpComposer key={`${contactId}-${emailDraftVersion}`} contactId={contactId} autoOpen={emailAfterConversation} initialDraft={conversationDraft} onDraftStateChange={setEmailHasOpenDraft} />
+      <FollowUpComposer key={`${contactId}-${emailDraftVersion}`} contactId={contactId} autoOpen={emailAfterConversation} initialDraft={conversationDraft} onDraftStateChange={handleDraftStateChange} />
       <VoiceNotesPanel contactId={contactId} notes={detail.voiceNotes} onChange={() => void load()} />
       <TaskPlanner contactId={contactId} kind={plannerKind} onKindChange={setPlannerKind} onSaved={() => void load()} />
-      <ArchivePersonPanel contactId={contactId} />
-      {(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}
-      <Link className="button secondary" to="/scan"><ScanLine size={16} /> Capture another conversation</Link>
+      <div id="person-manage" className="person-manage"><ArchivePersonPanel contactId={contactId} />
+      {(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}</div>
     </div></div></section>;
 }
 
@@ -879,7 +887,7 @@ function ArchivePersonPanel({ contactId }: { contactId: string }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   async function archivePerson() {
-    if (!window.confirm('Archive this person? Their notes, recordings, and history will stay saved. You can restore them later.')) return;
+    if (!await askConfirm({ title: 'Archive this person?', body: 'Their notes, recordings, and history will stay saved. You can restore them later.', confirmLabel: 'Archive person' })) return;
     setBusy(true);
     try {
       await request(`/api/contacts/${contactId}/archive`, { method: 'PATCH', body: JSON.stringify({ archived: true }) }, { csrfToken, workspaceId: session.workspace.id });
@@ -1104,7 +1112,7 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
     } catch (issue) { setError((issue as Error).message); }
   }
   async function removeVoice(noteId: string) {
-    if (!window.confirm('Delete this recording and its saved text?')) return;
+    if (!await askConfirm({ title: 'Delete this recording?', body: 'The recording and its saved text will be removed.', confirmLabel: 'Delete recording', danger: true })) return;
     try { await request(`/api/notes/${noteId}`, { method: 'DELETE' }, { csrfToken, workspaceId: session.workspace.id }); onChange(); }
     catch (issue) { setError((issue as Error).message); }
   }
@@ -1368,7 +1376,7 @@ function ScanPage() {
       }, { csrfToken, workspaceId: session.workspace.id });
       if (result.possibleDuplicate) {
         const candidate = scanFromApi(result.scan);
-        const same = window.confirm('This looks like a card already saved for this person. Choose OK to open their conversations, or Cancel to keep this as a different photo. No new photo has been stored yet.');
+        const same = await askConfirm({ title: 'This card may already be saved', body: 'It looks like a card already saved for this person. No new photo has been stored yet.', confirmLabel: 'Open their conversations', cancelLabel: 'Keep as a different photo' });
         if (same && candidate.contactId) {
           setScans((items) => items.filter((item) => item.id !== localId));
           navigate(`/people/${candidate.contactId}?newConversation=1&event=${encodeURIComponent(captureEventId ?? '')}`);
@@ -2065,7 +2073,7 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   async function tryAnotherVersion() {
     if (!draft) return;
     const changed = !!suggestedDraft.current && (draft.subject !== suggestedDraft.current.subject || draft.body !== suggestedDraft.current.body);
-    if (changed && !window.confirm('This will replace your unsent edits with another suggestion. Continue?')) return;
+    if (changed && !await askConfirm({ title: 'Replace your edits?', body: 'Another suggestion will replace the unsent edits you made.', confirmLabel: 'Replace with new version' })) return;
     setBusy(true); setError(''); setMessage('');
     try {
       const next = await request<{ id: string; recipient: string; subject: string; body: string; status: 'draft'; generation: 'ai' | 'template' | 'fallback'; sourcesUsed: Array<{ label: string; excerpt: string }> }>(`/api/emails/${draft.id}/alternate`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
@@ -2107,6 +2115,6 @@ function FollowUpComposer({ contactId, autoOpen = false, initialDraft = null, on
   return <div id="person-email" className="email-compose"><div className="section-head"><div><p className="eyebrow">OPTIONAL FOLLOW-UP</p><h2>Email</h2></div>{!draft && !autoOpen && <button type="button" className="button secondary" disabled={busy} onClick={() => void create()}><Mail size={16} />{busy ? 'Preparing…' : 'Draft an email'}</button>}</div>
     {error && !missingEmail && <p className="form-error" role="alert">{error}</p>}
     {autoOpen && missingEmail && <div className="email-state" role="status"><p>There’s no email address on this person yet. Nothing was sent.</p><button type="button" className="text-button" onClick={onSkip}>Skip email</button></div>}
-    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, subject: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, body: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'pending' ? 'Draft ready now. AI is preparing another suggestion; your edits will stay yours.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Send email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
+    {draft && <><p className="email-recipient">To {draft.recipient}</p>{draft.sourcesUsed.length > 0 && <div className="email-sources"><strong>Draft uses</strong>{draft.sourcesUsed.map((source) => <p key={`${source.label}-${source.excerpt}`}><span>{source.label}:</span> {source.excerpt}</p>)}</div>}<label>Subject<input value={draft.subject} maxLength={200} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, subject: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><label>Message<textarea rows={7} maxLength={8000} value={draft.body} onChange={(event) => { locallyEdited.current = true; setDraft({ ...draft, body: event.target.value }); }} disabled={draft.status !== 'draft'} /></label><div className="email-compose-footer"><span className="email-state" role="status">{message || (draft.status === 'draft' ? draft.generation === 'ai' ? 'AI suggested draft. Check and edit it before sending.' : draft.generation === 'pending' ? 'Draft ready now. AI is preparing another suggestion; your edits will stay yours.' : draft.generation === 'fallback' ? 'AI could not prepare a draft. Template text is ready; edit it before sending.' : 'Template draft. AI is not set up; edit it before sending.' : statusWords.email[draft.status])}</span>{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy} onClick={() => void tryAnotherVersion()}>Try another version</button>}{draft.status === 'draft' && <button type="button" className="button secondary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void saveOnly()}>Save draft</button>}{draft.status === 'draft' && <button type="button" className="button primary" disabled={busy || !draft.subject.trim() || !draft.body.trim()} onClick={() => void send()}>{busy ? 'Saving…' : 'Approve email'}</button>}{draft.status === 'draft' && autoOpen && <button type="button" className="text-button" onClick={onSkip}>Skip</button>}{draft.status === 'failed' && <button type="button" className="button secondary" disabled={busy} onClick={() => void retry()}>{busy ? 'Retrying…' : 'Retry send'}</button>}</div>{draft.status === 'outbox' && <div className="outbox-actions"><a className="button secondary" href={`mailto:${encodeURIComponent(draft.recipient)}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(draft.body)}`}>Open in my email app</a><button type="button" className="button secondary" onClick={() => void copyOutbox()}>Copy email</button></div>}</>}
   </div>;
 }

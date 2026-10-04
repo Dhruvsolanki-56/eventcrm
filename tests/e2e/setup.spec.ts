@@ -53,12 +53,14 @@ test('workspace email sender can be saved in Settings without claiming mail was 
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await expect(page.getByRole('heading', { name: 'Choose how your messages appear.' })).toBeVisible();
   await page.getByLabel('From name').fill('Northstar Sample Team');
   await page.getByLabel('From email').fill('hello@northstar.example');
   await page.getByRole('button', { name: 'Save email details' }).click();
   await expect(page.locator('.email-settings-panel .form-status')).toContainText('Sender details saved');
   await page.reload();
+  await page.getByRole('button', { name: /Email & reminders/ }).click();
   await expect(page.getByLabel('From name')).toHaveValue('Northstar Sample Team');
   await expect(page.getByLabel('From email')).toHaveValue('hello@northstar.example');
   await page.getByRole('button', { name: 'Send a test email' }).click();

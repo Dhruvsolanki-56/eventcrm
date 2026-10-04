@@ -46,7 +46,7 @@ test('company and private attendee routes retain named controls, labeled fields,
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
 
-  const companyRoutes = ['/home', '/scan', '/people', '/companies', '/pipeline', '/analytics', '/reports', '/follow-ups', '/settings'];
+  const companyRoutes = ['/home', '/scan', '/email', '/people', '/people/demo-ns-contact-1', '/companies', '/companies/demo-ns-acme', '/pipeline', '/analytics', '/reports', '/follow-ups', '/settings'];
   for (const width of [1440, 390]) for (const route of companyRoutes) await inspectRoute(page, route, width);
 
   await page.setViewportSize({ width: 1440, height: 950 });

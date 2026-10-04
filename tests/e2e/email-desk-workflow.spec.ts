@@ -16,8 +16,8 @@ test('Email Desk approval is explicit and stays in outbox when sending is unavai
   await page.locator(`.email-desk-row[data-draft-id="${draft.id}"]`).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Approve email' }).click();
+  await page.locator('[data-confirm-accept]').click();
   await expect(page.getByText('Approved for outbox. No mail server sent this message.')).toBeVisible();
   const status = await (await page.request.get(`/api/emails/${draft.id}`, { headers })).json() as { status: string };
   expect(status.status).toBe('outbox');

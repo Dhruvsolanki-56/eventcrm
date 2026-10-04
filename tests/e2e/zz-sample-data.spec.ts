@@ -29,6 +29,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   const clearPanel = page.locator('.sample-clear-panel');
   await expect(clearPanel.getByRole('heading', { name: 'Clear sample data.' })).toBeVisible();
   await clearPanel.getByLabel('Type CLEAR to confirm').fill('CLEAR');
@@ -43,6 +44,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
     expect(Number((db.prepare(`SELECT COUNT(*) AS total FROM memberships WHERE workspace_id='demo-northstar' AND status='active'`).get() as { total: number }).total)).toBeGreaterThan(0);
   } finally { db.close(); }
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.locator('.sample-clear-panel')).toHaveCount(0);
 
   await page.locator('.profile-button').click();
@@ -51,6 +53,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
   await page.getByRole('button', { name: /Sam Patel Attendee/ }).click();
   await expect(page.getByRole('heading', { name: 'Keep the next conversation.' })).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Data & activity/ }).click();
   await expect(page.locator('.sample-clear-panel')).toBeVisible();
   const mediaPathsDb = new Database(databasePath, { readonly: true });
   let audioPaths: string[];

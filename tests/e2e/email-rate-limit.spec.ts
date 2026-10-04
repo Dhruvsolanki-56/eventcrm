@@ -16,10 +16,11 @@ test('email approval and retry enforce durable actor and workspace hourly quotas
     await page.goto('/');
     await page.getByRole('button', { name: /Maya Chen/ }).click();
     await page.goto('/people/demo-ns-contact-1');
+    await page.getByRole('navigation', { name: 'Actions for this person' }).getByRole('link', { name: 'Email', exact: true }).click();
     const composer = page.locator('.email-compose');
     await composer.getByRole('button', { name: 'Draft an email' }).click();
     await composer.getByLabel('Subject').waitFor();
-    await composer.getByRole('button', { name: 'Send email' }).click();
+    await composer.getByRole('button', { name: 'Approve email' }).click();
     await expect(composer.locator('.email-state')).toContainText('The mail server did not accept it. You can retry.', { timeout: 12_000 });
 
     const actor = database.prepare(`SELECT id FROM users WHERE email='maya@gather.test'`).get() as { id: string };
@@ -32,9 +33,10 @@ test('email approval and retry enforce durable actor and workspace hourly quotas
 
     if (existsSync(rejectPath!)) unlinkSync(rejectPath!);
     await page.goto('/people/demo-ns-contact-1');
+    await page.getByRole('navigation', { name: 'Actions for this person' }).getByRole('link', { name: 'Email', exact: true }).click();
     await composer.getByRole('button', { name: 'Draft an email' }).click();
     await composer.getByLabel('Subject').waitFor();
-    await composer.getByRole('button', { name: 'Send email' }).click();
+    await composer.getByRole('button', { name: 'Approve email' }).click();
     await expect(composer.getByRole('alert')).toContainText('Too many emails were queued. Wait an hour before sending or retrying more.');
 
     const pending = database.prepare(`SELECT COUNT(*) AS count FROM jobs WHERE workspace_id='demo-northstar' AND type='email_send' AND status='queued'`).get() as { count: number };

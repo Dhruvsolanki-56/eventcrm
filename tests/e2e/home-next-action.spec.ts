@@ -44,6 +44,9 @@ test('Home points to review, ready drafts, due follow-ups, missing details, then
     if (originalDrafts.length) {
       await page.goto('/home');
       await expect(actionCard.getByRole('link', { name: 'Review drafts' })).toBeVisible();
+      await actionCard.getByRole('link', { name: 'Review drafts' }).click();
+      await expect(page).toHaveURL('/email');
+      await expect(page.getByRole('heading', { name: 'Email Desk', exact: true })).toBeVisible();
       database.prepare(`UPDATE emails SET status='outbox' WHERE workspace_id=? AND status='draft'`).run(workspaceId);
     }
     await page.goto('/home');
