@@ -40,3 +40,14 @@
   .quick-chip { min-height: 36px; padding: 6px 11px; font-size: 12.5px; }
   .dictate-row .button { flex-basis: 0; min-width: 0; }
 }
+
+/* Offline capture */
+.offline-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid #efdcae; border-radius: 9px; background: #fff9ee; color: #6f5218; }
+.offline-banner.is-back { border-color: #bfe0d1; background: #f2faf6; color: #2f6a58; }
+.offline-banner > svg { flex: none; }
+.offline-banner > div { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.offline-banner strong { font-size: 13px; font-weight: 600; }
+.offline-banner span { font-size: 12.5px; line-height: 1.5; }
+.offline-banner .button { flex: none; min-height: 40px; }
+.tray-item.is-offline { border-style: dashed; border-color: #e2cf9f; background: #fffdf7; }
+@media (max-width: 470px) { .offline-banner { flex-wrap: wrap; } .offline-banner .button { width: 100%; } }

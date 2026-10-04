@@ -3,6 +3,8 @@ import { Building2, Mic, UserRound } from 'lucide-react';
 import { statusWords } from '../shared/contracts.js';
 import { request, requestDownload, saveDownload } from './api.js';
 import { askConfirm } from './confirm.js';
+import { IdeaChips } from './quick-capture-ui.js';
+import { addListPhrase, neverPromiseIdeas, roleIdeas } from './quick-capture.js';
 import { useWorkspace } from './workspace-context.js';
 
 export default function SettingsPage() {
@@ -44,13 +46,15 @@ export default function SettingsPage() {
         <div className="field-grid"><label>Your name<input value={String(form.name ?? session.user.name)} onChange={(event) => update('name', event.target.value)} maxLength={100} /></label><label>Your role<input value={String(form.role ?? '')} onChange={(event) => update('role', event.target.value)} maxLength={100} /></label></div>
         <label>Your company<input value={String(form.company ?? '')} onChange={(event) => update('company', event.target.value)} maxLength={120} /></label>
         <label>What are you looking for?<input value={String(form.lookingFor ?? '')} onChange={(event) => update('lookingFor', event.target.value)} maxLength={200} placeholder="One short line" /></label>
-        <label>Email signature<textarea rows={3} value={String(form.signature ?? '')} onChange={(event) => update('signature', event.target.value)} maxLength={600} /></label>
+        <label>Email signature<textarea rows={3} value={String(form.signature ?? '')} onChange={(event) => update('signature', event.target.value)} maxLength={600} placeholder={`Leave blank to sign with ${session.user.name}`} /></label>
       </> : <>
         <div className="form-section-intro"><Building2 size={19} /><div><strong>Help your drafts sound like your team</strong><p>Keep this short. The AI uses these details and notes for that person only.</p></div></div>
         <label>What do you sell?<textarea rows={3} value={String(form.whatYouSell ?? '')} onChange={(event) => update('whatYouSell', event.target.value)} maxLength={500} placeholder="One or two sentences" /></label>
         <label>Our role in client conversations<input value={String(form.ourRole ?? '')} onChange={(event) => update('ourRole', event.target.value)} maxLength={240} placeholder="For example, we are the development partner preparing a proposal" /></label>
+        <IdeaChips ideas={roleIdeas} label="Common roles" onPick={(idea) => update('ourRole', idea)} />
         <div className="field-grid"><label>Tone<select value={String(form.tone ?? 'Friendly')} onChange={(event) => update('tone', event.target.value)}><option>Friendly</option><option>Professional</option><option>Short</option></select></label><label>Email signature<textarea rows={2} value={String(form.signature ?? '')} onChange={(event) => update('signature', event.target.value)} maxLength={600} /></label></div>
         <label>Never promise<textarea rows={2} value={String(form.neverPromise ?? '')} onChange={(event) => update('neverPromise', event.target.value)} maxLength={500} placeholder="For example, prices or delivery dates" /></label>
+        <IdeaChips ideas={neverPromiseIdeas} label="Common promises to avoid" onPick={(idea) => update('neverPromise', addListPhrase(String(form.neverPromise ?? ''), idea))} />
         <label>Products <span className="optional-label">one per line: name — short description</span><textarea rows={4} value={String(form.productsText ?? '')} onChange={(event) => update('productsText', event.target.value)} maxLength={2000} placeholder="Flexible cartons — Made for short production runs" /></label>
       </>}
       <div className="form-footer"><p>If an AI key is set up, card photos may be sent for reading, and saved notes or workspace details may be sent to prepare email and next-step suggestions.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : saved ? 'Saved' : 'Save changes'}</button></div>

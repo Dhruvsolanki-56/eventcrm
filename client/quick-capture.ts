@@ -63,3 +63,23 @@ export function applyIdea(current: string, idea: string, ideas: string[]) {
 export function fieldsNeedingLook<K extends string>(keys: readonly K[], values: Record<K, string>, uncertain: readonly string[]): K[] {
   return keys.filter((key) => uncertain.includes(key) || !values[key]?.trim());
 }
+
+/** Phrases people commonly use for "our role" and "never promise" in the business profile. */
+export const roleIdeas = ['We are their supplier', 'We are their service partner', 'We are a distributor', 'We make custom products'];
+export const neverPromiseIdeas = ['Prices', 'Delivery dates', 'Discounts', 'Exclusivity', 'Samples'];
+
+/** Adds a word to a comma-separated list without repeating it. */
+export function addListPhrase(current: string, phrase: string, maxLength = 500) {
+  const items = current.split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
+  if (items.some((item) => item.toLowerCase() === phrase.toLowerCase())) return current;
+  const next = [...items, phrase].join(', ');
+  return next.length > maxLength ? current : next;
+}
+
+/** Reads a small remembered choice from this device. Returns the fallback when storage is unavailable. */
+export function rememberedNumber(key: string, allowed: readonly number[], fallback: number) {
+  try { const value = Number(window.localStorage.getItem(key)); return allowed.includes(value) ? value : fallback; } catch { return fallback; }
+}
+export function remember(key: string, value: string | number) {
+  try { window.localStorage.setItem(key, String(value)); } catch { /* A remembered choice is only a convenience. */ }
+}

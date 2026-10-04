@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mic, Square } from 'lucide-react';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
-import { hasSentence, outcomeChips, productChips, toggleSentence } from './quick-capture.js';
+import { hasSentence, outcomeChips, productChips, remember, toggleSentence } from './quick-capture.js';
 import './quick-capture.css';
 
 /** One-tap choices that write plain sentences into the note. The person can still type anything. */
@@ -29,7 +29,7 @@ export function DictateButton({ onText, disabled = false }: { onText: (text: str
   const [seconds, setSeconds] = useState(0);
   const [progress, setProgress] = useState('');
   const [message, setMessage] = useState('');
-  const [language, setLanguage] = useState<VoiceLanguage>('english');
+  const [language, setLanguage] = useState<VoiceLanguage>(() => { try { const saved = window.localStorage.getItem('gather-dictation-language'); return saved === 'hindi' || saved === 'gujarati' ? saved : 'english'; } catch { return 'english'; } });
   const supported = typeof window !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== 'undefined';
 
   useEffect(() => () => { streamRef.current?.getTracks().forEach((track) => track.stop()); }, []);
@@ -78,9 +78,14 @@ export function DictateButton({ onText, disabled = false }: { onText: (text: str
       {recording
         ? <button type="button" className="button secondary dictate-stop" onClick={stop}><Square size={14} aria-hidden="true" /> Stop and write it down · {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</button>
         : <button type="button" className="button secondary dictate-start" disabled={disabled || working} onClick={() => void start()}><Mic size={15} aria-hidden="true" /> {working ? 'Writing it down…' : 'Speak instead of typing'}</button>}
-      {!recording && !working && <label className="dictate-language"><span className="sr-only">Language you will speak</span><select value={language} onChange={(event) => setLanguage(event.target.value as VoiceLanguage)}>{languages.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
+      {!recording && !working && <label className="dictate-language"><span className="sr-only">Language you will speak</span><select value={language} onChange={(event) => { const next = event.target.value as VoiceLanguage; setLanguage(next); remember('gather-dictation-language', next); }}>{languages.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
     </div>
     {recording && <span className="dictate-live" aria-hidden="true"><i /><i /><i /><i /><i /></span>}
     {(working || message) && <p className="dictate-note" role="status">{working ? progress : message}</p>}
   </div>;
+}
+
+/** Tap-to-fill suggestions under a text field. They only fill the field; the person can still edit it. */
+export function IdeaChips({ ideas, label, onPick }: { ideas: string[]; label: string; onPick: (idea: string) => void }) {
+  return <div className="when-chips idea-chips" role="group" aria-label={label}>{ideas.map((idea) => <button type="button" key={idea} className="quick-chip" onClick={() => onPick(idea)}>{idea}</button>)}</div>;
 }

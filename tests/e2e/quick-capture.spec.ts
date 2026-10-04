@@ -50,3 +50,23 @@ test('card review shows which details were found and which need a look', async (
   await expect(glance).toContainText(/details were found|Everything was found/);
   await expect(page.locator('.review-form label.field-found, .review-form label.field-look').first()).toBeVisible();
 });
+
+test('settings chips fill the profile and the follow-up date is remembered', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await page.goto('/settings');
+  await expect(page.locator('.settings-form')).toBeVisible();
+  await page.getByRole('button', { name: 'We are their supplier', exact: true }).click();
+  await expect(page.getByLabel('Our role in client conversations')).toHaveValue('We are their supplier');
+  await page.getByRole('button', { name: 'Prices', exact: true }).click();
+  await page.getByRole('button', { name: 'Delivery dates', exact: true }).click();
+  await page.getByRole('button', { name: 'Prices', exact: true }).click();
+  await expect(page.getByLabel('Never promise')).toHaveValue(/Prices, Delivery dates$/);
+
+  await page.goto('/people/demo-ns-contact-1');
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
+  await page.getByRole('button', { name: 'In 3 days', exact: true }).click();
+  await page.reload();
+  await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'In 3 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});

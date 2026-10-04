@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, Check, Mail, ScanLine, SkipForward } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { request } from './api.js';
+import { IdeaChips } from './quick-capture-ui.js';
+import { roleIdeas } from './quick-capture.js';
 import { useWorkspace } from './workspace-context.js';
 import './onboarding.css';
 
@@ -160,12 +162,13 @@ export default function OnboardingPage() {
               <label>Your role<input value={knowledge.role ?? ''} onChange={(event) => setKnowledge({ ...knowledge, role: event.target.value })} maxLength={100} placeholder="For example, product designer" /></label>
               <label>Your company<input value={knowledge.company ?? ''} onChange={(event) => setKnowledge({ ...knowledge, company: event.target.value })} maxLength={120} placeholder="Company name" /></label>
               <label>What are you looking for?<input value={knowledge.lookingFor ?? ''} onChange={(event) => setKnowledge({ ...knowledge, lookingFor: event.target.value })} maxLength={200} placeholder="One short line" /></label>
-              <label>Email signature<textarea rows={2} value={knowledge.signature ?? ''} onChange={(event) => setKnowledge({ ...knowledge, signature: event.target.value })} maxLength={600} /></label>
+              <label>Email signature<textarea rows={2} value={knowledge.signature ?? ''} onChange={(event) => setKnowledge({ ...knowledge, signature: event.target.value })} maxLength={600} placeholder={`Leave blank to sign with ${session.user.name}`} /></label>
             </> : <>
               <p>Set this up once. Gather uses these checked details to shape editable email drafts.</p>
               <details className="setup-assist"><summary>Use website or brochure copy to suggest details</summary><p className="subtle">Paste public business copy. This text is sent to the configured AI provider for suggestions and is not saved. Check its output before saving.</p><label>Business copy<textarea rows={4} maxLength={8000} value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="Paste your About page or brochure text" /></label><button type="button" className="button secondary" disabled={suggestingProfile || sourceText.trim().length < 30} onClick={() => void suggestProfile()}>{suggestingProfile ? 'Suggesting…' : 'Suggest my business details'}</button></details>
               <label>What does your team sell?<textarea rows={4} value={knowledge.whatYouSell ?? ''} onChange={(event) => setKnowledge({ ...knowledge, whatYouSell: event.target.value })} maxLength={500} placeholder="Products, services, or the kind of work you do" /></label>
               <label>Our role in client conversations<input value={knowledge.ourRole ?? ''} onChange={(event) => setKnowledge({ ...knowledge, ourRole: event.target.value })} maxLength={240} placeholder="For example, we are their development partner" /></label>
+              <IdeaChips ideas={roleIdeas} label="Common roles" onPick={(idea) => setKnowledge({ ...knowledge, ourRole: idea })} />
               <label>Products or services <span className="optional-label">optional, one per line</span><textarea rows={3} value={knowledge.productsText ?? ''} onChange={(event) => setKnowledge({ ...knowledge, productsText: event.target.value })} maxLength={2000} placeholder="Product name — short description" /></label>
             </>}
             <div className="onboarding-actions"><button className="button primary" type="button" disabled={busy} onClick={() => void saveKnowledge()}>{busy ? 'Saving…' : 'Save and continue'} <ArrowRight size={16} /></button><button className="text-button" type="button" disabled={busy} onClick={() => void skipStep('knowledge')}><SkipForward size={15} /> Skip for now</button></div>

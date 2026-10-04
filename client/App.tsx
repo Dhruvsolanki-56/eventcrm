@@ -1,6 +1,6 @@
 import { Fragment, forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, Sparkles, Thermometer, Trash2, UserRound, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, Sparkles, Thermometer, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
@@ -8,7 +8,8 @@ import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-o
 import { askConfirm } from './confirm.js';
 import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
 import { DictateButton, NoteChips } from './quick-capture-ui.js';
-import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas } from './quick-capture.js';
+import { isOfflineError, listQueuedPhotos, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
+import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas, remember, rememberedNumber } from './quick-capture.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
 
@@ -993,8 +994,8 @@ function TaskPlanner({ contactId, kind, onKindChange, onSaved }: { contactId: st
     void request<{ event: { timeZone: string } | null }>('/api/workspace', {}, { workspaceId: session.workspace.id }).then((result) => {
       const zone = result.event?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       setTimeZone(zone);
-      const tomorrow = new Date(Date.now() + 86400000);
-      const localDay = formatAtTimeZone(tomorrow, zone).slice(0, 10);
+      const days = rememberedNumber('gather-followup-days', followUpChips.map((chip) => chip.days), 1);
+      const localDay = dateInTimeZoneDays(zone, days);
       setDueAt(`${localDay}T10:00`);
     }).catch((issue) => setError((issue as Error).message));
     void request<{ followUpSuggestions: boolean }>('/api/capabilities').then((result) => setAiSuggestionsAvailable(result.followUpSuggestions)).catch(() => setAiSuggestionsAvailable(false));
@@ -1033,7 +1034,7 @@ function TaskPlanner({ contactId, kind, onKindChange, onSaved }: { contactId: st
     <p className="eyebrow">NEXT STEP</p><h2>Keep the conversation moving.</h2>
     <label>What would you like to add?<select value={kind} onChange={(event) => { onKindChange(event.target.value as typeof kind); setError(''); setOverlap(false); }}><option value="follow_up">Follow-up</option><option value="meeting">Meeting</option></select></label>
     <label>{kind === 'meeting' ? 'Meeting time' : 'Follow-up time'}<input aria-label={kind === 'meeting' ? 'Meeting time' : 'Follow-up time'} type="datetime-local" required value={dueAt} onChange={(event) => setDueAt(event.target.value)} /></label>
-    <div className="when-chips" role="group" aria-label="Quick dates">{followUpChips.map((chip) => { const day = dateInTimeZoneDays(timeZone, chip.days); const on = dueAt.slice(0, 10) === day; return <button type="button" key={chip.label} className={`quick-chip${on ? ' is-on' : ''}`} aria-pressed={on} onClick={() => setDueAt(`${day}T${dueAt.split('T')[1] || '10:00'}`)}>{chip.label}</button>; })}</div>
+    <div className="when-chips" role="group" aria-label="Quick dates">{followUpChips.map((chip) => { const day = dateInTimeZoneDays(timeZone, chip.days); const on = dueAt.slice(0, 10) === day; return <button type="button" key={chip.label} className={`quick-chip${on ? ' is-on' : ''}`} aria-pressed={on} onClick={() => { setDueAt(`${day}T${dueAt.split('T')[1] || '10:00'}`); remember('gather-followup-days', chip.days); }}>{chip.label}</button>; })}</div>
     <small>Time shown in {timeZone}.</small>
     <div className="when-chips" role="group" aria-label="Quick notes">{(kind === 'meeting' ? meetingIdeas : followUpIdeas).map((idea) => <button type="button" key={idea} className="quick-chip" onClick={() => setNote(applyIdea(note, idea, [...followUpIdeas, ...meetingIdeas]))}>{idea}</button>)}</div>
     <label>Note (optional)<textarea rows={2} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} placeholder={kind === 'meeting' ? 'What should you cover?' : 'What should you follow up about?'} /></label>
@@ -1199,6 +1200,8 @@ type ScanView = {
   error: string | null;
   queuedAt?: string;
   clientOrder?: number;
+  /** Saved on this device while offline; uploads when the connection returns. */
+  offline?: boolean;
   file?: File;
   imageUrl?: string | null;
   materialCompanyId?: string | null;
@@ -1304,7 +1307,7 @@ function ScanThumbnail({ item }: { item: ScanView }) {
     setLocalUrl(next);
     return () => URL.revokeObjectURL(next);
   }, [item.file]);
-  return <div className={`tray-thumb${item.status === 'uploading' || item.status === 'queued' || item.status === 'reading' ? ' is-reading' : ''}`}>{(item.imageUrl || localUrl) && <img src={item.imageUrl || localUrl} alt={item.materialCompanyId ? 'Company brochure photo' : 'Card photo'} />}</div>;
+  return <div className={`tray-thumb${!item.offline && (item.status === 'uploading' || item.status === 'queued' || item.status === 'reading') ? ' is-reading' : ''}`}>{(item.imageUrl || localUrl) && <img src={item.imageUrl || localUrl} alt={item.materialCompanyId ? 'Company brochure photo' : 'Card photo'} />}</div>;
 }
 
 function ScanPage() {
@@ -1350,8 +1353,8 @@ function ScanPage() {
       .catch(() => { if (active) { setCaptureEvents([]); setCaptureEventId(''); } });
     return () => { active = false; };
   }, [session.workspace.id]);
-  useEffect(() => { void reloadScans().catch((error) => setTrayError((error as Error).message)); }, [reloadScans]);
-  const pending = scans.some((item) => item.status === 'uploading' || item.status === 'queued' || item.status === 'reading');
+  useEffect(() => { void reloadScans().catch((error) => { if (!isOfflineError(error)) setTrayError((error as Error).message); }); }, [reloadScans]);
+  const pending = scans.some((item) => !item.offline && (item.status === 'uploading' || item.status === 'queued' || item.status === 'reading'));
   useEffect(() => {
     if (!pending) return;
     const timer = window.setInterval(() => void reloadScans().catch(() => undefined), 900);
@@ -1385,7 +1388,8 @@ function ScanPage() {
     } catch (error) { setTrayError((error as Error).message); }
   }, [captureEventId, csrfToken, navigate, notify, session.workspace.id]);
 
-  const uploadFile = useCallback(async (file: File, source: 'camera' | 'gallery', localScan?: ScanView, openReview = false) => {
+  const uploadFile = useCallback(async (file: File, source: 'camera' | 'gallery', localScan?: ScanView, openReview = false, eventOverride?: string | null): Promise<'done' | 'queued'> => {
+    const uploadEventId = eventOverride !== undefined ? eventOverride : captureEventId;
     const clientScanId = localScan?.clientScanId ?? crypto.randomUUID();
     const localId = localScan?.id ?? `local-${clientScanId}`;
     let uploadedId = localScan?.id && !localScan.id.startsWith('local-') ? localScan.id : '';
@@ -1397,7 +1401,7 @@ function ScanPage() {
         .then((data) => { const available = data.aiCardProvider === 'gemini'; setGeminiCardsAvailable(available); return available; })
         .catch(() => false);
       const qrPromise = readQrFromImage(photo);
-      const uploadHeaders = { 'Content-Type': photo.type, 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': source, 'X-Client-Order': String(localScan?.clientOrder ?? Date.now() * 10), ...(captureEventId !== null ? { 'X-Event-Id': captureEventId || 'none' } : {}) };
+      const uploadHeaders = { 'Content-Type': photo.type, 'X-Client-Scan-Id': clientScanId, 'X-Scan-Source': source, 'X-Client-Order': String(localScan?.clientOrder ?? Date.now() * 10), ...(uploadEventId !== null ? { 'X-Event-Id': uploadEventId || 'none' } : {}) };
       type UploadResult = { scan: Record<string, unknown>; duplicate: boolean; duplicateImage?: boolean; possibleDuplicate?: boolean };
       let result = await request<UploadResult>('/api/scans', {
         method: 'POST',
@@ -1409,23 +1413,24 @@ function ScanPage() {
         const same = await askConfirm({ title: 'This card may already be saved', body: 'It looks like a card already saved for this person. No new photo has been stored yet.', confirmLabel: 'Open their conversations', cancelLabel: 'Keep as a different photo' });
         if (same && candidate.contactId) {
           setScans((items) => items.filter((item) => item.id !== localId));
-          navigate(`/people/${candidate.contactId}?newConversation=1&event=${encodeURIComponent(captureEventId ?? '')}`);
-          return;
+          navigate(`/people/${candidate.contactId}?newConversation=1&event=${encodeURIComponent(uploadEventId ?? '')}`);
+          return 'done';
         }
         result = await request<UploadResult>('/api/scans', { method: 'POST', headers: { ...uploadHeaders, 'X-Allow-Similar-Scan': 'true' }, body: photo }, { csrfToken, workspaceId: session.workspace.id });
       }
       const uploaded = scanFromApi(result.scan);
       uploadedId = uploaded.id;
+      void removeQueuedPhoto(clientScanId);
       if (result.duplicateImage) {
         setScans((items) => items.filter((item) => item.id !== localId));
         if (uploaded.contactId) {
           notify('This card is already saved. Add the new conversation to the existing person.');
-          navigate(`/people/${uploaded.contactId}?newConversation=1&event=${encodeURIComponent(captureEventId ?? '')}`);
+          navigate(`/people/${uploaded.contactId}?newConversation=1&event=${encodeURIComponent(uploadEventId ?? '')}`);
         } else {
           notify('This photo is already waiting for review. Opening the existing copy.');
           navigate(`/review/${uploaded.id}?dialog=1`);
         }
-        return;
+        return 'done';
       }
       setScans((items) => items.map((item) => item.id === localId ? { ...uploaded, file } : item));
       if (openReview && !result.duplicate) navigate(`/review/${uploaded.id}?dialog=1`, { state: { ocrFile: photo, useGeminiCards: geminiReady } });
@@ -1465,11 +1470,54 @@ function ScanPage() {
         }
       }
     } catch (error) {
+      if (!uploadedId && isOfflineError(error)) {
+        const clientOrder = localScan?.clientOrder ?? Date.now() * 10;
+        const kept = await saveQueuedPhoto({ clientScanId, workspaceId: session.workspace.id, file, fileName: file.name || 'photo.jpg', fileType: file.type, source, eventId: uploadEventId, clientOrder, createdAt: Date.now() });
+        if (kept) {
+          setScans((items) => items.map((item) => item.id === localId ? { ...item, status: 'uploading', offline: true, error: null, clientOrder } : item));
+          setTrayError('');
+          if (openReview) notify('Saved on this phone. It uploads when you are back online.');
+          return 'queued';
+        }
+      }
       const message = (error as Error).message;
       if (!uploadedId) setScans((items) => items.map((item) => item.id === localId ? { ...item, status: 'failed', error: `Upload failed. ${message}` } : item));
       setTrayError(message);
     }
+    return 'done';
   }, [captureEventId, csrfToken, geminiCardsAvailable, navigate, notify, session.workspace.id]);
+
+  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
+  const scansNow = useRef<ScanView[]>([]);
+  scansNow.current = scans;
+  const flushing = useRef(false);
+  const flushQueue = useCallback(async () => {
+    if (flushing.current) return;
+    flushing.current = true;
+    try {
+      for (const queued of await listQueuedPhotos(session.workspace.id)) {
+        const file = new File([queued.file], queued.fileName, { type: queued.fileType });
+        const existing = scansNow.current.find((item) => item.clientScanId === queued.clientScanId);
+        const local: ScanView = existing ?? { id: `local-${queued.clientScanId}`, clientScanId: queued.clientScanId, clientOrder: queued.clientOrder, source: queued.source, status: 'uploading', extracted: null, uncertain: [], error: null, file, offline: true };
+        if (existing) setScans((items) => items.map((item) => item.clientScanId === queued.clientScanId ? { ...item, offline: false } : item));
+        else setScans((items) => [{ ...local, offline: false }, ...items]);
+        if (await uploadFile(file, queued.source, local, false, queued.eventId) === 'queued') break;
+      }
+    } finally { flushing.current = false; }
+  }, [session.workspace.id, uploadFile]);
+  useEffect(() => {
+    const goOnline = () => { setOnline(true); void flushQueue(); };
+    const goOffline = () => setOnline(false);
+    window.addEventListener('online', goOnline); window.addEventListener('offline', goOffline);
+    if (navigator.onLine !== false) void flushQueue();
+    return () => { window.removeEventListener('online', goOnline); window.removeEventListener('offline', goOffline); };
+  }, [flushQueue]);
+  const waitingOffline = scans.filter((item) => item.offline).length;
+  useEffect(() => {
+    if (!waitingOffline) return;
+    const timer = window.setInterval(() => { if (navigator.onLine !== false) void flushQueue(); }, 15000);
+    return () => window.clearInterval(timer);
+  }, [waitingOffline, flushQueue]);
 
   async function addFiles(files: File[], source: 'camera' | 'gallery') {
     const images = files.filter((file) => file.type.startsWith('image/'));
@@ -1498,7 +1546,7 @@ function ScanPage() {
     setSearchParams(next, { replace: true });
   }
   async function discard(item: ScanView) {
-    if (item.id.startsWith('local-')) { setScans((items) => items.filter((candidate) => candidate.id !== item.id)); return; }
+    if (item.id.startsWith('local-')) { void removeQueuedPhoto(item.clientScanId); setScans((items) => items.filter((candidate) => candidate.id !== item.id)); return; }
     setRemovingId(item.id);
     try {
       await request(`/api/scans/${item.id}/discard`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
@@ -1509,6 +1557,7 @@ function ScanPage() {
   const readyCount = scans.filter((item) => item.status === 'ready' || item.status === 'failed').length;
   return <section className="scan-view">
     <div className="page-heading-row"><div><p className="eyebrow">CAPTURE</p><h1>Keep the next conversation.</h1><p className="page-lede">Take a photo, check the details, and move straight to the next person.</p></div></div>
+    {(!online || waitingOffline > 0) && <div className={`offline-banner${online ? ' is-back' : ''}`} role="status"><WifiOff size={18} aria-hidden="true" /><div><strong>{online ? `${waitingOffline} photo${waitingOffline === 1 ? '' : 's'} saved on this phone` : 'You are offline'}</strong><span>{online ? 'They upload one by one now. Nothing is lost if you close this page.' : 'Keep scanning. Photos are saved on this phone and upload on their own when you are back online.'}</span></div>{online && waitingOffline > 0 && <button type="button" className="button secondary" onClick={() => void flushQueue()}>Upload now</button>}</div>}
     <div className="capture-event-picker"><div className="capture-event-copy"><label htmlFor="capture-event">Event for this capture</label><span>Keep the conversation with the right event.</span></div><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select></div>
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
@@ -1525,10 +1574,10 @@ function ScanPage() {
         {scans.length === 0 ? <div className="tray-empty"><span className="empty-icon"><ScanLine size={18} /></span><p>New photos appear here while the camera stays ready.</p></div> : <div className="tray-list">{scans.map((item, index) => {
           const title = item.materialCompanyId ? 'Company brochure' : typeof item.extracted?.name === 'string' && item.extracted.name ? item.extracted.name : item.source === 'qr' ? 'QR code' : `Photo ${scans.length - index}`;
           const reviewable = item.status === 'ready' || item.status === 'failed';
-          const working = item.status === 'uploading' || item.status === 'queued' || item.status === 'reading';
-          return <div className={`tray-item${working ? ' is-working' : ''}`} key={item.id} data-client-scan-id={item.clientScanId}>
+          const working = !item.offline && (item.status === 'uploading' || item.status === 'queued' || item.status === 'reading');
+          return <div className={`tray-item${item.offline ? ' is-offline' : ''}${working ? ' is-working' : ''}`} key={item.id} data-client-scan-id={item.clientScanId}>
             <ScanThumbnail item={item} />
-            <div className="tray-item-copy"><strong>{title}</strong><span className={working ? 'is-working-text' : undefined}><StatusIcon status={item.status} /> {displayStatus[item.status]}</span>{item.error && <small>{item.error}</small>}</div>
+            <div className="tray-item-copy"><strong>{title}</strong><span className={working ? 'is-working-text' : undefined}>{item.offline ? <><WifiOff size={14} aria-hidden="true" /> Saved on this phone · uploads when online</> : <><StatusIcon status={item.status} /> {displayStatus[item.status]}</>}</span>{item.error && <small>{item.error}</small>}</div>
             {reviewable && <button className="tray-review" onClick={() => navigate(`/review/${item.id}${item.status === 'failed' ? '?dialog=1' : ''}`)}>Review</button>}
             {item.status === 'saved' && <span className="saved-check" aria-label="Saved"><Check size={17} /></span>}
             {item.status !== 'saved' && <button aria-label={`Discard ${title}`} className="icon-button" disabled={removingId === item.id} onClick={() => void discard(item)}><Trash2 size={16} /></button>}

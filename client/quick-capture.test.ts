@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendText, applyIdea, fieldsNeedingLook, productChips, toggleSentence } from './quick-capture.js';
+import { addListPhrase, appendText, applyIdea, fieldsNeedingLook, productChips, remember, rememberedNumber, toggleSentence } from './quick-capture.js';
 
 describe('tap-to-capture note helpers', () => {
   it('adds a tapped sentence after existing text and removes it on a second tap', () => {
@@ -40,5 +40,17 @@ describe('tap-to-capture note helpers', () => {
     const keys = ['name', 'title', 'email'] as const;
     expect(fieldsNeedingLook(keys, { name: 'Ava', title: '', email: 'a@b.co' }, ['email'])).toEqual(['title', 'email']);
     expect(fieldsNeedingLook(keys, { name: 'Ava', title: 'CEO', email: 'a@b.co' }, [])).toEqual([]);
+  });
+
+  it('adds list words once and respects the length limit', () => {
+    expect(addListPhrase('', 'Prices')).toBe('Prices');
+    expect(addListPhrase('Prices', 'Delivery dates')).toBe('Prices, Delivery dates');
+    expect(addListPhrase('Prices, Delivery dates', 'prices')).toBe('Prices, Delivery dates');
+    expect(addListPhrase('x'.repeat(498), 'Prices')).toBe('x'.repeat(498));
+  });
+
+  it('falls back quietly when this device cannot remember choices', () => {
+    expect(rememberedNumber('gather-followup-days', [1, 3, 7, 14], 1)).toBe(1);
+    expect(() => remember('gather-followup-days', 7)).not.toThrow();
   });
 });
