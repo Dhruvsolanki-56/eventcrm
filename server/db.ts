@@ -1684,6 +1684,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
     recipient: contact.email, subject, body, sourcesUsed, encounterId: emailEncounterId,
     aiContext: {
       firstName: greeting, companyName: contact.company_name, eventName: emailEventName,
+      senderWebsite: typeof settings.website === 'string' ? settings.website.trim().slice(0, 200) : '',
       contactTitle: (contact.title || '').slice(0, 120), companyWebsite: (contact.company_website || '').slice(0, 200), companyAbout: (contact.company_about || '').slice(0, 400),
       senderOrganization, senderRole, senderOfferings: whatYouSell, senderGoal: lookingFor,
       productsOfInterest: interestedProductNames, companyProducts: productNames,

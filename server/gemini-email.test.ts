@@ -126,4 +126,24 @@ describe('Gemini email drafts', () => {
     expect(prompt).toContain('A request from the contact is not a promise from us');
     expect(prompt).toContain('never write that anything is attached');
   });
+
+  it('rejects a web link that is not in the profile, signature or notes', async () => {
+    enable(); vi.stubGlobal('fetch', reply('Hi Olivia,\n\nYou can see our work at https://www.techsentinals.com.\n\nMaya'));
+    await expect(draftEmailWithGemini(context)).rejects.toThrow('web link');
+    vi.stubGlobal('fetch', reply('Hi Olivia,\n\nSee techsentinals.com/portfolio for samples.\n\nMaya'));
+    await expect(draftEmailWithGemini(context)).rejects.toThrow('web link');
+  });
+
+  it('allows the sender\'s real website, and an address the contact\'s own notes mention', async () => {
+    enable(); vi.stubGlobal('fetch', reply('Hi Olivia,\n\nOur work is at https://www.techsentinals.com.\n\nMaya'));
+    expect((await draftEmailWithGemini({ ...context, senderWebsite: 'https://techsentinals.com' }))?.body).toContain('techsentinals.com');
+    vi.stubGlobal('fetch', reply('Hi Olivia,\n\nI had a look at acme-packaging.com, thank you.\n\nMaya'));
+    const noted = { ...context, recentConversations: [{ ...context.recentConversations[0], rawNote: 'Her site is acme-packaging.com' }] };
+    expect((await draftEmailWithGemini(noted))?.body).toContain('acme-packaging.com');
+  });
+
+  it('does not mistake ordinary text for a link', async () => {
+    enable(); vi.stubGlobal('fetch', reply('Hi Olivia,\n\nThanks, e.g. the Q3.5 sizes. It was nice to meet.Best wishes.\n\nMaya'));
+    expect((await draftEmailWithGemini(context))?.subject).toBe('Hello');
+  });
 });

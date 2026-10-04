@@ -123,7 +123,7 @@ import { draftEmail, isAIProviderEnabled, isCardAIEnabled, isEmailDraftAIEnabled
 import { isGeminiCardEnabled } from './gemini-card.js';
 import { suggestConversationContext, summarizeCheckedTranscript } from './gemini-conversation.js';
 import { suggestBusinessProfile } from './gemini-profile.js';
-import { isCompanyAboutEnabled, suggestCompanyAbout } from './company-about.js';
+import { isCompanyAboutEnabled, suggestCompanyAbout, suggestProfileFromWebsite } from './company-about.js';
 import { fetchPublicPageText } from './safe-web.js';
 import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
@@ -1282,6 +1282,18 @@ app.post('/api/setup/profile-suggestion', aiSuggestionLimiter, requireContext, a
   if (!parsed.success) return res.status(400).json({ code: 'invalid_profile_source', message: 'Paste at least a short paragraph from your website or brochure.' });
   try { res.json(await suggestBusinessProfile(parsed.data.sourceText)); }
   catch (error) { res.status(503).json({ code: 'profile_suggestion_unavailable', message: error instanceof Error ? error.message : 'AI setup help is unavailable.' }); }
+});
+
+app.post('/api/setup/profile-from-website', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { workspace } = res.locals.context as RequestContext;
+  if (workspace.kind === 'company' && workspace.role !== 'admin') return res.status(403).json({ code: 'settings_permission', message: 'A company admin manages shared email context.' });
+  const parsed = z.object({ website: z.string().trim().min(3).max(200) }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ code: 'invalid_website', message: 'Enter your company website, for example yourcompany.com.' });
+  if (!isCompanyAboutEnabled()) return res.status(503).json({ code: 'about_ai_off', message: 'AI is not set up here. You can type a short description instead.' });
+  try {
+    const page = await fetchPublicPageText(parsed.data.website);
+    res.json({ ...(await suggestProfileFromWebsite(page.text)), website: page.finalUrl.replace(/\/$/, '') });
+  } catch (error) { res.status(422).json({ code: 'profile_from_website_unavailable', message: error instanceof Error ? error.message : 'The website could not be read.' }); }
 });
 
 app.get('/api/preferences/capture', requireContext, async (_req, res) => {

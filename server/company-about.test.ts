@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { suggestCompanyAbout } from './company-about.js';
+import { suggestCompanyAbout, suggestProfileFromWebsite } from './company-about.js';
 
 const groq = (about: string) => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ about }) } }] }), { status: 200 });
 const gemini = (about: string) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ about }) }] } }] }), { status: 200 });
@@ -30,5 +30,17 @@ describe('company description from website text', () => {
   it('says so when AI is off', async () => {
     vi.stubEnv('AI_MODE', 'off');
     await expect(suggestCompanyAbout('Acme', 'text')).rejects.toThrow('not set up');
+  });
+});
+
+describe('business profile from the website', () => {
+  it('returns the three fields and refuses a reply containing a link', async () => {
+    enable();
+    const profile = { whatYouSell: 'Custom software for small businesses.', ourRole: 'Software development partner', productsText: 'CRM systems — for sales teams\nWebsites' };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(profile) } }] }), { status: 200 })));
+    expect(await suggestProfileFromWebsite('We build CRMs and websites.')).toEqual(profile);
+    vi.stubEnv('GEMINI_API_KEY', '');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...profile, whatYouSell: 'See https://x.example for prices' }) } }] }), { status: 200 })));
+    await expect(suggestProfileFromWebsite('text')).rejects.toThrow('could not describe');
   });
 });
