@@ -39,8 +39,19 @@ describe('Groq email drafts', () => {
     expect(url).toBe('https://api.groq.com/openai/v1/chat/completions');
     expect((options.headers as Record<string, string>).Authorization).toBe('Bearer groq-test-key');
     const payload = JSON.parse(options.body as string) as { model: string; messages: Array<{ role: string; content: string }> };
-    expect(payload.model).toBe('llama-3.3-70b-versatile');
+    expect(payload.model).toBe('openai/gpt-oss-120b');
     expect(payload.messages[1].content).toContain('Olivia asked for sample sizes');
+  });
+
+  it('replaces non-breaking hyphens and spaces with plain ones', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => groqReply('Hi Olivia,
+
+A follow‑up note.
+
+Maya')));
+    const draft = await draftEmailWithGroq(context);
+    expect(draft?.body).toContain('A follow-up note.');
   });
 
   it('applies the same safety checks as the Gemini writer', async () => {

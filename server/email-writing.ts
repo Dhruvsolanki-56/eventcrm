@@ -63,3 +63,6 @@ export const EMAIL_SINGLE_TRY_MS = [11_000];
 
 /** A failure worth trying again (timeout, server error, cut-off answer). */
 export class RetryableEmailError extends Error {}
+
+/** Some models use non-breaking hyphens and spaces that look odd and break searching; use plain characters. */
+export const plainTypography = (text: string) => text.replace(/[‐‑]/g, '-').replace(/[   ]/g, ' ');

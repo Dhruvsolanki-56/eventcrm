@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { EMAIL_ATTEMPT_TIMEOUTS_MS, RetryableEmailError, emailWritingInstruction, rejectInternalNoteLanguage, tidyEmailBody, type EmailDraftContext } from './email-writing.js';
+import { EMAIL_ATTEMPT_TIMEOUTS_MS, RetryableEmailError, emailWritingInstruction, plainTypography, rejectInternalNoteLanguage, tidyEmailBody, type EmailDraftContext } from './email-writing.js';
 
 const GroqEmailSchema = z.object({
   subject: z.string().trim().min(1).max(200),
@@ -18,7 +18,8 @@ async function requestDraft(model: string, key: string, context: EmailDraftConte
     body: JSON.stringify({
       model,
       temperature: alternate ? 0.5 : 0.25,
-      max_tokens: 1024,
+      max_tokens: 2048,
+      ...(model.includes('gpt-oss') ? { reasoning_effort: 'low' } : {}),
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: emailWritingInstruction(alternate) },
@@ -47,7 +48,7 @@ async function requestDraft(model: string, key: string, context: EmailDraftConte
 export async function draftEmailWithGroq(context: EmailDraftContext, alternate = false, timeouts: number[] = EMAIL_ATTEMPT_TIMEOUTS_MS) {
   const key = process.env.GROQ_API_KEY?.trim();
   if (!isGroqEmailEnabled() || !key) return null;
-  const model = process.env.GROQ_EMAIL_MODEL?.trim() || 'llama-3.3-70b-versatile';
+  const model = process.env.GROQ_EMAIL_MODEL?.trim() || 'openai/gpt-oss-120b';
   if (!/^[a-zA-Z0-9._/-]+$/.test(model)) throw new Error('The email AI model name is invalid.');
   let draft: z.infer<typeof GroqEmailSchema> | undefined;
   for (const [attempt, timeoutMs] of timeouts.entries()) {
@@ -55,7 +56,7 @@ export async function draftEmailWithGroq(context: EmailDraftContext, alternate =
     catch (error) { if (!(error instanceof RetryableEmailError) || attempt === timeouts.length - 1) throw error; }
   }
   if (!draft) throw new Error('AI email writing is unavailable.');
-  const tidy = { ...draft, body: tidyEmailBody(draft.body, context.signature) };
+  const tidy = { subject: plainTypography(draft.subject), body: tidyEmailBody(plainTypography(draft.body), context.signature) };
   rejectInternalNoteLanguage(tidy.body, context);
   return tidy;
 }

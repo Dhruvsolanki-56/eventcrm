@@ -30,7 +30,7 @@ services:
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_EMAIL_MODEL
-        value: llama-3.3-70b-versatile
+        value: openai/gpt-oss-120b
       # Browser transcription uses onnxruntime-web. The server does not need
       # the extra Linux CUDA binaries downloaded by onnxruntime-node at install.
       - key: ONNXRUNTIME_NODE_INSTALL
