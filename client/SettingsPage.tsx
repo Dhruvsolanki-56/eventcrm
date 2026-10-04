@@ -49,6 +49,7 @@ export default function SettingsPage() {
         <label>Email signature<textarea rows={3} value={String(form.signature ?? '')} onChange={(event) => update('signature', event.target.value)} maxLength={600} placeholder={`Leave blank to sign with ${session.user.name}`} /></label>
       </> : <>
         <div className="form-section-intro"><Building2 size={19} /><div><strong>Help your drafts sound like your team</strong><p>Keep this short. The AI uses these details and notes for that person only.</p></div></div>
+        <label>Company website <span className="optional-label">used for links in emails, only if you add it</span><input value={String(form.website ?? '')} onChange={(event) => update('website', event.target.value)} maxLength={200} inputMode="url" autoCapitalize="none" placeholder="yourcompany.com" /></label>
         <label>What do you sell?<textarea rows={3} value={String(form.whatYouSell ?? '')} onChange={(event) => update('whatYouSell', event.target.value)} maxLength={500} placeholder="One or two sentences" /></label>
         <label>Our role in client conversations<input value={String(form.ourRole ?? '')} onChange={(event) => update('ourRole', event.target.value)} maxLength={240} placeholder="For example, we are the development partner preparing a proposal" /></label>
         <IdeaChips ideas={roleIdeas} label="Common roles" onPick={(idea) => update('ourRole', idea)} />

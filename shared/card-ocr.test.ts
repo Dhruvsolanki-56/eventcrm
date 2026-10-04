@@ -95,4 +95,19 @@ describe('card text extraction', () => {
       expect(result.company, `synthetic layout ${i}`).toBe(printedCompany);
     }
   });
+
+  it('joins an email split by a space before the @ instead of reading its first half as a website', () => {
+    const result = extractCardFields('Designer\n\nFatima Haddad\nBRIGHTLINE SOFTWARE LLC\nfatima.haddad @brightlinesoftwarellc.example\n+1 (617) 555-3165\nwww. brightlinesoftwarellc.example');
+    expect(result).toMatchObject({ name: 'Fatima Haddad', email: 'fatima.haddad@brightlinesoftwarellc.example', website: 'www.brightlinesoftwarellc.example' });
+  });
+
+  it('fixes an address whose company ending was misread, using the company name on the card', () => {
+    const result = extractCardFields('Lucia Olsen\nSales Manager\nCedar Freight LLC\nlucia.olsen@cedarfreightlle.example\n+1 (206) 555-0142\nwww.cedarfreightlic.example');
+    expect(result).toMatchObject({ company: 'Cedar Freight LLC', email: 'lucia.olsen@cedarfreightllc.example', website: 'www.cedarfreightllc.example' });
+  });
+
+  it('leaves a genuinely different address alone', () => {
+    const result = extractCardFields('Lucia Olsen\nSales Manager\nCedar Freight LLC\nlucia.olsen@cedar-logistics.example\n+1 (206) 555-0142\nwww.cedar-logistics.example');
+    expect(result).toMatchObject({ email: 'lucia.olsen@cedar-logistics.example', website: 'www.cedar-logistics.example' });
+  });
 });

@@ -10,6 +10,7 @@ import { ConfirmHost } from './confirm.js';
 import './styles.css';
 import './workspace-design.css';
 import './calm-workspace.css';
+import { warmOfflineReading } from './offline-warm.js';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -22,5 +23,5 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
 // Keep the app itself on the device so it can open without a signal. Not used in development.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').catch(() => undefined); });
+  window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').then(() => warmOfflineReading()).catch(() => undefined); });
 }

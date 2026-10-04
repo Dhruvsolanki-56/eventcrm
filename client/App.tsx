@@ -9,6 +9,8 @@ import { askConfirm } from './confirm.js';
 import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
 import { DictateButton, NoteChips } from './quick-capture-ui.js';
 import { CompanyAbout } from './company-about.js';
+import { QuickEvent } from './quick-event.js';
+import { WhenVisible } from './when-visible.js';
 import { InstallPrompt } from './install-app.js';
 import { cacheSession, clearCachedSession, readCachedSession } from './offline-session.js';
 import { isOfflineError, listQueuedPhotos, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
@@ -67,11 +69,11 @@ export default function App() {
   useEffect(() => () => { if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current); }, []);
   const refresh = useCallback(async (preferredWorkspaceId?: string) => {
     try {
-      const currentCsrf = csrfToken || await getCsrfToken();
-      setCsrfToken(currentCsrf);
       const targetWorkspaceId = preferredWorkspaceId || workspaceId;
+      // The session answer already carries the security token, so there is no need to wait for a separate token request first.
       const next = await getSession(targetWorkspaceId || undefined);
-      if (!next) { clearCachedSession(); setSession(null); return; }
+      if (!next) { setCsrfToken(csrfToken || await getCsrfToken()); clearCachedSession(); setSession(null); return; }
+      if (!next.csrfToken) setCsrfToken(csrfToken || await getCsrfToken());
       setSession(next);
       setOfflineStart(false);
       cacheSession(next);
@@ -501,8 +503,11 @@ function NotificationsMenu() {
   }, [session.workspace.id]);
   useEffect(() => {
     void load().catch(() => undefined);
-    const timer = window.setInterval(() => void load().catch(() => undefined), 30_000);
-    return () => window.clearInterval(timer);
+    // A tab nobody is looking at does not need to keep asking the server.
+    const timer = window.setInterval(() => { if (!document.hidden) void load().catch(() => undefined); }, 30_000);
+    const onVisible = () => { if (!document.hidden) void load().catch(() => undefined); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [load]);
   async function openReminders() {
     setOpen((value) => !value); setLoading(true);
@@ -554,7 +559,7 @@ function HomePage({ onShowTour }: { onShowTour: () => void }) {
       <article className="metric-card"><span>Follow-ups due</span><strong className="metric-number">{dashboard?.counts.follow_ups_due ?? '—'}</strong><small>Today and overdue</small></article>
       <article className="metric-card"><span>Drafts to review</span><strong className="metric-number">{dashboard?.counts.drafts_ready ?? '—'}</strong><small>Nothing sends on its own</small></article>
     </section>
-    {(isPersonal || ['admin','manager'].includes(session.workspace.role)) && <Suspense fallback={<div className="analytics-loading">Loading activity…</div>}><OverviewActivity /></Suspense>}
+    {(isPersonal || ['admin','manager'].includes(session.workspace.role)) && <WhenVisible className="reserve-activity"><Suspense fallback={<div className="analytics-loading">Loading activity…</div>}><OverviewActivity /></Suspense></WhenVisible>}
     <section className="home-lower-grid">
       <article className="surface-card today-card"><div className="section-head"><div><p className="eyebrow">YOUR EVENT</p><h2>Follow-ups to handle</h2></div><Link to="/scan" className="subtle-link">Add a person</Link></div>{dashboard?.due.length ? <div className="due-list">{dashboard.due.map((task) => <div className="due-item" key={task.id}><span className="due-dot"></span><div><strong>{task.contact_name}</strong><small>{task.title || (task.kind === 'meeting' ? 'Meeting' : 'Follow up')} · {task.company_name}</small></div><time>{new Date(task.due_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: task.time_zone || dashboard.timeZone })}</time></div>)}</div> : <div className="empty-inline"><span className="empty-icon"><Check size={18} /></span><p>{dashboard ? 'No follow-ups due yet. Save a person and choose when to check in.' : 'Loading your follow-ups…'}</p></div>}</article>
       <article className="surface-card setup-card"><div className="section-head"><div><p className="eyebrow">MAKE IT SOUND LIKE YOU</p><h2>{isPersonal ? 'Add a little about yourself' : 'Add what your team sells'}</h2></div></div><p className="card-description">A few useful details help make email drafts feel personal. You can skip this and add them later.</p><Link className="button secondary" to="/setup">Continue first-time setup</Link></article>
@@ -1582,7 +1587,7 @@ function ScanPage() {
   return <section className="scan-view">
     <div className="page-heading-row"><div><p className="eyebrow">CAPTURE</p><h1>Keep the next conversation.</h1><p className="page-lede">Take a photo, check the details, and move straight to the next person.</p></div></div>
     {(!online || waitingOffline > 0) && <div className={`offline-banner${online ? ' is-back' : ''}`} role="status"><WifiOff size={18} aria-hidden="true" /><div><strong>{online ? `${waitingOffline} photo${waitingOffline === 1 ? '' : 's'} saved on this phone` : 'You are offline'}</strong><span>{online ? 'They upload one by one now. Nothing is lost if you close this page.' : 'Keep scanning. Photos are saved on this phone and upload on their own when you are back online.'}</span></div>{online && waitingOffline > 0 && <button type="button" className="button secondary" onClick={() => void flushQueue()}>Upload now</button>}</div>}
-    <div className="capture-event-picker"><div className="capture-event-copy"><label htmlFor="capture-event">Event for this capture</label><span>Keep the conversation with the right event.</span></div><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select></div>
+    <div className="capture-event-picker"><div className="capture-event-copy"><label htmlFor="capture-event">Event for this capture</label><span>Keep the conversation with the right event.</span></div><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select>{session.workspace.kind === 'company' && session.workspace.role === 'admin' && <QuickEvent csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onCreated={(created) => { setCaptureEvents((current) => [created, ...current.map((item) => ({ ...item, is_active: 0 }))]); setCaptureEventId(created.id); }} />}</div>
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
         {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>

@@ -50,6 +50,9 @@ test('the installed app opens offline on the capture screen and refreshes its se
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
     await page.reload();
     await expect.poll(() => page.evaluate(async () => ({ shell: Boolean(await caches.match('/', { cacheName: 'gather-shell-v1' })), assets: (await (await caches.open('gather-assets')).keys()).length > 3, controlled: Boolean(navigator.serviceWorker.controller) }))).toEqual({ shell: true, assets: true, controlled: true });
+    // The card-reading files are saved in the background so scanning works offline from the first day.
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('gather-ocr-warm-v1')), { timeout: 60_000 }).toBe('1');
+    expect(await page.evaluate(async () => ({ lang: Boolean(await caches.match('/ocr/eng.traineddata.gz')), worker: Boolean(await caches.match('/ocr/worker.min.js')), core: Boolean(await caches.match('/ocr/tesseract-core-simd-lstm.wasm.js') || await caches.match('/ocr/tesseract-core-lstm.wasm.js')) }))).toEqual({ lang: true, worker: true, core: true });
     // No API answer is ever stored.
     expect(await page.evaluate(async () => (await (await caches.open('gather-assets')).keys()).some((request) => request.url.includes('/api/')))).toBe(false);
     // The saved session copy holds no security token.

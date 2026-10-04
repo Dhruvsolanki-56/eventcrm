@@ -1,0 +1,9 @@
+.quick-event-open { min-height: 42px; display: inline-flex; align-items: center; gap: 6px; }
+.quick-event { flex: 1 1 100%; display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid #e6ede9; }
+.quick-event label { display: grid; gap: 4px; font-size: 12.5px; font-weight: 600; }
+.quick-event input { width: 100%; min-height: 42px; }
+.quick-event-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.quick-event-chips .chip { min-height: 38px; padding: 6px 14px; border: 1px solid #cfdcd5; border-radius: 999px; background: #fff; color: #35504a; font: inherit; font-size: 13px; cursor: pointer; }
+.quick-event-chips .chip[aria-pressed="true"] { background: #e3f1ea; border-color: #2c6e5d; color: #1f5547; font-weight: 600; }
+.quick-event-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.quick-event .subtle { margin: 0; font-size: 12px; }

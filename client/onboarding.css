@@ -51,3 +51,7 @@
   .onboarding-actions > .button, .onboarding-actions > a.button { justify-content: center; width: 100%; }
   .onboarding-actions .text-button { justify-content: center; }
 }
+
+.website-assist { display: grid; gap: 10px; padding: 14px; border: 1px solid #dbe8e1; border-radius: 12px; background: #f6faf8; }
+.website-assist label { margin: 0; }
+.website-assist .button { justify-self: start; min-height: 40px; }

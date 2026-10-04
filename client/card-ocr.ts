@@ -24,7 +24,41 @@ function isAllCaps(line: string) {
   return line === line.toLocaleUpperCase() && /[A-Z]/.test(line);
 }
 
-export function extractCardFields(text: string): CardReadOutput {
+// Text reading often puts a space around "@" or after "www." and mixes up the ends of company names (llc, ltd, inc).
+function repairContactText(text: string) {
+  return text
+    .replace(/([A-Za-z0-9._%+-])[ \t]+@[ \t]*(?=[A-Za-z0-9])/g, '$1@')
+    .replace(/@[ \t]+(?=[A-Za-z0-9-]+\.)/g, '@')
+    .replace(/\bwww\.[ \t]+(?=[a-z0-9])/gi, 'www.');
+}
+
+function editDistance(a: string, b: string) {
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let diagonal = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const above = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return row[b.length];
+}
+
+// A card usually names the company inside its web address. When the address is a letter or two away from that
+// name, the reading is almost certainly the one that slipped (for example "llc" read as "lic").
+function snapToCompany(host: string, companyKey: string) {
+  const parts = host.split('.');
+  const label = parts[0] ?? '';
+  if (!companyKey || label === companyKey || label.length < 8 || companyKey.length < 8 || Math.abs(label.length - companyKey.length) > 2) return host;
+  // A name that merely continues or stops short of the other is a different address or a cut-off, not a misread.
+  if (companyKey.startsWith(label) || label.startsWith(companyKey)) return host;
+  return editDistance(label, companyKey) <= 2 ? [companyKey, ...parts.slice(1)].join('.') : host;
+}
+
+export function extractCardFields(rawText: string): CardReadOutput {
+  const text = repairContactText(rawText);
   const sourceLines = text.split(/\r?\n/).flatMap((line) => line.split(/\s+\|\s+/));
   const sourceText = sourceLines.join('\n');
   const email = sourceText.match(emailPattern)?.[0] ?? '';
@@ -96,7 +130,17 @@ export function extractCardFields(text: string): CardReadOutput {
     return { ...line, value, score };
   }).filter((line) => line.score > 0).sort((a, b) => b.score - a.score || a.index - b.index);
   const company = companyCandidates[0]?.value ?? '';
-  const fields = { name, title, company, email, phone, website };
+  const companyKey = normalized(company);
+  let fixedEmail = email;
+  let fixedWebsite = website;
+  const websiteHost = website.replace(/^www\./i, '').split('/')[0].toLowerCase();
+  const websitePrefix = /^www\./i.test(website) ? website.slice(0, 4) : '';
+  if (website && companyKey) fixedWebsite = `${websitePrefix}${snapToCompany(websiteHost, companyKey)}${website.slice(websitePrefix.length + websiteHost.length)}`;
+  if (email && companyKey) {
+    const [local, domain = ''] = email.split('@');
+    fixedEmail = `${local}@${snapToCompany(domain.toLowerCase(), companyKey)}`;
+  }
+  const fields = { name, title, company, email: fixedEmail, phone, website: fixedWebsite };
   return { ...fields, products: [], topics: [], uncertain: Object.entries(fields).filter(([, value]) => Boolean(value)).map(([key]) => key) as CardReadOutput['uncertain'] };
 }
 
