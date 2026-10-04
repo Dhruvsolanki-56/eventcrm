@@ -704,6 +704,31 @@ export async function updateCompanyDeal(actorId: string, workspaceId: string, co
   return true;
 }
 
+/** The website to read for a company: its saved website, else a person's website, else a work-email domain. */
+export async function getCompanyAboutTarget(actorId: string, workspaceId: string, companyId: string) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  if (!await (companyAccessible(actorId, workspaceId, companyId))) return undefined;
+  const company = await (db.prepare(`SELECT name,website,about FROM companies WHERE workspace_id=? AND id=? AND archived_at IS NULL`).get(workspaceId, companyId)) as { name: string; website: string | null; about: string } | undefined;
+  if (!company) return undefined;
+  let website = (company.website || '').trim();
+  if (!website) {
+    const people = await (db.prepare(`SELECT website,email FROM contacts WHERE workspace_id=? AND company_id=? AND deleted_at IS NULL AND archived_at IS NULL ORDER BY created_at LIMIT 20`).all(workspaceId, companyId)) as Array<{ website: string | null; email: string }>;
+    website = people.find((person) => (person.website || '').trim())?.website?.trim() || '';
+    if (!website) { const domain = people.map((person) => emailDomain(person.email)).find(Boolean); if (domain) website = domain; }
+  }
+  return { name: company.name, website, about: company.about };
+}
+
+export async function updateCompanyAbout(actorId: string, workspaceId: string, companyId: string, about: string) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  if (!await (companyAccessible(actorId, workspaceId, companyId))) return false;
+  const changed = await (db.prepare(`UPDATE companies SET about=? WHERE workspace_id=? AND id=? AND archived_at IS NULL`).run(about.trim().slice(0, 400), workspaceId, companyId));
+  if (!changed.changes) return false;
+  await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'company_about_updated','company',?,?)`)
+    .run(randomUUID(), workspaceId, actorId, companyId, JSON.stringify({ length: about.trim().length })));
+  return true;
+}
+
 export async function getReportData(actorId: string, workspaceId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const allPeople = await listPeople(actorId, workspaceId);
@@ -1217,7 +1242,7 @@ export async function updateTaskAction(actorId: string, workspaceId: string, tas
 
 export async function getPersonDetail(actorId: string, workspaceId: string, contactId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const person = await (db.prepare(`SELECT c.*,co.name AS company_name,co.website AS company_website,co.deal_value_minor,co.deal_status
+  const person = await (db.prepare(`SELECT c.*,co.name AS company_name,co.website AS company_website,co.about AS company_about,co.deal_value_minor,co.deal_status
     FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     WHERE c.workspace_id=? AND c.id=? AND c.deleted_at IS NULL`).get(workspaceId, contactId)) as Record<string, unknown> | undefined;
   if (!person || !await (contactAccessible(actorId, workspaceId, contactId))) return undefined;
@@ -1594,13 +1619,13 @@ export async function markContactReplied(actorId: string, workspaceId: string, c
 async function buildEmailSuggestion(actorId: string, workspaceId: string, contactId: string, variant: 'first' | 'alternate' = 'first') {
   await (assertWorkspaceAccess(actorId, workspaceId));
   await (assertContactAccess(actorId, workspaceId, contactId));
-  const contact = await (db.prepare(`SELECT c.id,c.name,c.email,c.do_not_contact,co.name AS company_name,e.name AS event_name,en.id AS encounter_id
+  const contact = await (db.prepare(`SELECT c.id,c.name,c.title,c.email,c.do_not_contact,co.name AS company_name,co.website AS company_website,co.about AS company_about,e.name AS event_name,en.id AS encounter_id
     FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     LEFT JOIN encounters en ON en.contact_id=c.id AND en.workspace_id=c.workspace_id
       AND (en.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
     LEFT JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id
     WHERE c.workspace_id=? AND c.id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL
-    ORDER BY en.occurred_at DESC LIMIT 1`).get(actorId, workspaceId, contactId)) as { id: string; name: string; email: string; do_not_contact: number; company_name: string; event_name: string | null; encounter_id: string | null } | undefined;
+    ORDER BY en.occurred_at DESC LIMIT 1`).get(actorId, workspaceId, contactId)) as { id: string; name: string; title: string; email: string; do_not_contact: number; company_name: string; company_website: string | null; company_about: string; event_name: string | null; encounter_id: string | null } | undefined;
   if (!contact) throw new Error('This person is no longer available.');
   if (contact.do_not_contact) throw new Error('This person has asked not to receive follow-up email.');
   if (!contact.email) throw new Error('Add an email address before creating a draft.');
@@ -1659,6 +1684,7 @@ async function buildEmailSuggestion(actorId: string, workspaceId: string, contac
     recipient: contact.email, subject, body, sourcesUsed, encounterId: emailEncounterId,
     aiContext: {
       firstName: greeting, companyName: contact.company_name, eventName: emailEventName,
+      contactTitle: (contact.title || '').slice(0, 120), companyWebsite: (contact.company_website || '').slice(0, 200), companyAbout: (contact.company_about || '').slice(0, 400),
       senderOrganization, senderRole, senderOfferings: whatYouSell, senderGoal: lookingFor,
       productsOfInterest: interestedProductNames, companyProducts: productNames,
       recentConversations: recentConversations.slice(0, 4).map((item) => ({ date: item.date, eventName: item.event_name, sourceType: item.kind === 'audio' ? 'voice' as const : 'text' as const, rawNote: item.text.trim().slice(0, 600), checkedSummary: (item.summary || '').trim().slice(0, 500), openQuestion: (item.open_question || '').trim().slice(0, 300), promisedNextStep: (item.promised_next_step || '').trim().slice(0, 300), changedSinceLast: (item.changed_since_last || '').trim().slice(0, 300) })),

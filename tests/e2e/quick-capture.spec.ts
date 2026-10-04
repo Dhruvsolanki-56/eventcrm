@@ -71,3 +71,20 @@ test('settings chips fill the profile and the follow-up date is remembered', asy
   await page.getByRole('link', { name: 'Follow-up', exact: true }).click();
   await expect(page.getByRole('button', { name: 'In 3 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
+
+test('a company description can be written, saved and kept', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await page.goto('/people/demo-ns-contact-1');
+  const box = page.getByLabel(/Short description of/);
+  await expect(box).toBeVisible();
+  await box.fill('Makes retail packaging for beauty brands.');
+  await page.getByRole('button', { name: 'Save description' }).click();
+  await expect(page.getByText('Company description saved')).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel(/Short description of/)).toHaveValue('Makes retail packaging for beauty brands.');
+  // With AI off in the test setup, asking for a suggestion explains itself and keeps the text.
+  await page.getByRole('button', { name: /Suggest from website|Try from their email/ }).click();
+  await expect(page.getByRole('status').filter({ hasText: /not set up|could not|cannot|unreachable|reached/ })).toBeVisible();
+  await expect(page.getByLabel(/Short description of/)).toHaveValue('Makes retail packaging for beauty brands.');
+});

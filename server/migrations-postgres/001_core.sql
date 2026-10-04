@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS companies (
   deal_status text CHECK (deal_status IS NULL OR deal_status IN ('open','won','lost')),
   archived_at text,
   created_at text NOT NULL DEFAULT to_char(timezone('utc', now()), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  about text NOT NULL DEFAULT '',
   UNIQUE(workspace_id,normalized_name)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS companies_domain_unique ON companies(workspace_id,normalized_domain) WHERE normalized_domain IS NOT NULL AND normalized_domain <> '';

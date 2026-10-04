@@ -115,12 +115,16 @@ import {
   validateCsrf,
   workspaceForActor,
   type ActorInfo,
+  getCompanyAboutTarget,
+  updateCompanyAbout,
   type WorkspaceInfo,
 } from './db.js';
 import { draftEmail, isAIProviderEnabled, isCardAIEnabled, isEmailDraftAIEnabled, readCard, suggestFollowUp } from './ai.js';
 import { isGeminiCardEnabled } from './gemini-card.js';
 import { suggestConversationContext, summarizeCheckedTranscript } from './gemini-conversation.js';
 import { suggestBusinessProfile } from './gemini-profile.js';
+import { isCompanyAboutEnabled, suggestCompanyAbout } from './company-about.js';
+import { fetchPublicPageText } from './safe-web.js';
 import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
@@ -774,6 +778,32 @@ app.put('/api/companies/:companyId/deal', requireContext, async (req, res) => {
     if (!await (updateCompanyDeal(actor.id, workspace.id, id.data, parsed.data.valueMinor, parsed.data.status))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
     res.json({ updated: true });
   } catch (error) { res.status(403).json({ code: 'deal_permission', message: error instanceof Error ? error.message : 'You cannot change this deal value.' }); }
+});
+
+app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.companyId);
+  if (!id.success) return res.status(400).json({ code: 'invalid_company', message: 'Choose a company.' });
+  if (!isCompanyAboutEnabled()) return res.status(503).json({ code: 'about_ai_off', message: 'AI is not set up here. You can type a short description instead.' });
+  const target = await (getCompanyAboutTarget(actor.id, workspace.id, id.data));
+  if (!target) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
+  try {
+    const page = await fetchPublicPageText(target.website);
+    const about = await suggestCompanyAbout(target.name, page.text);
+    if (!about) return res.status(422).json({ code: 'about_unclear', message: 'The website does not say clearly what this company does. You can type a short description instead.' });
+    res.json({ about, source: new URL(page.finalUrl).hostname.replace(/^www\./, '') });
+  } catch (error) { res.status(422).json({ code: 'about_unavailable', message: error instanceof Error ? error.message : 'The company could not be read.' }); }
+});
+
+app.put('/api/companies/:companyId/about', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.companyId);
+  const parsed = z.object({ about: z.string().max(400) }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_about', message: 'Keep the description under 400 characters.' });
+  try {
+    if (!await (updateCompanyAbout(actor.id, workspace.id, id.data, parsed.data.about))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
+    res.json({ updated: true });
+  } catch (error) { res.status(403).json({ code: 'about_permission', message: error instanceof Error ? error.message : 'You cannot change this company.' }); }
 });
 
 app.get('/api/analytics', requireContext, async (req, res) => {
