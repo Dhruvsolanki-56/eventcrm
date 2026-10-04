@@ -140,7 +140,16 @@ export function extractCardFields(rawText: string): CardReadOutput {
     const [local, domain = ''] = email.split('@');
     fixedEmail = `${local}@${snapToCompany(domain.toLowerCase(), companyKey)}`;
   }
-  const fields = { name, title, company, email: fixedEmail, phone, website: fixedWebsite };
+  // Sample cards and templates print stand-in details such as "yourname@email.com" or "+123-456-7890". They are not real.
+  const placeholderEmail = (value: string) => /^(?:your[._-]?(?:name|email|mail)|name|email|username|firstname[._-]?lastname|first[._-]?last|john[._-]?doe|someone|info)@(?:email|example|domain|yourdomain|yourcompany|company|website|mail)\.(?:com|net|org)$/i.test(value);
+  const placeholderPhone = (value: string) => ['1234567890', '123456789', '12345678', '0000000000', '1111111111', '5555555555'].includes(value.replace(/\D/g, '').replace(/^(\d{10,})$/, (all) => all.slice(-10))) || /^(\d)\1{6,}$/.test(value.replace(/\D/g, ''));
+  const placeholderSite = (value: string) => /^(?:www\.)?(?:your(?:website|company|domain|name)|website|example|domain|company)\.(?:com|net|org)\b/i.test(value);
+  const fields = {
+    name, title, company,
+    email: placeholderEmail(fixedEmail) ? '' : fixedEmail,
+    phone: placeholderPhone(phone) ? '' : phone,
+    website: placeholderSite(fixedWebsite) ? '' : fixedWebsite,
+  };
   return { ...fields, products: [], topics: [], uncertain: Object.entries(fields).filter(([, value]) => Boolean(value)).map(([key]) => key) as CardReadOutput['uncertain'] };
 }
 

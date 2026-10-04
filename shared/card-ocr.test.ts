@@ -110,4 +110,11 @@ describe('card text extraction', () => {
     const result = extractCardFields('Lucia Olsen\nSales Manager\nCedar Freight LLC\nlucia.olsen@cedar-logistics.example\n+1 (206) 555-0142\nwww.cedar-logistics.example');
     expect(result).toMatchObject({ email: 'lucia.olsen@cedar-logistics.example', website: 'www.cedar-logistics.example' });
   });
+
+  it('does not treat the stand-in details of a sample card as real', () => {
+    const result = extractCardFields('OLIVIA ANDERSON\nyourname@email.com\n+123-456-7890\nwww.yourwebsite.com');
+    expect(result).toMatchObject({ email: '', phone: '', website: '' });
+    const real = extractCardFields('Sam Patel\nsam@patelfoods.com\n+1 415 555 0132\nwww.patelfoods.com');
+    expect(real).toMatchObject({ email: 'sam@patelfoods.com', website: 'www.patelfoods.com' });
+  });
 });
