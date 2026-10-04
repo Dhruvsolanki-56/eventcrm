@@ -82,7 +82,7 @@ test('checked conversation context becomes a saved draft, appears in Email Desk,
     await page.locator(`.email-desk-row[data-draft-id="${draft.id}"]`).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await expect.poll(() => page.locator('[data-rail]').evaluate((element) => element.getBoundingClientRect().right <= 0)).toBe(true);
+    await expect.poll(() => page.locator('.sidebar').evaluate((element) => element.getBoundingClientRect().right <= 0)).toBe(true);
     await expect(page.getByRole('button', { name: 'Save draft' })).toBeVisible();
     await page.screenshot({ path: resolve('test-results/email-desk-phone.png') });
   } finally { database.close(); }
@@ -98,7 +98,7 @@ test('Email Desk excludes another event and another tenant', async ({ page }) =>
   expect(denied.status()).toBe(404);
   await page.goto('/email');
   await expect(page.getByRole('heading', { name: 'Email Desk' })).toBeVisible();
-  await page.locator('[data-account-trigger]').click();
+  await page.locator('.profile-button').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await page.getByRole('button', { name: /Sam Patel/ }).click();
   const personal = await (await page.request.get('/api/email-desk', { headers: { 'X-Workspace-Id': 'demo-sam-space' } })).json() as { drafts: Array<{ contact_id: string }>; people: Array<{ id: string }> };

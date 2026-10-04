@@ -10,8 +10,8 @@ async function signIn(page: Page, account: RegExp) {
   const targetViewport = page.viewportSize();
   if (targetViewport) await page.setViewportSize({ ...targetViewport, width: 1440 });
   await page.goto('/');
-  if (await page.locator('[data-account-trigger]').count()) {
-    await page.locator('[data-account-trigger]').click();
+  if (await page.locator('.profile-button').count()) {
+    await page.locator('.profile-button').click();
     await page.getByRole('menuitem', { name: 'Sign out' }).click();
   }
   await page.getByRole('button', { name: account }).click();

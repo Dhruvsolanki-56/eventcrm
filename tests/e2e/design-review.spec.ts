@@ -75,7 +75,7 @@ test('light workspace renders without horizontal overflow on core routes', async
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/home');
-  await page.locator('[data-account-trigger]').click();
+  await page.locator('.profile-button').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('sign-in-1440.png') });
