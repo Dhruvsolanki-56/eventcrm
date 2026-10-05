@@ -82,3 +82,13 @@ button.email-desk-row:hover { background: var(--surface-2); }
 @media (max-width: 1000px) {
   .email-desk-list { position: static; max-height: none; }
 }
+
+/* Bulk bar: select-all and the action share one line; the hint sits quietly underneath. */
+.bulk-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 10px 16px; }
+.bulk-bar .bulk-all { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13.5px; font-weight: 500; }
+.bulk-bar > span { grid-column: 1 / -1; grid-row: 2; }
+.bulk-bar > .button { grid-column: 2; grid-row: 1; }
+@media (max-width: 780px) {
+  .bulk-bar { top: 0; padding: 10px 14px; }
+  .bulk-bar .button { min-height: 40px; padding-inline: 14px; }
+}

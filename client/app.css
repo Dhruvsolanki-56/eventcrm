@@ -1504,3 +1504,51 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .pipeline-stage-switch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metric-grid, .analytics-kpis, .report-metrics { gap: 8px; }
 }
+
+/* ---------- Calmer small screens: less to read at once, nothing squeezed ---------- */
+/* The avatar stays a circle even where touch targets are raised to 44px. */
+.app-frame .topbar-avatar { flex: none; width: 36px; height: 36px; min-height: 36px; padding: 0; aspect-ratio: 1; border-radius: 50%; }
+
+/* Text fields grow with what is written instead of hiding it behind a scroll. */
+.settings-section-body textarea { field-sizing: content; min-height: 76px; max-height: 320px; }
+.settings-section-body textarea.one-line-grow { min-height: 44px; resize: none; }
+
+.readiness-more { display: none; }
+
+@media (max-width: 780px) {
+  /* Scan: one plain line about reading; the detail opens on request. */
+  .capture-readiness { align-items: center; margin-top: 14px; }
+  .capture-readiness > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .capture-readiness > svg { align-self: flex-start; margin-top: 3px; }
+  .capture-readiness span { display: none; flex-basis: 100%; margin-top: 4px; line-height: 1.5; }
+  .capture-readiness.is-open span { display: block; }
+  .app-frame .readiness-more { display: inline; min-height: 0 !important; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12.5px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+  .viewfinder-card .helper-copy { display: none; }
+  .capture-event-bar { flex-wrap: nowrap; }
+  .capture-event-bar .capture-event-label { display: none; }
+  .capture-event-bar select { flex: 1 1 auto; }
+  .capture-event-bar .quick-event-open { flex: none; width: 44px; padding: 0; font-size: 0; }
+  .capture-event-bar .quick-event-open svg { width: 18px; height: 18px; }
+  .capture-event-bar:has(.quick-event) { flex-wrap: wrap; }
+
+  /* Follow-ups: a card reads top to bottom — what, who, when — then the actions. */
+  .task-row { gap: 0; padding: 14px 14px 12px; }
+  .task-kind { display: none; }
+  .task-copy { flex-basis: 100%; gap: 3px; }
+  .task-copy > strong { font-size: 15px; font-weight: 600; line-height: 1.35; }
+  .task-copy small { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .task-copy p { display: -webkit-box; overflow: hidden; margin-top: 2px; color: var(--muted); font-size: 13.5px; line-height: 1.45; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .task-meta { gap: 4px 12px; margin-top: 2px; }
+  .task-copy time { font-size: 12.5px; }
+  .task-actions { gap: 8px; margin-top: 12px; padding-left: 0; }
+  .app-frame .task-actions :is(.button, button) { min-height: 40px; }
+  .task-actions > a.button { width: 40px; }
+  .snooze-group button { font-size: 13px; }
+  .task-kind.meeting + .task-copy > strong::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 8px 2px 0; border-radius: 50%; background: var(--warn); vertical-align: middle; }
+
+  /* Settings: suggestion chips sit in one swipeable row under the field. */
+  .settings-section-body .idea-chips { flex-wrap: nowrap; overflow-x: auto; margin-inline: -16px; padding: 0 16px 2px; scrollbar-width: none; mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 28px), transparent); }
+  .settings-section-body .idea-chips::-webkit-scrollbar { display: none; }
+  .settings-section-body .idea-chips .quick-chip { flex: none; }
+  .settings-section-intro p { font-size: 13px; }
+}

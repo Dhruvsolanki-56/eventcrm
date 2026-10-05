@@ -76,7 +76,7 @@ export default function SettingsPage() {
           <Section title="What your team sells" description="Email drafts use this to explain who you are. One or two sentences is enough.">
             <label>What do you sell?<textarea rows={3} value={text('whatYouSell')} onChange={(event) => update('whatYouSell', event.target.value)} maxLength={500} placeholder="One or two sentences" /></label>
             <label><span>Company website <span className="optional-label">· optional, added as a link in emails</span></span><input value={text('website')} onChange={(event) => update('website', event.target.value)} maxLength={200} inputMode="url" autoCapitalize="none" placeholder="yourcompany.com" /></label>
-            <div className="field-with-ideas"><label>Our role in client conversations<input value={text('ourRole')} onChange={(event) => update('ourRole', event.target.value)} maxLength={240} placeholder="For example, we are the development partner preparing a proposal" /></label>
+            <div className="field-with-ideas"><label>Our role in client conversations<textarea className="one-line-grow" rows={1} value={text('ourRole')} onChange={(event) => update('ourRole', event.target.value.replace(/\n/g, ' '))} maxLength={240} placeholder="For example, we are the development partner preparing a proposal" /></label>
               <IdeaChips ideas={roleIdeas} label="Common roles" onPick={(idea) => update('ourRole', idea)} /></div>
           </Section>
           <Section title="How you write" description="The tone, sign-off and limits every draft follows.">
