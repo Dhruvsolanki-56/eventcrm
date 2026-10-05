@@ -60,7 +60,7 @@ test('a team member cannot merge companies and conflicting deal values are prote
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
   const headers = { 'X-Workspace-Id': 'demo-northstar', 'X-CSRF-Token': csrf.csrfToken };
   const denied = await page.request.post('/api/companies/demo-ns-juniper/merge', { headers, data: { targetCompanyId: 'demo-ns-acme', confirmation: 'MERGE' } });
-  expect(denied.status()).toBe(409);
+  expect(denied.status()).toBe(403);
   await page.locator('.profile-button').click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await page.getByRole('button', { name: /Maya Chen/ }).click();

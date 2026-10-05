@@ -52,3 +52,36 @@ test('the People screen pages through the server and keeps the stage counts', as
   await expect.poll(async () => (await page.locator('.people-row.records-row strong').allTextContents())[0]).not.toBe(firstPage[0]);
   await expect(page.getByText(/^11–20 of /)).toBeVisible();
 });
+
+test('the Pipeline board says so when it shows only the most recent 200 people', async ({ page }) => {
+  const db = new Database(resolve(process.env.DATABASE_PATH!));
+  db.pragma('foreign_keys = OFF');
+  const cols = (db.prepare('PRAGMA table_info(contacts)').all() as Array<{ name: string }>).map((column) => column.name);
+  const base = db.prepare("SELECT * FROM contacts WHERE id='demo-rb-contact-1'").get() as Record<string, unknown>;
+  const insert = db.prepare(`INSERT INTO contacts (${cols.join(',')}) VALUES (${cols.map((column) => '@' + column).join(',')})`);
+  const stamp = Date.now();
+  db.transaction(() => { for (let i = 0; i < 205; i++) insert.run({ ...base, id: `board-${stamp}-${i}`, name: `Board ${i}`, email: `b${i}-${stamp}@board.example`, email_normalized: `b${i}-${stamp}@board.example`, phone: '', phone_normalized: '' }); })();
+  db.close();
+  await page.goto('/');
+  await page.getByRole('button', { name: /Alex Rivera/ }).click();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
+  await page.goto('/pipeline');
+  await expect(page.getByRole('note').filter({ hasText: /Showing the 200 most recently updated of \d+ people/ })).toBeVisible();
+});
+
+test('a slow answer to an earlier search never replaces the answer to the latest one', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
+  await page.goto('/people');
+  await expect(page.locator('.people-row.records-row').first()).toBeVisible();
+  await page.route(/\/api\/contacts\?q=Tessa/, async (route) => { await new Promise((done) => setTimeout(done, 1500)); await route.continue(); });
+  const search = page.getByLabel('Search companies and people');
+  await search.fill('Tessa');
+  await page.waitForTimeout(400);
+  await search.fill('Noah');
+  await expect(page.locator('.people-row.records-row strong').first()).toHaveText(/Noah/);
+  await page.waitForTimeout(2000);
+  await expect(page.locator('.people-row.records-row strong').first()).toHaveText(/Noah/);
+  await expect(page.locator('.people-row.records-row strong').filter({ hasText: 'Tessa' })).toHaveCount(0);
+});

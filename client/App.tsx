@@ -881,7 +881,8 @@ function PipelinePage() {
   const [movingId, setMovingId] = useState('');
   const [lostDraft, setLostDraft] = useState<{ person: PersonRow; reason: string } | null>(null);
   const [phoneStage, setPhoneStage] = useState('new');
-  const load = useCallback(() => request<{ people: PersonRow[] }>('/api/contacts?pageSize=200', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)), [session.workspace.id]);
+  const [everyone, setEveryone] = useState(0);
+  const load = useCallback(() => request<{ people: PersonRow[]; allTotal: number }>('/api/contacts?pageSize=200', {}, { workspaceId: session.workspace.id }).then((result) => { setPeople(result.people); setEveryone(result.allTotal); }), [session.workspace.id]);
   useEffect(() => { void load().catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [load, notify]);
   const needle = filter.trim().toLowerCase();
   const rows = (people ?? []).filter((person) => !needle || `${person.name} ${person.company_name}`.toLowerCase().includes(needle));
@@ -915,6 +916,7 @@ function PipelinePage() {
   return <section className="records-view pipeline-view">
     <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${rows.filter((person) => person.stage === 'won').length} won · ${rows.filter((person) => person.stage === 'lost').length} lost` : 'Loading…'}</p></div>
       <label className="search-box pipeline-search"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name or company" aria-label="Filter by name or company" /></label></div>
+    {people && everyone > people.length && <p className="page-lede" role="note">Showing the {people.length} most recently updated of {everyone} people. Use People to search for the rest.</p>}
     {people && <div className="pipeline-stage-switch" role="group" aria-label="Show one stage">{pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={phoneStage === stage} onClick={() => setPhoneStage(stage)}>{stageLabel(stage)}<span>{rows.filter((person) => person.stage === stage).length}</span></button>)}</div>}
     {!people ? <Skeleton variant="board" label="Loading pipeline" /> : <div className={`pipeline-grid${dragId ? ' is-dragging' : ''}`}>{pipelineStages.map((stage) => {
       const column = rows.filter((person) => person.stage === stage);

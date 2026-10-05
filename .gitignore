@@ -15,3 +15,8 @@ test-results/
 test-output/
 coverage/
 *.log
+
+# Local working copies, restore checks and OCR data that must never be committed
+uploads-*/
+gather-netlify-staging-*/
+eng.traineddata

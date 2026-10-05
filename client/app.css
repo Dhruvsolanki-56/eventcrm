@@ -1567,3 +1567,18 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .automation-steps { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .reminder-settings .text-button { min-height: 0 !important; }
 }
+
+/* Phones: small text links and compact selects get a full-size touch area without changing how the page is laid out. */
+@media (max-width: 820px) {
+  .app-frame .back-link, .app-frame .row-link, .app-frame .subtle-link, .app-frame .page-lede a, .app-frame .readiness-more,
+  .app-frame .person-pulse a, .app-frame .chart-switch button, .app-frame .brand-lockup, .app-frame .records-row .person-cell a { position: relative; }
+  .app-frame .back-link::after, .app-frame .row-link::after, .app-frame .subtle-link::after, .app-frame .page-lede a::after, .app-frame .readiness-more::after,
+  .app-frame .person-pulse a::after, .app-frame .chart-switch button::after, .app-frame .brand-lockup::after { content: ''; position: absolute; inset: -12px -8px; }
+  .app-frame select { min-height: 44px !important; }
+}
+@media (max-width: 820px) {
+  .app-frame .task-copy small a, .app-frame .person-fields dd a, .app-frame td a { padding-block: 12px; }
+  .app-frame .subtle-link, .app-frame .chart-switch button { padding-block: 12px; margin-block: -12px; }
+  .app-frame .chart-switch button { min-height: 40px; margin-block: 0; padding-block: 0; }
+  .app-frame .brand-lockup { padding-block: 9px; }
+}

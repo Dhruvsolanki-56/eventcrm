@@ -44,6 +44,7 @@ import {
   markNotificationRead,
   getDigestRuns,
   countPeopleByStage,
+  draftRecipientOptedOut,
   listPeople,
   listCompanies,
   suggestCompanies,
@@ -137,6 +138,12 @@ type RequestContext = { actor: ActorInfo; workspace: WorkspaceInfo };
 const SESSION_COOKIE = 'gather_session';
 const CSRF_COOKIE = 'gather_csrf';
 const isProduction = process.env.NODE_ENV === 'production';
+// A refusal to a person who may not do this is a 403; anything else keeps the route's own status and a safe message.
+function refuse(res: express.Response, error: unknown, status: number, code: string, fallback: string) {
+  if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
+  return res.status(status).json({ code, message: userMessage(error, fallback) });
+}
+
 const publicDemoMode = isProduction && process.env.GATHER_DEMO_MODE === 'true';
 const taskCreationLimit = (() => {
   if (isProduction) return 120;
@@ -603,7 +610,7 @@ app.post('/api/onboarding/test-email', emailTestLimiter, requireContext, async (
 app.get('/api/team', requireContext, async (_req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   try { res.json(await (listTeamSettings(actor.id, workspace.id))); }
-  catch (error) { res.status(403).json({ code: 'team_access', message: userMessage(error, 'Only a company admin can manage the team.') }); }
+  catch (error) { refuse(res, error, 403, 'team_access', 'Only a company admin can manage the team.'); }
 });
 
 app.post('/api/team/invites', requireContext, async (req, res) => {
@@ -611,7 +618,7 @@ app.post('/api/team/invites', requireContext, async (req, res) => {
   const parsed = z.object({ role: z.enum(['manager','representative']), eventIds: z.array(z.string().min(1).max(80)).max(100) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_invite', message: 'Choose a role and the events this person can access.' });
   try { res.status(201).json(await (createWorkspaceInvite(actor.id, workspace.id, parsed.data.role, parsed.data.eventIds))); }
-  catch (error) { res.status(403).json({ code: 'invite_not_created', message: userMessage(error, 'The invite could not be created.') }); }
+  catch (error) { refuse(res, error, 403, 'invite_not_created', 'The invite could not be created.'); }
 });
 
 const EventInputSchema = z.object({
@@ -632,6 +639,7 @@ app.post('/api/events', requireContext, async (req, res) => {
     if (!saved) return res.status(404).json({ code: 'event_missing', message: 'This event is no longer available.' });
     res.status(saved.created ? 201 : 200).json({ id: saved.id, duplicate: !saved.created });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'The event could not be saved.');
     res.status(message.startsWith('Only a company admin') ? 403 : 400).json({ code: 'event_not_saved', message });
   }
@@ -647,6 +655,7 @@ app.put('/api/events/:eventId', requireContext, async (req, res) => {
     if (!saved) return res.status(404).json({ code: 'event_missing', message: 'This event is no longer available.' });
     res.json({ id: saved });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'The event could not be saved.');
     res.status(message.startsWith('Only a company admin') ? 403 : 400).json({ code: 'event_not_saved', message });
   }
@@ -659,7 +668,7 @@ app.delete('/api/team/invites/:inviteId', requireContext, async (req, res) => {
   try {
     if (!await (revokeWorkspaceInvite(actor.id, workspace.id, id.data))) return res.status(404).json({ code: 'invite_missing', message: 'This invite is no longer available.' });
     res.json({ revoked: true });
-  } catch (error) { res.status(403).json({ code: 'invite_not_revoked', message: userMessage(error, 'The invite could not be cancelled.') }); }
+  } catch (error) { refuse(res, error, 403, 'invite_not_revoked', 'The invite could not be cancelled.'); }
 });
 
 app.delete('/api/team/members/:userId', requireContext, async (req, res) => {
@@ -669,7 +678,7 @@ app.delete('/api/team/members/:userId', requireContext, async (req, res) => {
   try {
     if (!await (removeWorkspaceMember(actor.id, workspace.id, id.data))) return res.status(404).json({ code: 'member_missing', message: 'This person is no longer on the team.' });
     res.json({ removed: true });
-  } catch (error) { res.status(409).json({ code: 'member_not_removed', message: userMessage(error, 'This person could not be removed.') }); }
+  } catch (error) { refuse(res, error, 409, 'member_not_removed', 'This person could not be removed.'); }
 });
 
 app.put('/api/team/members/:userId/access', requireContext, async (req, res) => {
@@ -683,6 +692,7 @@ app.put('/api/team/members/:userId/access', requireContext, async (req, res) => 
     }
     res.json({ updated: true });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'This person’s access could not be updated.');
     res.status(message.startsWith('Only a company admin') ? 403 : 409).json({ code: 'member_access_not_updated', message });
   }
@@ -693,7 +703,7 @@ app.post('/api/invites/accept', requireContext, async (req, res) => {
   const parsed = z.object({ token: z.string().min(40).max(100) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_invite', message: 'This invite link is not valid.' });
   try { res.json({ workspaceId: await (acceptInviteForUser(actor.id, parsed.data.token)) }); }
-  catch (error) { res.status(409).json({ code: 'invite_not_accepted', message: userMessage(error, 'This invite could not be accepted.') }); }
+  catch (error) { refuse(res, error, 409, 'invite_not_accepted', 'This invite could not be accepted.'); }
 });
 
 app.get('/api/dashboard', requireContext, async (_req, res) => {
@@ -734,6 +744,7 @@ app.post('/api/contacts/:contactId/tasks', requireContext, taskLimiter, async (r
     res.status(result.duplicate ? 200 : 201).json(result);
   } catch (error) {
     if (error instanceof TaskStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'This follow-up could not be saved.');
     res.status(message.startsWith('You do not have access') ? 403 : 404).json({ code: 'task_not_saved', message });
   }
@@ -804,7 +815,7 @@ app.post('/api/companies/:companyId/merge', requireContext, async (req, res) => 
   const parsed = z.object({ targetCompanyId: z.string().min(1).max(80), confirmation: z.literal('MERGE') }).strict().safeParse(req.body);
   if (!source.success || !parsed.success) return res.status(400).json({ code: 'invalid_company_merge', message: 'Choose the company to keep and type MERGE.' });
   try { res.json(await (mergeCompany(actor.id, workspace.id, source.data, parsed.data.targetCompanyId))); }
-  catch (error) { res.status(409).json({ code: 'company_merge_unavailable', message: (error as Error).message }); }
+  catch (error) { refuse(res, error, 409, 'company_merge_unavailable', 'These companies could not be merged.'); }
 });
 
 app.put('/api/companies/:companyId/deal', requireContext, async (req, res) => {
@@ -815,7 +826,7 @@ app.put('/api/companies/:companyId/deal', requireContext, async (req, res) => {
   try {
     if (!await (updateCompanyDeal(actor.id, workspace.id, id.data, parsed.data.valueMinor, parsed.data.status))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
     res.json({ updated: true });
-  } catch (error) { res.status(403).json({ code: 'deal_permission', message: userMessage(error, 'You cannot change this deal value.') }); }
+  } catch (error) { refuse(res, error, 403, 'deal_permission', 'You cannot change this deal value.'); }
 });
 
 app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -830,7 +841,7 @@ app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requ
     const about = await suggestCompanyAbout(target.name, page.text);
     if (!about) return res.status(422).json({ code: 'about_unclear', message: 'The website does not say clearly what this company does. You can type a short description instead.' });
     res.json({ about, source: new URL(page.finalUrl).hostname.replace(/^www\./, '') });
-  } catch (error) { res.status(422).json({ code: 'about_unavailable', message: userMessage(error, 'The company could not be read.') }); }
+  } catch (error) { refuse(res, error, 422, 'about_unavailable', 'The company could not be read.'); }
 });
 
 app.put('/api/companies/:companyId/about', requireContext, async (req, res) => {
@@ -841,7 +852,7 @@ app.put('/api/companies/:companyId/about', requireContext, async (req, res) => {
   try {
     if (!await (updateCompanyAbout(actor.id, workspace.id, id.data, parsed.data.about))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
     res.json({ updated: true });
-  } catch (error) { res.status(403).json({ code: 'about_permission', message: userMessage(error, 'You cannot change this company.') }); }
+  } catch (error) { refuse(res, error, 403, 'about_permission', 'You cannot change this company.'); }
 });
 
 app.get('/api/analytics', requireContext, async (req, res) => {
@@ -852,7 +863,7 @@ app.get('/api/analytics', requireContext, async (req, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
     res.json(await (getAnalytics(actor.id, workspace.id, Number(query.data.days), query.data.eventId)));
-  } catch (error) { res.status(400).json({ code: 'analytics_event', message: userMessage(error, 'Analytics could not be loaded.') }); }
+  } catch (error) { refuse(res, error, 400, 'analytics_event', 'Analytics could not be loaded.'); }
 });
 
 app.get('/api/reports', requireContext, async (_req, res) => {
@@ -882,6 +893,7 @@ app.get('/api/export/data.json', exportLimiter, requireContext, async (_req, res
   let dataExport: Awaited<ReturnType<typeof getWorkspaceExport>>;
   try { dataExport = await (getWorkspaceExport(actor.id, workspace.id)); }
   catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'This workspace cannot be exported.');
     return res.status(message.startsWith('Only the company admin') ? 403 : 500).json({ code: 'export_permission', message });
   }
@@ -933,6 +945,7 @@ app.patch('/api/contacts/:contactId/archive', requireContext, async (req, res) =
     res.setHeader('Cache-Control', 'no-store');
     res.json({ archived: parsed.data.archived });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'This person could not be updated.');
     const denied = message.startsWith('Workspace access changed') || message.startsWith('You do not have access') || message.startsWith('Only a company') || message.startsWith('Only the owner');
     res.status(denied ? 403 : 404).json({ code: denied ? 'archive_permission' : 'person_missing', message });
@@ -954,6 +967,7 @@ app.delete('/api/contacts/:contactId', requireContext, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ deleted: true, counts: deleted.counts, mediaCleanupPending });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'This person could not be deleted.');
     const denied = message.startsWith('Workspace access changed') || message.startsWith('You do not have access') || message.startsWith('Only a company admin');
     const busy = message.startsWith('A background task');
@@ -970,7 +984,7 @@ app.post('/api/contacts/:contactId/notes', requireContext, noteLimiter, async (r
   try { const result = await (addPersonNote(actor.id, workspace.id, id.data, parsed.data.body)); res.status(result.duplicate ? 200 : 201).json({ saved: true, duplicate: result.duplicate }); }
   catch (error) {
     if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
-    res.status(404).json({ code: 'person_missing', message: userMessage(error, 'This person is no longer available.') });
+    refuse(res, error, 404, 'person_missing', 'This person is no longer available.');
   }
 });
 
@@ -998,6 +1012,7 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
     res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate, autoDraft });
   } catch (error) {
     if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'The conversation could not be saved.');
     res.status(message.startsWith('You do not have access') || message.startsWith('Choose an event') ? 403 : 409)
       .json({ code: 'conversation_not_saved', message });
@@ -1011,7 +1026,7 @@ app.post('/api/contacts/:contactId/conversation-summary-suggestion', aiSuggestio
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add what you discussed first.' });
   if (!await getPersonDetail(actor.id, workspace.id, id.data)) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
   try { res.json({ summary: await summarizeCheckedTranscript(parsed.data.text) }); }
-  catch (error) { res.status(503).json({ code: 'summary_unavailable', message: userMessage(error, 'A summary could not be prepared.') }); }
+  catch (error) { refuse(res, error, 503, 'summary_unavailable', 'A summary could not be prepared.'); }
 });
 
 app.post('/api/contacts/:contactId/conversation-context-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1027,7 +1042,7 @@ app.post('/api/contacts/:contactId/conversation-context-suggestion', aiSuggestio
     res.json(await suggestConversationContext({ note: parsed.data.text, personName: String(detail.person.name ?? ''),
       ourRole: String(settings?.ourRole ?? settings?.role ?? ''), whatWeSell: String(settings?.whatYouSell ?? settings?.lookingFor ?? ''),
       previousSummary: previous[0]?.summary ?? '' }));
-  } catch (error) { res.status(503).json({ code: 'context_suggestion_unavailable', message: userMessage(error, 'AI note help is unavailable.') }); }
+  } catch (error) { refuse(res, error, 503, 'context_suggestion_unavailable', 'AI note help is unavailable.'); }
 });
 
 app.put('/api/contacts/:contactId/conversations/:encounterId/context', requireContext, async (req, res) => {
@@ -1039,7 +1054,7 @@ app.put('/api/contacts/:contactId/conversations/:encounterId/context', requireCo
   try {
     if (!await updateConversationMemory(actor.id, workspace.id, contactId.data, encounterId.data, parsed.data)) return res.status(404).json({ code: 'conversation_missing', message: 'This conversation is no longer available.' });
     res.json({ saved: true });
-  } catch (error) { res.status(403).json({ code: 'context_not_saved', message: userMessage(error, 'This context could not be saved.') }); }
+  } catch (error) { refuse(res, error, 403, 'context_not_saved', 'This context could not be saved.'); }
 });
 
 app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1057,7 +1072,7 @@ app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireCon
     }
     res.status(201).json(created);
   }
-  catch (error) { res.status(409).json({ code: 'email_draft_not_created', message: userMessage(error, 'An email draft could not be created.') }); }
+  catch (error) { refuse(res, error, 409, 'email_draft_not_created', 'An email draft could not be created.'); }
 });
 
 app.post('/api/contacts/:contactId/follow-up-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1098,7 +1113,7 @@ app.post('/api/emails/:emailId/alternate', requireContext, async (req, res) => {
     if (!draft) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to change.' });
     res.json(draft);
   } catch (error) {
-    res.status(409).json({ code: 'email_alternate_not_created', message: userMessage(error, 'Another draft could not be prepared.') });
+    refuse(res, error, 409, 'email_alternate_not_created', 'Another draft could not be prepared.');
   }
 });
 
@@ -1116,6 +1131,7 @@ app.post('/api/emails/:emailId/send', requireContext, async (req, res) => {
   const id = z.string().uuid().safeParse(req.params.emailId);
   const parsed = z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(8000) }).strict().safeParse(req.body);
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_email_draft', message: 'Add a subject and message before sending.' });
+  if (await draftRecipientOptedOut(actor.id, workspace.id, id.data)) return res.status(409).json({ code: 'recipient_opted_out', message: 'This person has asked not to receive follow-up email, so this draft will not be sent.' });
   if (!await (updateEmailDraft(actor.id, workspace.id, id.data, parsed.data.subject, parsed.data.body))) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to send.' });
   const publicUrl = process.env.PUBLIC_BASE_URL ?? '';
   if (isProduction && publicUrl && !publicUrl.startsWith('https://')) return res.status(503).json({ code: 'https_required', message: 'The public email link must use HTTPS before sending.' });
@@ -1127,7 +1143,7 @@ app.post('/api/emails/:emailId/send', requireContext, async (req, res) => {
       res.setHeader('Retry-After', String(error.retryAfterSeconds));
       return res.status(429).json({ code: 'email_send_rate_limit', message: error.message });
     }
-    res.status(409).json({ code: 'email_not_approved', message: userMessage(error, 'This email could not be approved.') });
+    refuse(res, error, 409, 'email_not_approved', 'This email could not be approved.');
   }
 });
 
@@ -1194,6 +1210,7 @@ app.patch('/api/contacts/:contactId', requireContext, async (req, res) => {
     }
     res.json({ updated: true, version: parsed.data.version + 1 });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'These details could not be saved.');
     const status = message.startsWith('You do not have access') ? 403 : message.startsWith('Another person') ? 409 : 400;
     res.status(status).json({ code: 'person_not_updated', message });
@@ -1209,7 +1226,7 @@ app.post('/api/contacts/:contactId/reply', requireContext, async (req, res) => {
     const detail = await (getPersonDetail(actor.id, workspace.id, id.data));
     res.json({ updated: true, version: Number(detail?.person.version ?? 1) });
   } catch (error) {
-    res.status(403).json({ code: 'reply_not_logged', message: userMessage(error, 'You cannot update this person.') });
+    refuse(res, error, 403, 'reply_not_logged', 'You cannot update this person.');
   }
 });
 
@@ -1280,7 +1297,7 @@ app.post('/api/notes/:noteId/summary-suggestion', aiSuggestionLimiter, requireCo
   if (!note) return res.status(404).json({ code: 'audio_missing', message: 'This recording is no longer available.' });
   if (!note.transcript.trim()) return res.status(409).json({ code: 'transcript_needed', message: 'Check and save the words first.' });
   try { return res.json({ summary: await summarizeCheckedTranscript(note.transcript) }); }
-  catch (error) { return res.status(503).json({ code: 'summary_unavailable', message: userMessage(error, 'AI note help is unavailable.') }); }
+  catch (error) { return refuse(res, error, 503, 'summary_unavailable', 'AI note help is unavailable.'); }
 });
 
 app.put('/api/notes/:noteId/summary', requireContext, async (req, res) => {
@@ -1320,7 +1337,7 @@ app.post('/api/setup/profile-suggestion', aiSuggestionLimiter, requireContext, a
   const parsed = z.object({ sourceText: z.string().trim().min(30).max(8000) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_profile_source', message: 'Paste at least a short paragraph from your website or brochure.' });
   try { res.json(await suggestBusinessProfile(parsed.data.sourceText)); }
-  catch (error) { res.status(503).json({ code: 'profile_suggestion_unavailable', message: userMessage(error, 'AI setup help is unavailable.') }); }
+  catch (error) { refuse(res, error, 503, 'profile_suggestion_unavailable', 'AI setup help is unavailable.'); }
 });
 
 app.post('/api/setup/profile-from-website', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1332,7 +1349,7 @@ app.post('/api/setup/profile-from-website', aiSuggestionLimiter, requireContext,
   try {
     const page = await fetchPublicPageText(parsed.data.website);
     res.json({ ...(await suggestProfileFromWebsite(page.text)), website: page.finalUrl.replace(/\/$/, '') });
-  } catch (error) { res.status(422).json({ code: 'profile_from_website_unavailable', message: userMessage(error, 'The website could not be read.') }); }
+  } catch (error) { refuse(res, error, 422, 'profile_from_website_unavailable', 'The website could not be read.'); }
 });
 
 app.get('/api/preferences/capture', requireContext, async (_req, res) => {
@@ -1373,9 +1390,6 @@ app.put('/api/settings', requireContext, async (req, res) => {
   if (workspace.kind === 'company' && workspace.role !== 'admin') return res.status(403).json({ code: 'settings_permission', message: 'Ask your company admin to change workspace settings.' });
   const parsed = settingSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_setting', message: 'Check the information and try again.' });
-  if (workspace.kind === 'company' && workspace.role !== 'admin' && ['knowledge', 'email'].includes(parsed.data.key)) {
-    return res.status(403).json({ code: 'role_required', message: 'An admin manages these company settings.' });
-  }
   if (workspace.kind === 'personal' && parsed.data.key === 'knowledge') {
     return res.status(400).json({ code: 'wrong_setting', message: 'Use About me for your personal details.' });
   }
@@ -1416,6 +1430,7 @@ app.post('/api/settings/delete-my-data', requireContext, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ deleted: true, counts: deleted.counts, mediaCleanupPending });
   } catch (error) {
+    if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
     const message = userMessage(error, 'Your private data could not be deleted.');
     const denied = message.startsWith('Only the owner');
     res.status(denied ? 403 : 409).json({ code: denied ? 'delete_permission' : 'data_not_deleted', message });
@@ -1435,6 +1450,7 @@ if (!isProduction) {
       res.setHeader('Cache-Control', 'no-store');
       res.json({ cleared: true, counts: cleared.counts, mediaCleanupPending });
     } catch (error) {
+      if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
       const message = userMessage(error, 'Sample data could not be cleared.');
       const denied = message.startsWith('Only a sample') || message.startsWith('Only the owner');
       res.status(denied ? 403 : 409).json({ code: denied ? 'clear_permission' : 'sample_data_not_cleared', message });
@@ -1498,7 +1514,7 @@ app.post('/api/scans/qr', scanLimiter, requireContext, async (req, res) => {
     res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate, duplicateQr: result.duplicate && result.scan.client_scan_id !== parsed.data.clientScanId });
   } catch (error) {
     if (error instanceof QrScanStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
-    res.status(403).json({ code: 'qr_not_added', message: userMessage(error, 'This QR code could not be added.') });
+    refuse(res, error, 403, 'qr_not_added', 'This QR code could not be added.');
   }
 });
 
@@ -1513,6 +1529,7 @@ app.post('/api/scans', scanLimiter, requireContext, express.raw({ type: ['image/
   const eventHeader = req.header('x-event-id');
   if (eventHeader !== undefined && eventHeader !== 'none' && !z.string().min(1).max(80).safeParse(eventHeader).success) return res.status(400).json({ code: 'invalid_event', message: 'Choose an event you can access.' });
   if (!sourceParsed.success || !clientScanParsed.success || !clientOrderParsed.success) return res.status(400).json({ code: 'invalid_scan', message: 'This photo could not be added. Choose it again.' });
+  if (!bytes && contentType && !['image/jpeg', 'image/png', 'image/webp'].includes(contentType)) return res.status(415).json({ code: 'invalid_photo', message: 'Use a JPEG, PNG or WebP photo.' });
   if (!bytes || bytes.length < 100) return res.status(400).json({ code: 'empty_photo', message: 'Choose a clear photo of the card.' });
   const detectedMime = imageMimeBySignature(bytes);
   if (!detectedMime || detectedMime !== contentType) return res.status(415).json({ code: 'invalid_photo', message: 'Use a JPEG, PNG or WebP photo.' });
@@ -1594,7 +1611,7 @@ app.post('/api/scans/:scanId/qr', scanLimiter, requireContext, async (req, res) 
       return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     }
     res.json({ applied: true });
-  } catch (error) { res.status(403).json({ code: 'qr_not_added', message: userMessage(error, 'This QR code could not be added.') }); }
+  } catch (error) { refuse(res, error, 403, 'qr_not_added', 'This QR code could not be added.'); }
 });
 
 app.post('/api/scans/:scanId/ocr', scanLimiter, requireContext, async (req, res) => {
@@ -1610,7 +1627,7 @@ app.post('/api/scans/:scanId/ocr', scanLimiter, requireContext, async (req, res)
       return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     }
     res.json({ applied: true });
-  } catch (error) { res.status(403).json({ code: 'ocr_not_added', message: userMessage(error, 'Those details could not be added.') }); }
+  } catch (error) { refuse(res, error, 403, 'ocr_not_added', 'Those details could not be added.'); }
 });
 
 app.post('/api/scans/:scanId/ai-read', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1642,7 +1659,7 @@ app.post('/api/scans/:scanId/ocr-failure', scanLimiter, requireContext, async (r
       return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     }
     res.json({ failed: true });
-  } catch (error) { res.status(403).json({ code: 'ocr_failure_not_saved', message: userMessage(error, 'This photo could not be updated.') }); }
+  } catch (error) { refuse(res, error, 403, 'ocr_failure_not_saved', 'This photo could not be updated.'); }
 });
 
 app.post('/api/scans/:scanId/save', requireContext, async (req, res) => {
@@ -1655,7 +1672,7 @@ app.post('/api/scans/:scanId/save', requireContext, async (req, res) => {
     const result = await (saveScannedLead(actor.id, workspace.id, { scanId: scanId.data, ...parsed.data }));
     await (updateOnboardingStep(actor.id, workspace.id, 'capture', true));
     res.json(result);
-  } catch (error) { res.status(409).json({ code: 'lead_not_saved', message: userMessage(error, 'The lead could not be saved. Check the details and try again.') }); }
+  } catch (error) { refuse(res, error, 409, 'lead_not_saved', 'The lead could not be saved. Check the details and try again.'); }
 });
 
 app.post('/api/scans/:scanId/material', requireContext, async (req, res) => {
@@ -1665,7 +1682,7 @@ app.post('/api/scans/:scanId/material', requireContext, async (req, res) => {
   if (!scanId.success || !parsed.success) return res.status(400).json({ code: 'invalid_material', message: 'Add the brochure’s company name and check the website.' });
   try {
     res.json(await (saveScannedMaterial(actor.id, workspace.id, { scanId: scanId.data, ...parsed.data })));
-  } catch (error) { res.status(409).json({ code: 'material_not_saved', message: userMessage(error, 'The company material could not be saved.') }); }
+  } catch (error) { refuse(res, error, 409, 'material_not_saved', 'The company material could not be saved.'); }
 });
 
 app.delete('/api/scans/:scanId/material', requireContext, async (req, res) => {
@@ -1675,7 +1692,7 @@ app.delete('/api/scans/:scanId/material', requireContext, async (req, res) => {
   try {
     if (!await (removeScannedMaterial(actor.id, workspace.id, scanId.data))) return res.status(404).json({ code: 'material_missing', message: 'This company material is no longer available.' });
     res.json({ removed: true });
-  } catch (error) { res.status(403).json({ code: 'material_not_removed', message: userMessage(error, 'This company material could not be removed.') }); }
+  } catch (error) { refuse(res, error, 403, 'material_not_removed', 'This company material could not be removed.'); }
 });
 
 app.post('/api/scans/:scanId/discard', requireContext, async (req, res) => {

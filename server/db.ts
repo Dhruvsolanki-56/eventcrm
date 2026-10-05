@@ -1849,6 +1849,14 @@ async function getActorName(actorId: string) {
   return user?.name ?? 'Your name';
 }
 
+/** True when this draft is for someone who asked not to receive email, so the page can say why it will not be sent. */
+export async function draftRecipientOptedOut(actorId: string, workspaceId: string, emailId: string) {
+  await assertWorkspaceAccess(actorId, workspaceId);
+  if (!await emailAccessible(actorId, workspaceId, emailId)) return false;
+  const row = await db.prepare(`SELECT c.do_not_contact FROM emails m JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id WHERE m.workspace_id=? AND m.id=?`).get(workspaceId, emailId) as { do_not_contact: number } | undefined;
+  return Boolean(row?.do_not_contact);
+}
+
 export async function updateEmailDraft(actorId: string, workspaceId: string, emailId: string, subject: string, body: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const draft = await (db.prepare(`SELECT contact_id FROM emails WHERE workspace_id=? AND id=? AND status='draft'`).get(workspaceId, emailId)) as { contact_id: string } | undefined;
