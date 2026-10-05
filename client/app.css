@@ -1360,3 +1360,27 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 @keyframes install-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .install-card { animation: none; } }
 @media (max-width: 780px) { .install-card { right: 16px; bottom: calc(72px + env(safe-area-inset-bottom)); left: 16px; width: auto; } }
+
+/* ---------- Scan: the event is part of the capture card; the side column sizes to what it holds ---------- */
+.scan-layout { grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); }
+.scan-side { display: grid; align-content: start; gap: 16px; min-width: 0; }
+.scan-side .tray-card { min-height: 0; }
+.scan-side .tray-empty { min-height: 0; padding: 22px 12px 12px; }
+.capture-event-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; margin: -16px -16px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.capture-event-bar .capture-event-label { flex: 1 1 auto; color: var(--ink-2); font-size: 13.5px; font-weight: 600; }
+.capture-event-bar select { flex: 0 1 300px; min-width: 200px; }
+.capture-event-bar .quick-event { flex: 1 1 100%; }
+.recent-saves { display: grid; padding: 16px; }
+.recent-saves .section-head { margin-bottom: 6px; }
+.recent-saves h2 { margin: 0; font-size: 14px; }
+.recent-save { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 4px; border-top: 1px solid var(--line); }
+.recent-save:hover strong { text-decoration: underline; text-underline-offset: 3px; }
+.recent-save > span:nth-child(2) { display: grid; flex: 1; min-width: 0; }
+.recent-save strong { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.recent-save small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.recent-save time { flex: none; color: var(--faint); font-size: 12px; }
+@media (max-width: 780px) {
+  .capture-event-bar { margin: -16px -16px 14px; }
+  .capture-event-bar .capture-event-label { flex-basis: 100%; }
+  .capture-event-bar select { flex: 1 1 160px; min-width: 0; }
+}

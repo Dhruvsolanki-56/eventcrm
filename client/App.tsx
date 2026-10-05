@@ -1512,6 +1512,24 @@ function sentence(text: string) {
   return clean ? `${clean.charAt(0).toUpperCase()}${clean.slice(1)}.` : '';
 }
 
+/** The last few people saved in this workspace, so the side of Scan shows progress instead of empty space. */
+function RecentSaves({ refreshKey }: { refreshKey: number }) {
+  const { session } = useWorkspace();
+  const [people, setPeople] = useState<PersonRow[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    void request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id })
+      .then((result) => { if (active) setPeople([...result.people].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, 5)); })
+      .catch(() => { if (active) setPeople([]); });
+    return () => { active = false; };
+  }, [session.workspace.id, refreshKey]);
+  if (!people?.length) return null;
+  return <section className="surface-card recent-saves" aria-labelledby="recent-saves-title">
+    <div className="section-head"><div><h2 id="recent-saves-title">Recently saved</h2></div><Link className="subtle-link" to="/people">All people</Link></div>
+    {people.map((person) => <Link className="recent-save" key={person.id} to={`/people/${person.id}`}><span className="avatar small">{initialsOf(person.name)}</span><span><strong>{person.name}</strong><small>{person.company_name}</small></span><time>{relativeDay(String(person.updated_at))}</time></Link>)}
+  </section>;
+}
+
 function ScanThumbnail({ item }: { item: ScanView }) {
   const [localUrl, setLocalUrl] = useState('');
   useEffect(() => {
@@ -1769,11 +1787,12 @@ function ScanPage() {
   }
   const readyCount = scans.filter((item) => item.status === 'ready' || item.status === 'failed').length;
   return <section className="scan-view">
-    <div className="page-heading-row scan-heading"><div><h1>Scan cards</h1></div><div className="capture-event-picker"><label className="capture-event-label" htmlFor="capture-event"><CalendarDays size={15} aria-hidden="true" /><span>Saving to</span><span className="sr-only">Event for this capture</span></label><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select>{session.workspace.kind === 'company' && session.workspace.role === 'admin' && <QuickEvent csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onCreated={(created) => { setCaptureEvents((current) => [created, ...current.map((item) => ({ ...item, is_active: 0 }))]); setCaptureEventId(created.id); }} />}</div></div>
+    <div className="page-heading-row"><div><h1>Scan cards</h1><p className="page-lede">Photograph a card, brochure or QR code. You check every detail before it is saved.</p></div></div>
     {(!online || waitingOffline > 0) && <div className={`offline-banner${online ? ' is-back' : ''}`} role="status"><WifiOff size={18} aria-hidden="true" /><div><strong>{online ? `${waitingOffline} photo${waitingOffline === 1 ? '' : 's'} saved on this phone` : 'You are offline'}</strong><span>{online ? 'They upload one by one now. Nothing is lost if you close this page.' : 'Keep scanning. Photos are saved on this phone and upload on their own when you are back online.'}</span></div>{online && waitingOffline > 0 && <button type="button" className="button secondary" onClick={() => void flushQueue()}>Upload now</button>}</div>}
 
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
+        <div className="capture-event-bar"><label className="capture-event-label" htmlFor="capture-event"><CalendarDays size={16} aria-hidden="true" /><span>Event for this capture</span></label><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select>{session.workspace.kind === 'company' && session.workspace.role === 'admin' && <QuickEvent csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onCreated={(created) => { setCaptureEvents((current) => [created, ...current.map((item) => ({ ...item, is_active: 0 }))]); setCaptureEventId(created.id); }} />}</div>
         {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>
           <div className="viewfinder-graphic"><div className="viewfinder-corner tl"></div><div className="viewfinder-corner tr"></div><div className="viewfinder-corner bl"></div><div className="viewfinder-corner br"></div><div className="viewfinder-center"><ScanLine size={30} /><strong>Card, brochure, or QR</strong><span>Place it in the frame or choose a photo below.</span></div></div>
           <div className="capture-readiness" role="status"><CircleCheck size={16} aria-hidden="true" /><div><strong>{geminiCardsAvailable === null ? 'Checking reading service…' : 'On-device reading starts at upload'}</strong><span>{geminiCardsAvailable ? 'If local reading misses key details, the photo is sent to Gemini for another suggestion. Google may use free-tier data to improve its products. Check everything before saving.' : 'If reading misses details, type or correct them during review. Nothing is saved until you confirm.'}</span></div></div>
@@ -1783,6 +1802,7 @@ function ScanPage() {
           <p className="helper-copy">Choose several photos if needed. Review each one separately before saving.</p>
         </>}
       </section>
+      <div className="scan-side">
       <aside className="surface-card tray-card"><div className="section-head"><div><h2>To review <span className="count-pill">{readyCount}</span></h2></div><span className="tray-badge">{pending ? 'Working' : 'Ready'}</span></div>
         {scans.length === 0 ? <div className="tray-empty"><span className="empty-icon"><ScanLine size={18} /></span><p>Cards you scan appear here. Open one to check it.</p></div> : <div className="tray-list">{scans.map((item, index) => {
           const title = item.materialCompanyId ? 'Company brochure' : typeof item.extracted?.name === 'string' && item.extracted.name ? item.extracted.name : item.source === 'qr' ? 'QR code' : `Photo ${scans.length - index}`;
@@ -1797,6 +1817,8 @@ function ScanPage() {
           </div>;
         })}<p className="honest-note">{readingMode === 'demo' && <span className="demo-reading">Demo reading</span>}{geminiCardsAvailable ? 'Gemini reads new photos first; on-device OCR is the fallback. ' : 'Cards are read on this device. '}Check every detail before saving. Photos upload to your workspace.</p></div>}
       </aside>
+      <RecentSaves refreshKey={scans.filter((item) => item.status === 'saved').length} />
+      </div>
     </div>
     {emailNowContactId && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeEmailNow(); }}>
       <section className="email-now-dialog" role="dialog" aria-modal="true" aria-labelledby="email-now-title">

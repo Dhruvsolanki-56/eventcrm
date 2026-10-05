@@ -68,3 +68,14 @@ button.email-desk-row:hover { background: var(--surface-2); }
   .email-desk-search { min-height: 44px; }
   .bulk-bar .button, .email-desk-row .button { min-height: 44px; }
 }
+
+/* Two cards instead of one joined panel: the queue is only as tall as its items, the editor sits beside it. */
+.email-desk-layout { align-items: start; gap: 16px; overflow: visible; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+.email-desk-list { position: sticky; top: calc(var(--topbar) + 16px); max-height: calc(100vh - var(--topbar) - 32px); overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.email-desk-list > :last-child { border-bottom: 0; }
+.email-desk-list-head { margin: 0; padding: 12px 16px 10px; border-bottom: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.email-desk-row.is-selected { box-shadow: inset 3px 0 var(--accent); }
+.email-desk-preview { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+@media (max-width: 780px) {
+  .email-desk-list { position: static; max-height: none; }
+}
