@@ -46,8 +46,9 @@ test('sample company and attendee accounts enter their own spaces', async ({ pag
       const acme = await (await page.request.get('/api/companies/demo-ns-acme')).json() as { people: Array<{ id: string }>; company: { deal_status: string; deal_value_minor: number } };
       expect(acme.people).toHaveLength(3);
       expect(acme.company).toMatchObject({ deal_status: 'won', deal_value_minor: 125000 });
-      const seededPeople = ((await (await page.request.get('/api/contacts')).json()).people) as Array<{ id: string }>;
-      expect(seededPeople).toHaveLength(30);
+      const seededPage = await (await page.request.get('/api/contacts?pageSize=200')).json() as { people: Array<{ id: string }>; total: number };
+      expect(seededPage.people).toHaveLength(30);
+      expect(seededPage.total).toBe(30);
       const tessa = await (await page.request.get('/api/contacts/demo-ns-contact-1')).json() as { voiceNotes: Array<{ id: string; transcript: string; duration_seconds: number; audio_mime: string }> };
       const sampleVoice = tessa.voiceNotes.find((note) => note.transcript === 'Interested in a small sample run after the event.');
       expect(sampleVoice).toMatchObject({ id: 'a1000000-0000-4000-8000-000000000001', duration_seconds: 3, audio_mime: 'audio/wav' });

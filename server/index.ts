@@ -43,6 +43,7 @@ import {
   listNotifications,
   markNotificationRead,
   getDigestRuns,
+  countPeopleByStage,
   listPeople,
   listCompanies,
   suggestCompanies,
@@ -751,9 +752,19 @@ app.get('/api/contacts', requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const query = z.string().max(100).safeParse(req.query.q ?? '');
   const archived = z.enum(['true', 'false']).optional().safeParse(req.query.archived);
-  if (!query.success || !archived.success) return res.status(400).json({ code: 'invalid_search', message: 'Check the people search and try again.' });
+  const stage = z.enum(['', 'new', 'contacted', 'replied', 'meeting', 'won', 'lost']).safeParse(req.query.stage ?? '');
+  const page = z.coerce.number().int().min(1).max(100_000).safeParse(req.query.page ?? 1);
+  const size = z.coerce.number().int().min(1).max(200).safeParse(req.query.pageSize ?? 10);
+  if (!query.success || !archived.success || !stage.success || !page.success || !size.success) return res.status(400).json({ code: 'invalid_search', message: 'Check the people search and try again.' });
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ people: await (listPeople(actor.id, workspace.id, query.data, archived.data === 'true')) });
+  const showArchived = archived.data === 'true';
+  const counts = await countPeopleByStage(actor.id, workspace.id, query.data, showArchived);
+  const matching = stage.data ? counts.stages[stage.data] ?? 0 : counts.total;
+  // A page past the end (people were archived meanwhile) lands on the last page instead of showing nothing.
+  const lastPage = Math.max(1, Math.ceil(matching / size.data));
+  const current = Math.min(page.data, lastPage);
+  const people = await listPeople(actor.id, workspace.id, query.data, showArchived, size.data, (current - 1) * size.data, stage.data);
+  res.json({ people, total: matching, page: current, pageSize: size.data, stageCounts: counts.stages, allTotal: counts.total });
 });
 
 app.get('/api/products', requireContext, async (_req, res) => {

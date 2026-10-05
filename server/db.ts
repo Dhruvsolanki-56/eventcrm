@@ -581,21 +581,37 @@ export async function getDashboard(actorId: string, workspaceId: string) {
   return { counts: { ...counts, drafts_ready: draftsReady }, due, nextReviewScanId, hasPersonalizationDetails, timeZone };
 }
 
-// The screen shows the 200 most recent matches (search finds the rest); an export passes a larger limit to get everyone.
-export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false, limit = 200) {
-  await (assertWorkspaceAccess(actorId, workspaceId));
-  const term = `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`;
-  return await (db.prepare(`SELECT c.id,c.name,c.title,c.email,c.phone,c.website,c.quality,c.stage,c.version,c.updated_at,
-      co.id AS company_id,co.name AS company_name,COUNT(DISTINCT en.id) AS encounters,
-      GROUP_CONCAT(DISTINCT p.name) AS products
-    FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
-    LEFT JOIN encounters en ON en.contact_id=c.id AND en.workspace_id=c.workspace_id
-    LEFT JOIN contact_products cp ON cp.contact_id=c.id AND cp.workspace_id=c.workspace_id
-    LEFT JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id
+// Who a person can see: their own people, everyone for an admin, and people met at events they are on.
+function peopleScope(actorId: string, workspaceId: string, search: string, includeArchived: boolean) {
+  const term = `%${search.trim().replace(/[\%_]/g, '\$&')}%`;
+  const sql = `FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     WHERE c.workspace_id=? AND c.deleted_at IS NULL AND ((?=1 AND c.archived_at IS NOT NULL) OR (?=0 AND c.archived_at IS NULL))
       AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin') OR EXISTS (SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND ea.user_id=?))
-      AND (?='' OR c.name LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR co.name LIKE ? ESCAPE '\\')
-    GROUP BY c.id ORDER BY c.updated_at DESC,c.name LIMIT ?`).all(workspaceId, includeArchived ? 1 : 0, includeArchived ? 1 : 0, actorId, actorId, actorId, search.trim(), term, term, term, limit)) as Array<Record<string, unknown>>;
+      AND (?='' OR c.name LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR co.name LIKE ? ESCAPE '\\')`;
+  const flag = includeArchived ? 1 : 0;
+  return { sql, args: [workspaceId, flag, flag, actorId, actorId, actorId, search.trim(), term, term, term] };
+}
+
+// One page of people, newest first. `limit` defaults to a screenful; an export or a report passes a larger one to get everyone.
+export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false, limit = 200, offset = 0, stage = '') {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  const scope = peopleScope(actorId, workspaceId, search, includeArchived);
+  return await (db.prepare(`SELECT c.id,c.name,c.title,c.email,c.phone,c.website,c.quality,c.stage,c.version,c.updated_at,
+      co.id AS company_id,co.name AS company_name,
+      (SELECT COUNT(*) FROM encounters en WHERE en.contact_id=c.id AND en.workspace_id=c.workspace_id) AS encounters,
+      (SELECT GROUP_CONCAT(p.name) FROM contact_products cp JOIN products p ON p.id=cp.product_id AND p.workspace_id=cp.workspace_id WHERE cp.contact_id=c.id AND cp.workspace_id=c.workspace_id) AS products
+    ${scope.sql} AND (?='' OR c.stage=?)
+    ORDER BY c.updated_at DESC,c.name,c.id LIMIT ? OFFSET ?`).all(...scope.args, stage, stage, limit, offset)) as Array<Record<string, unknown>>;
+}
+
+/** How many people match, in total and at each stage (the stage counts ignore the stage filter so the tabs stay stable). */
+export async function countPeopleByStage(actorId: string, workspaceId: string, search = '', includeArchived = false) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  const scope = peopleScope(actorId, workspaceId, search, includeArchived);
+  const rows = await (db.prepare(`SELECT c.stage AS stage,COUNT(*) AS n ${scope.sql} GROUP BY c.stage`).all(...scope.args)) as Array<{ stage: string; n: number }>;
+  const stages: Record<string, number> = {};
+  for (const row of rows) stages[row.stage] = Number(row.n);
+  return { total: rows.reduce((sum, row) => sum + Number(row.n), 0), stages };
 }
 
 export async function listCompanies(actorId: string, workspaceId: string, search = '') {
@@ -663,7 +679,7 @@ export async function getCompanyDetail(actorId: string, workspaceId: string, com
   const companies = await listCompanies(actorId, workspaceId);
   const visible = companies.find((item) => item.id === companyId);
   if (!visible) return undefined;
-  const allPeople = await listPeople(actorId, workspaceId);
+  const allPeople = await listPeople(actorId, workspaceId, '', false, 1_000_000);
   const people = allPeople.filter((person) => person.company_id === companyId);
   const materialRows = await (db.prepare(`SELECT s.id AS scan_id,s.image_mime,s.saved_at,s.extracted_json,e.name AS event_name
     FROM scans s LEFT JOIN events e ON e.id=s.event_id AND e.workspace_id=s.workspace_id
@@ -756,7 +772,7 @@ export async function updateCompanyAbout(actorId: string, workspaceId: string, c
 
 export async function getReportData(actorId: string, workspaceId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const allPeople = await listPeople(actorId, workspaceId);
+  const allPeople = await listPeople(actorId, workspaceId, '', false, 1_000_000);
   const stages = allPeople.reduce<Record<string, number>>((counts, person) => {
     const stage = String(person.stage);
     counts[stage] = (counts[stage] ?? 0) + 1;
@@ -1863,7 +1879,7 @@ export async function listEmailDesk(actorId: string, workspaceId: string) {
       AND ${visibleNoteSql('n')} AND (en.event_id IS NULL OR ?=1 OR EXISTS (
         SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))`)
     .all(workspaceId, noteAccess.all, actorId, actorId, noteAccess.all, actorId) as Array<{ contact_id: string }>).map((row) => row.contact_id));
-  const people = (await listPeople(actorId, workspaceId)).filter((person) => Boolean(person.email) && !blocked.has(String(person.id)) && !drafts.some((draft) => draft.contact_id === person.id && draft.status === 'draft')).slice(0, 100)
+  const people = (await listPeople(actorId, workspaceId, '', false, 1_000_000)).filter((person) => Boolean(person.email) && !blocked.has(String(person.id)) && !drafts.some((draft) => draft.contact_id === person.id && draft.status === 'draft')).slice(0, 100)
     .map((person) => ({ ...person, hasContext: withContext.has(String(person.id)) }));
   return { drafts, people };
 }

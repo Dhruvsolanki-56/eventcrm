@@ -654,10 +654,10 @@ function Temperature({ quality }: { quality: string | null }) {
 }
 
 /** Stage chips with counts. Filtering happens on the list already loaded. */
-function StageFilter({ people, value, onChange }: { people: PersonRow[]; value: string; onChange: (stage: string) => void }) {
+function StageFilter({ counts, all, value, onChange }: { counts: Record<string, number>; all: number; value: string; onChange: (stage: string) => void }) {
   return <div className="stage-filter" role="group" aria-label="Filter by stage">
-    <button type="button" aria-pressed={value === ''} onClick={() => onChange('')}>All <span>{people.length}</span></button>
-    {pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={value === stage} onClick={() => onChange(value === stage ? '' : stage)}><span className={`stage-dot ${stage}`} aria-hidden="true" />{stageLabel(stage)} <span>{people.filter((person) => person.stage === stage).length}</span></button>)}
+    <button type="button" aria-pressed={value === ''} onClick={() => onChange('')}>All <span>{all}</span></button>
+    {pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={value === stage} onClick={() => onChange(value === stage ? '' : stage)}><span className={`stage-dot ${stage}`} aria-hidden="true" />{stageLabel(stage)} <span>{counts[stage] ?? 0}</span></button>)}
   </div>;
 }
 
@@ -690,31 +690,35 @@ function PeoplePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState(searchParams.get('q') ?? '');
   const [people, setPeople] = useState<PersonRow[]>([]);
+  const [totals, setTotals] = useState<{ matching: number; all: number; stages: Record<string, number> }>({ matching: 0, all: 0, stages: {} });
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [showArchived, setShowArchived] = useState(searchParams.get('archived') === '1');
   const [stage, setStage] = useState(searchParams.get('stage') ?? '');
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [query, stage, showArchived]);
+  const [reloadKey, setReloadKey] = useState(0);
   const [restoringId, setRestoringId] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let current = true; setLoading(true);
     const timer = window.setTimeout(() => void Promise.all([
-      request<{ people: PersonRow[] }>(`/api/contacts?q=${encodeURIComponent(query)}&archived=${showArchived}`, {}, { workspaceId: session.workspace.id }),
+      request<{ people: PersonRow[]; total: number; page: number; allTotal: number; stageCounts: Record<string, number> }>(`/api/contacts?q=${encodeURIComponent(query)}&archived=${showArchived}&stage=${showArchived ? '' : stage}&page=${page}&pageSize=${pageSize}`, {}, { workspaceId: session.workspace.id }),
       request<{ companies: CompanyRow[] }>(`/api/companies?q=${encodeURIComponent(query)}`, {}, { workspaceId: session.workspace.id }),
     ]).then(([peopleResult, companyResult]) => {
       if (current) {
         setPeople(peopleResult.people);
+        setTotals({ matching: peopleResult.total, all: peopleResult.allTotal, stages: peopleResult.stageCounts });
+        if (peopleResult.page !== page) setPage(peopleResult.page);
         setCompanies(companyResult.companies.map((company) => ({ ...company, website: safeWebsiteHref(company.website) ?? '' })));
       }
     }).catch((error) => { if (current) notify((error as Error).message); }).finally(() => { if (current) setLoading(false); }), 180);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [query, session.workspace.id, notify, showArchived]);
+  }, [query, session.workspace.id, notify, showArchived, stage, page, reloadKey]);
   async function restorePerson(personId: string) {
     setRestoringId(personId);
     try {
       await request(`/api/contacts/${personId}/archive`, { method: 'PATCH', body: JSON.stringify({ archived: false }) }, { csrfToken, workspaceId: session.workspace.id });
-      setPeople((current) => current.filter((person) => person.id !== personId));
+      setReloadKey((key) => key + 1);
       notify('Person restored to the active people list.');
     } catch (error) { notify((error as Error).message); }
     finally { setRestoringId(''); }
@@ -729,15 +733,15 @@ function PeoplePage() {
     setShowArchived(next); setParam('archived', next ? '1' : '');
   }
   function chooseStage(next: string) { setStage(next); setParam('stage', next); }
-  const visible = stage ? people.filter((person) => person.stage === stage) : people;
-  const currentPage = Math.min(page, Math.max(1, Math.ceil(visible.length / pageSize)));
-  const pageRows = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const total = people.length;
+  const visible = people;
+  const currentPage = page;
+  const pageRows = people;
+  const total = totals.all;
   return <section className="records-view">
     <div className="page-heading-row"><div><h1>{showArchived ? 'Archived people' : 'People'}</h1><p className="page-lede">{showArchived ? 'Archived people keep their history. Restore one to work with them again.' : loading && !total ? 'Loading…' : `${total} ${total === 1 ? 'person' : 'people'}${query.trim() ? ' match your search' : ''}`}</p></div><div className="people-heading-actions"><button type="button" className="button secondary" onClick={toggleArchived}>{showArchived ? <><ArrowLeft size={15} aria-hidden="true" /> Show active people</> : <><Archive size={15} aria-hidden="true" /> Show archived people</>}</button>{!showArchived && <Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link>}</div></div>
     <div className="list-toolbar">
       <label className="search-box"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies and people" aria-label="Search companies and people" /></label>
-      {!showArchived && <StageFilter people={people} value={stage} onChange={chooseStage} />}
+      {!showArchived && <StageFilter counts={totals.stages} all={totals.all} value={stage} onChange={chooseStage} />}
     </div>
     {!showArchived && query.trim() && companies.length > 0 && <section className="search-company-matches" aria-label="Matching companies"><h2>Companies</h2><div className="company-match-list">{companies.map((company) => <Link className="company-match" key={company.id} to={`/companies/${company.id}`} aria-label={`Company details for ${company.name}`}><span className="company-icon"><Building2 size={16} /></span><span><strong>{company.name}</strong><small>{company.people} {company.people === 1 ? 'person' : 'people'} · {company.encounters} conversations</small></span><span className="company-match-go">Company details <ArrowRight size={14} /></span></Link>)}</div></section>}
     <div className="surface-card records-table"><div className="records-header people-row"><span>Person</span><span>Company</span><span>Stage</span><span>Temperature</span><span>Talks</span><span>{showArchived ? '' : 'Updated'}</span></div>
@@ -748,7 +752,7 @@ function PeoplePage() {
           : <Link className="records-row people-row" key={person.id} to={`/people/${person.id}`}>{cells}<span className="date-cell">{relativeDay(String(person.updated_at))}</span></Link>;
       }) : <div className="records-empty">{showArchived ? 'No archived people. Archived records stay here until restored.' : stage ? <>Nobody is at {stageLabel(stage)} yet. <button type="button" className="text-button" onClick={() => chooseStage('')}>Show everyone</button></> : 'No people match that search. Try another name or capture a card.'}</div>}
     </div>
-    <Pagination page={currentPage} total={visible.length} label="People" onPage={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} />
+    <Pagination page={currentPage} total={totals.matching} label="People" onPage={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} />
   </section>;
 }
 
@@ -877,7 +881,7 @@ function PipelinePage() {
   const [movingId, setMovingId] = useState('');
   const [lostDraft, setLostDraft] = useState<{ person: PersonRow; reason: string } | null>(null);
   const [phoneStage, setPhoneStage] = useState('new');
-  const load = useCallback(() => request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)), [session.workspace.id]);
+  const load = useCallback(() => request<{ people: PersonRow[] }>('/api/contacts?pageSize=200', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)), [session.workspace.id]);
   useEffect(() => { void load().catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [load, notify]);
   const needle = filter.trim().toLowerCase();
   const rows = (people ?? []).filter((person) => !needle || `${person.name} ${person.company_name}`.toLowerCase().includes(needle));
@@ -1564,8 +1568,8 @@ function RecentSaves({ refreshKey }: { refreshKey: number }) {
   const [people, setPeople] = useState<PersonRow[] | null>(null);
   useEffect(() => {
     let active = true;
-    void request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id })
-      .then((result) => { if (active) setPeople([...result.people].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at))).slice(0, 5)); })
+    void request<{ people: PersonRow[] }>('/api/contacts?pageSize=5', {}, { workspaceId: session.workspace.id })
+      .then((result) => { if (active) setPeople(result.people); })
       .catch(() => { if (active) setPeople([]); });
     return () => { active = false; };
   }, [session.workspace.id, refreshKey]);
