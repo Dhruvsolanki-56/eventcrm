@@ -12,9 +12,10 @@ import { CompanyAbout } from './company-about.js';
 import { QuickEvent } from './quick-event.js';
 import { WhenVisible } from './when-visible.js';
 import { BrandMark } from './brand.js';
-import { InstallPrompt } from './install-app.js';
+import { Skeleton } from './skeletons.js';
+import { InstallPrompt, markCardSaved } from './install-app.js';
 import { cacheSession, clearCachedSession, readCachedSession } from './offline-session.js';
-import { isOfflineError, listQueuedPhotos, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
+import { isOfflineError, listQueuedPhotos, queueChangedEvent, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
 import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas, remember, rememberedNumber } from './quick-capture.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
 import { useWorkspace, WorkspaceContext, type ToastAction } from './workspace-context.js';
@@ -352,6 +353,9 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
 
 function WorkspaceShell() {
   const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  // A short fade when the screen changes, so moving around feels like one app rather than page loads. Opacity only: a transform here would move the fixed review sheet.
+  useEffect(() => { if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) mainRef.current?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out' }); }, [location.pathname]);
   const { session, logout, switchWorkspace, notify } = useWorkspace();
   const { workspace, availableWorkspaces, user } = session;
   const [menuOpen, setMenuOpen] = useState(false);
@@ -426,10 +430,12 @@ function WorkspaceShell() {
         <div className="topbar-mode"><span className="mode-dot"></span><span className="topbar-workspace-name">{workspace.name}</span><span className="topbar-separator">/</span><strong>{links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace')}</strong></div>
         {workspaceData?.sampleData && <span className="sample-badge">Sample data</span>}
         {location.pathname !== '/scan' && <span className={`topbar-event${workspaceData?.event ? ' is-live' : ''}`} title="Active event: new captures go here"><span className="live-dot" aria-hidden="true" />{workspaceData?.event?.name ?? 'No active event'}</span>}
+        <OfflineChip />
         <NotificationsMenu />
         <button className="topbar-avatar" aria-label="Open account menu" onClick={() => { setMobileMenu(true); setMenuOpen(true); }}>{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</button>
       </header>
-      <main className="page-content">
+      <InstallPrompt />
+      <main className="page-content" ref={mainRef}>
         <Routes>
           <Route path="/" element={<Navigate to="/scan" replace />} />
           <Route path="/home" element={<HomePage onShowTour={() => { setTourStep(0); setTourOpen(true); }} />} />
@@ -491,6 +497,28 @@ function CaptureEmailPreferenceMenu() {
 }
 
 type UserNotification = { id: string; kind: string; message: string; contact_id: string | null; read_at: string | null; created_at: string };
+/** Shows on every screen when there is no signal or photos are still waiting, so people know their captures are safe. */
+function OfflineChip() {
+  const { session } = useWorkspace();
+  const navigate = useNavigate();
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [waiting, setWaiting] = useState(0);
+  useEffect(() => {
+    let active = true;
+    const count = () => void listQueuedPhotos(session.workspace.id).then((items) => { if (active) setWaiting(items.length); });
+    const goOnline = () => { setOnline(true); count(); };
+    const goOffline = () => setOnline(false);
+    count();
+    window.addEventListener('online', goOnline); window.addEventListener('offline', goOffline); window.addEventListener(queueChangedEvent, count);
+    return () => { active = false; window.removeEventListener('online', goOnline); window.removeEventListener('offline', goOffline); window.removeEventListener(queueChangedEvent, count); };
+  }, [session.workspace.id]);
+  if (online && !waiting) return null;
+  const label = !online ? (waiting ? `Offline · ${waiting} waiting` : 'Offline') : `Uploading ${waiting}`;
+  return <button type="button" className={`offline-chip${online ? ' is-syncing' : ''}`} onClick={() => navigate('/scan')} title={online ? 'Photos taken offline are uploading now' : 'No signal. Keep scanning; photos are kept on this device and upload when you are back online.'}>
+    {online ? <RotateCw size={14} aria-hidden="true" className="status-spin" /> : <WifiOff size={14} aria-hidden="true" />}<span>{label}</span>
+  </button>;
+}
+
 function NotificationsMenu() {
   const { session, csrfToken, notify } = useWorkspace();
   const navigate = useNavigate();
@@ -553,7 +581,6 @@ function HomePage({ onShowTour }: { onShowTour: () => void }) {
         ? { title: isPersonal ? 'Add a little about yourself.' : 'Add what you sell so emails sound like you.', body: 'A few short details help make your messages more useful.', label: isPersonal ? 'Add your details' : 'Add work details', href: '/settings' }
         : { title: 'Start with the card you just collected.', body: 'Take a photo or choose a picture. Check each detail before it is saved.', label: 'Open camera', href: '/scan' };
   return <section className="home-view">
-    <InstallPrompt />
     <div className="page-heading-row"><div><p className="page-meta">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p><h1>Good morning, {session.user.name.split(' ')[0]}.</h1></div></div>
     <section className="next-action-card">
       <div className="action-illustration"><ScanLine size={30} strokeWidth={1.6} /></div>
@@ -600,6 +627,8 @@ const relativeDay = (value: string) => {
   if (days < 7) return `${days} days ago`;
   return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
+
+const talkedWhen = (value: string) => { const day = relativeDay(value); return day === 'Today' || day === 'Yesterday' ? day.toLowerCase() : day.endsWith('ago') ? day : `on ${day}`; };
 
 function Temperature({ quality }: { quality: string | null }) {
   if (!quality) return <span className="temperature none">—</span>;
@@ -694,7 +723,7 @@ function PeoplePage() {
     </div>
     {!showArchived && query.trim() && companies.length > 0 && <section className="search-company-matches" aria-label="Matching companies"><h2>Companies</h2><div className="company-match-list">{companies.map((company) => <Link className="company-match" key={company.id} to={`/companies/${company.id}`} aria-label={`Company details for ${company.name}`}><span className="company-icon"><Building2 size={16} /></span><span><strong>{company.name}</strong><small>{company.people} {company.people === 1 ? 'person' : 'people'} · {company.encounters} conversations</small></span><span className="company-match-go">Company details <ArrowRight size={14} /></span></Link>)}</div></section>}
     <div className="surface-card records-table"><div className="records-header people-row"><span>Person</span><span>Company</span><span>Stage</span><span>Temperature</span><span>Talks</span><span>{showArchived ? '' : 'Updated'}</span></div>
-      {loading && !people.length ? <p className="records-empty">Loading people…</p> : visible.length ? pageRows.map((person) => {
+      {loading && !people.length ? <Skeleton variant="table" label="Loading people" rows={8} /> : visible.length ? pageRows.map((person) => {
         const cells = <><span className="person-cell"><span className="avatar small">{initialsOf(person.name)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || person.phone || 'No title or contact method'}</small></span></span><span className="company-cell">{person.company_name}</span><span><StageBadge stage={person.stage} /></span><span><Temperature quality={person.quality} /></span><span className="number-cell">{person.encounters}</span></>;
         return showArchived
           ? <div className="records-row people-row archived-person-row" key={person.id}>{cells}<span><button type="button" className="button secondary" disabled={restoringId === person.id} onClick={() => void restorePerson(person.id)}>{restoringId === person.id ? 'Restoring…' : 'Restore'}</button></span></div>
@@ -720,7 +749,7 @@ function CompaniesPage() {
   return <section className="records-view">
     <div className="page-heading-row"><div><h1>Companies</h1><p className="page-lede">{loading ? 'Loading…' : `${companies.length} ${companies.length === 1 ? 'company' : 'companies'}${openValue ? ` · ${usd(openValue)} in open deals` : ''}`}</p></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
     {companies.length > 6 && <div className="list-toolbar"><label className="search-box"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter companies" aria-label="Filter companies" /></label></div>}
-    {loading ? <div className="surface-card records-empty">Loading companies…</div> : <div className="surface-card records-table"><div className="records-header company-row"><span>Company</span><span>People</span><span>Conversations</span><span>Deal</span><span /></div>
+    {loading ? <Skeleton variant="table" label="Loading companies" /> : <div className="surface-card records-table"><div className="records-header company-row"><span>Company</span><span>People</span><span>Conversations</span><span>Deal</span><span /></div>
       {visible.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((company) => <div className="records-row company-row" key={company.id}>
         <span className="person-cell"><span className="company-icon"><Building2 size={16} /></span><span><Link className="row-link" to={`/companies/${company.id}`}><strong>{company.name}</strong></Link><small>{company.website ? <a href={company.website} target="_blank" rel="noreferrer">{company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</a> : 'No website'}</small></span></span>
         <span className="number-cell">{company.people}</span>
@@ -794,7 +823,7 @@ function CompanyPage() {
     } catch (issue) { setError((issue as Error).message); }
     finally { setRemovingMaterialId(''); }
   }
-  if (!detail) return <section className="surface-card skeleton-block">{error || 'Loading company…'}{error && <p><Link className="subtle-link" to="/companies">Back to Companies</Link></p>}</section>;
+  if (!detail) return error ? <section className="surface-card skeleton-block">{error}<p><Link className="subtle-link" to="/companies">Back to Companies</Link></p></section> : <Skeleton variant="detail" label="Loading company" />;
   const company = detail.company;
   const showDeal = canManage && session.workspace.kind === 'company';
   const showMerge = canMerge && mergeTargets.length > 0;
@@ -822,31 +851,70 @@ function CompanyPage() {
 }
 
 function PipelinePage() {
-  const { session, notify } = useWorkspace();
+  const { session, csrfToken, notify } = useWorkspace();
   const [people, setPeople] = useState<PersonRow[] | null>(null);
   const [filter, setFilter] = useState('');
-  useEffect(() => { void request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)).catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [session.workspace.id, notify]);
+  const [dragId, setDragId] = useState('');
+  const [overStage, setOverStage] = useState('');
+  const [movingId, setMovingId] = useState('');
+  const [lostDraft, setLostDraft] = useState<{ person: PersonRow; reason: string } | null>(null);
+  const load = useCallback(() => request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)), [session.workspace.id]);
+  useEffect(() => { void load().catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [load, notify]);
   const needle = filter.trim().toLowerCase();
   const rows = (people ?? []).filter((person) => !needle || `${person.name} ${person.company_name}`.toLowerCase().includes(needle));
   const active = rows.filter((person) => person.stage !== 'won' && person.stage !== 'lost').length;
+  // Same request the person page sends; the version check stops two people overwriting each other.
+  async function move(person: PersonRow, stage: string, reason = '') {
+    if (person.stage === stage) return;
+    setMovingId(person.id);
+    setPeople((current) => current?.map((item) => item.id === person.id ? { ...item, stage } : item) ?? current);
+    try {
+      const result = await request<{ version: number }>(`/api/contacts/${person.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage, version: Number(person.version), ...(stage === 'lost' ? { lostReason: reason } : {}) }) }, { csrfToken, workspaceId: session.workspace.id });
+      setPeople((current) => current?.map((item) => item.id === person.id ? { ...item, stage, version: result.version } : item) ?? current);
+      notify(`${person.name} moved to ${stageLabel(stage)}.`);
+    } catch (issue) {
+      notify((issue as Error).message);
+      await load().catch(() => undefined);
+    } finally { setMovingId(''); }
+  }
+  function drop(stage: string) {
+    const person = people?.find((item) => item.id === dragId);
+    setDragId(''); setOverStage('');
+    if (!person || person.stage === stage) return;
+    if (stage === 'lost') setLostDraft({ person, reason: '' });
+    else void move(person, stage);
+  }
   return <section className="records-view pipeline-view">
     <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${rows.filter((person) => person.stage === 'won').length} won · ${rows.filter((person) => person.stage === 'lost').length} lost` : 'Loading…'}</p></div>
       <label className="search-box pipeline-search"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name or company" aria-label="Filter by name or company" /></label></div>
-    <div className="pipeline-grid">{pipelineStages.map((stage) => {
+    {!people ? <Skeleton variant="board" label="Loading pipeline" /> : <div className={`pipeline-grid${dragId ? ' is-dragging' : ''}`}>{pipelineStages.map((stage) => {
       const column = rows.filter((person) => person.stage === stage);
-      return <section className={`pipeline-column ${stage}`} key={stage} aria-label={`${stageLabel(stage)}, ${column.length}`}>
-        <div className="pipeline-column-head"><h2><span className={`stage-dot ${stage}`} aria-hidden="true" />{stageLabel(stage)}</h2><span className="count-pill">{column.length}</span></div>
-        <div className="pipeline-cards">{column.map((person) => <Link className="pipeline-person" to={`/people/${person.id}`} key={person.id}>
+      return <section className={`pipeline-column${overStage === stage ? ' is-over' : ''}`} key={stage} aria-label={`${stageLabel(stage)}, ${column.length}`}
+        onDragOver={(event) => { if (!dragId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; if (overStage !== stage) setOverStage(stage); }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOverStage(''); }}
+        onDrop={(event) => { event.preventDefault(); drop(stage); }}>
+        <div className="pipeline-column-head"><h2>{stageLabel(stage)}</h2><span className="pipeline-count">{column.length}</span></div>
+        <div className="pipeline-cards">{column.map((person) => <Link className={`pipeline-person${dragId === person.id ? ' is-dragged' : ''}${movingId === person.id ? ' is-moving' : ''}`} to={`/people/${person.id}`} key={person.id} draggable
+          onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', person.id); setDragId(person.id); }}
+          onDragEnd={() => { setDragId(''); setOverStage(''); }}>
           <strong>{person.name}</strong>
           <small>{person.company_name}</small>
           <span className="pipeline-person-meta">{person.quality ? <Temperature quality={person.quality} /> : <span />}<span>{relativeDay(String(person.updated_at))}</span></span>
         </Link>)}
-        {people && !column.length && <p className="pipeline-empty">{needle ? 'No match' : 'Nobody here yet'}</p>}</div>
+        {!column.length && <p className="pipeline-empty">{dragId ? 'Drop here' : needle ? 'No match' : 'Nobody yet'}</p>}</div>
       </section>;
-    })}</div>
-    <p className="pipeline-footnote">Change a person’s stage from their page. Deal value is tracked per company.</p>
+    })}</div>}
+    <p className="pipeline-footnote">Drag a card to change its stage, or open a person to change it there. Deal value is tracked per company.</p>
+    {lostDraft && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setLostDraft(null); }}>
+      <form className="lost-dialog" role="dialog" aria-modal="true" aria-labelledby="lost-dialog-title" onSubmit={(event) => { event.preventDefault(); const draft = lostDraft; setLostDraft(null); void move(draft.person, 'lost', draft.reason.trim()); }}>
+        <h2 id="lost-dialog-title">Mark {lostDraft.person.name} as lost</h2>
+        <label>Why was this lost?<textarea rows={3} maxLength={500} autoFocus value={lostDraft.reason} onChange={(event) => setLostDraft({ ...lostDraft, reason: event.target.value })} placeholder="A short reason, for example: budget moved to next year" /></label>
+        <div className="lost-dialog-actions"><button type="button" className="button secondary" onClick={() => setLostDraft(null)}>Cancel</button><button className="button primary" disabled={!lostDraft.reason.trim()}>Save as lost</button></div>
+      </form>
+    </div>}
   </section>;
 }
+
 function ReportsPage() {
   const { session, notify } = useWorkspace();
   const [exporting, setExporting] = useState(false);
@@ -866,7 +934,7 @@ function ReportsPage() {
     finally { setExporting(false); }
   }
   return <section className="records-view"><div className="page-heading-row"><div><h1>Reports</h1></div><button type="button" className="button secondary" disabled={exporting} onClick={() => void exportPeople()}>{exporting ? 'Preparing…' : 'Export people CSV'}</button></div>
-    {!report ? <div className="surface-card records-empty">Loading report…</div> : <><div className="report-metrics"><article className="metric-card"><span>People</span><strong className="metric-number">{report.people}</strong></article><article className="metric-card"><span>Companies</span><strong className="metric-number">{report.companies}</strong></article><article className="metric-card"><span>Follow-ups done</span><strong className="metric-number">{report.metrics.followUpsDone}</strong></article><article className="metric-card"><span>Replies</span><strong className="metric-number">{report.metrics.replies}</strong></article><article className="metric-card"><span>Meetings</span><strong className="metric-number">{report.metrics.meetings}</strong></article><article className="metric-card"><span>Won companies</span><strong className="metric-number">{report.metrics.wonCount}</strong></article><article className="metric-card"><span>Open deal value</span><strong className="metric-number">{money(report.valueByStatus.open)}</strong><small>USD · company level</small></article><article className="metric-card"><span>Won deal value</span><strong className="metric-number">{money(report.valueByStatus.won)}</strong><small>USD · counted once per company</small></article><article className="metric-card"><span>Won value ÷ event spend</span><strong className="metric-number">{wonValuePerSpend ?? 'Unavailable'}</strong><small>{wonValuePerSpend ? `Visible records: ${money(report.valueByStatus.won)} won ÷ ${money(recordedSpendMinor)} accessible-event spend; not event attribution or net ROI.` : 'Add a non-zero event spend in Settings.'}</small></article></div>
+    {!report ? <Skeleton variant="tiles" label="Loading report" /> : <><div className="report-metrics"><article className="metric-card"><span>People</span><strong className="metric-number">{report.people}</strong></article><article className="metric-card"><span>Companies</span><strong className="metric-number">{report.companies}</strong></article><article className="metric-card"><span>Follow-ups done</span><strong className="metric-number">{report.metrics.followUpsDone}</strong></article><article className="metric-card"><span>Replies</span><strong className="metric-number">{report.metrics.replies}</strong></article><article className="metric-card"><span>Meetings</span><strong className="metric-number">{report.metrics.meetings}</strong></article><article className="metric-card"><span>Won companies</span><strong className="metric-number">{report.metrics.wonCount}</strong></article><article className="metric-card"><span>Open deal value</span><strong className="metric-number">{money(report.valueByStatus.open)}</strong><small>USD · company level</small></article><article className="metric-card"><span>Won deal value</span><strong className="metric-number">{money(report.valueByStatus.won)}</strong><small>USD · counted once per company</small></article><article className="metric-card"><span>Won value ÷ event spend</span><strong className="metric-number">{wonValuePerSpend ?? 'Unavailable'}</strong><small>{wonValuePerSpend ? `Visible records: ${money(report.valueByStatus.won)} won ÷ ${money(recordedSpendMinor)} accessible-event spend; not event attribution or net ROI.` : 'Add a non-zero event spend in Settings.'}</small></article></div>
       <div className="report-grid"><article className="surface-card report-chart"><h2>Conversation progress</h2><div className="chart-wrap"><Suspense fallback={<span className="subtle">Loading chart…</span>}><ReportChart data={stageData} /></Suspense></div></article><article className="surface-card report-chart"><h2>{report.activeEvent?.name ?? 'No active event yet'}</h2>{report.activeEvent ? <div className="chart-wrap"><Suspense fallback={<span className="subtle">Loading chart…</span>}><CaptureChart data={report.dailyCaptures} /></Suspense></div> : <p className="records-empty">Choose an active event in Settings to see daily captures.</p>}</article><article className="surface-card report-events"><h2>Conversations by event</h2>{report.events.map((event) => <div className="event-report-row" key={event.id}><strong>{event.name}</strong><span>{event.people} people · {event.encounters} conversations</span><small>{event.spend_minor === null ? 'Spend not set.' : `Event spend: ${money(Number(event.spend_minor))}`}</small></div>)}{!report.events.length && <p className="records-empty">No event activity yet.</p>}</article></div>
     </>}</section>;
 }
@@ -879,6 +947,9 @@ function PersonPage() {
   const requestedEventId = new URLSearchParams(location.search).get('event');
   const { session, csrfToken, notify } = useWorkspace();
   const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>; conversationMemories: Array<{ id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }> } | null>(null);
+  const [personTasks, setPersonTasks] = useState<Array<{ id: string; kind: string; status: string; due_at: string; snoozed_until: string | null; contact_id: string; title: string }>>([]);
+  const timelineSize = detail?.timeline.length ?? 0;
+  useEffect(() => { void request<{ tasks: typeof personTasks }>('/api/tasks', {}, { workspaceId: session.workspace.id }).then((result) => setPersonTasks(result.tasks.filter((task) => task.contact_id === contactId))).catch(() => setPersonTasks([])); }, [contactId, session.workspace.id, timelineSize]);
   const [note, setNote] = useState('');
   const [workspaceProducts, setWorkspaceProducts] = useState<string[]>([]);
   useEffect(() => {
@@ -991,9 +1062,12 @@ function PersonPage() {
     } catch (issue) { setDealError((issue as Error).message); }
     finally { setSavingDeal(false); }
   }
-  if (!detail) return <section className="surface-card skeleton-block">{error || 'Loading this person…'}{error && <p><Link className="subtle-link" to="/people">Back to People</Link></p>}</section>;
+  if (!detail) return error ? <section className="surface-card skeleton-block">{error}<p><Link className="subtle-link" to="/people">Back to People</Link></p></section> : <Skeleton variant="detail" label="Loading person" />;
   const { person, timeline, products } = detail;
-  return <section className="person-view"><div className="page-heading-row person-heading"><div><Link className="back-link" to="/people">← People</Link><div className="person-title"><span className="avatar large" aria-hidden="true">{String(person.name).split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><h1>{String(person.name)}</h1><p className="page-lede">{String(person.title || 'Job title not added')} · <Link to={`/companies/${String(person.company_id)}`}>{String(person.company_name)}</Link></p></div></div></div><div className="person-heading-actions"><Link className="button secondary" to="/scan"><ScanLine size={16} /> Scan another card</Link></div></div>
+  const lastTalk = timeline.filter((item) => ['note', 'encounter', 'email', 'reply'].includes(String(item.kind)) && Date.parse(String(item.created_at)) <= Date.now()).map((item) => String(item.created_at)).sort().at(-1);
+  const nextStep = personTasks.filter((task) => !['done', 'cancelled', 'no_show'].includes(task.status)).map((task) => ({ ...task, at: task.snoozed_until ?? task.due_at })).sort((a, b) => a.at.localeCompare(b.at))[0];
+  const nextOverdue = nextStep ? Date.parse(nextStep.at) < Date.now() : false;
+  return <section className="person-view"><div className="page-heading-row person-heading"><div><Link className="back-link" to="/people">← People</Link><div className="person-title"><span className="avatar large" aria-hidden="true">{String(person.name).split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><h1>{String(person.name)}</h1><p className="page-lede">{String(person.title || 'Job title not added')} · <Link to={`/companies/${String(person.company_id)}`}>{String(person.company_name)}</Link></p><p className="person-pulse"><span><MessageCircle size={14} aria-hidden="true" />{lastTalk ? `Last talked ${talkedWhen(lastTalk)}` : 'No conversation logged yet'}</span>{nextStep ? <a href="#person-next-step" className={nextOverdue ? 'is-overdue' : ''} onClick={() => setPersonPanel(nextStep.kind === 'meeting' ? 'meeting' : 'follow_up')}><CalendarDays size={14} aria-hidden="true" />{nextOverdue ? 'Overdue: ' : 'Next: '}{nextStep.title || (nextStep.kind === 'meeting' ? 'Meeting' : 'Follow-up')} · {new Date(nextStep.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</a> : <span className="muted"><CalendarDays size={14} aria-hidden="true" />No next step planned</span>}</p></div></div></div><div className="person-heading-actions"><Link className="button secondary" to="/scan"><ScanLine size={16} /> Scan another card</Link></div></div>
     <div className="person-layout"><div className="person-main">
     <nav className="person-action-row" aria-label="Actions for this person" data-active={personPanel}>
       <a className="button secondary" href="#person-conversation" aria-current={personPanel === 'conversation' ? 'location' : undefined} onClick={() => setPersonPanel('conversation')}>Conversation</a>
@@ -1325,7 +1399,7 @@ function TasksPage() {
   }
   const groups: Array<[keyof typeof grouped, string]> = [['overdue','Overdue'], ['today','Today'], ['upcoming','Coming up'], ['done','Done']];
   return <section className="records-view"><div className="page-heading-row"><div><h1>Follow-ups</h1></div><Link className="button secondary" to="/scan"><ScanLine size={16} /> Add a person</Link></div>
-    {loading ? <div className="surface-card records-empty">Loading follow-ups…</div> : groups.map(([key, label]) => <section className={`task-group${key === 'overdue' && grouped.overdue.length ? ' is-overdue' : ''}`} key={key}><div className="task-group-heading"><h2>{label}</h2><span>{grouped[key].length}</span></div><div className="surface-card task-list">{grouped[key].length ? grouped[key].map(renderTask) : <p className="task-group-empty">{key === 'done' ? 'Finished steps will show here.' : key === 'today' ? 'Nothing due today.' : key === 'overdue' ? 'You are all caught up.' : 'Nothing coming up yet.'}</p>}</div></section>)}
+    {loading ? <Skeleton variant="list" label="Loading follow-ups" rows={5} /> : groups.map(([key, label]) => <section className={`task-group${key === 'overdue' && grouped.overdue.length ? ' is-overdue' : ''}`} key={key}><div className="task-group-heading"><h2>{label}</h2><span>{grouped[key].length}</span></div><div className="surface-card task-list">{grouped[key].length ? grouped[key].map(renderTask) : <p className="task-group-empty">{key === 'done' ? 'Finished steps will show here.' : key === 'today' ? 'Nothing due today.' : key === 'overdue' ? 'You are all caught up.' : 'Nothing coming up yet.'}</p>}</div></section>)}
   </section>;
 }
 
@@ -2122,6 +2196,7 @@ function ReviewPage() {
         return;
       }
       if (!result.saved) throw new Error('The lead was not saved. Check the details and try again.');
+      markCardSaved();
       const savedContactId = typeof result.contactId === 'string' ? result.contactId : '';
       const voiceSaved = savedContactId ? await reviewVoiceRef.current?.attach(savedContactId, typeof result.encounterId === 'string' ? result.encounterId : undefined) : null;
       setScan((current) => current ? { ...current, status: 'saved', contactId: savedContactId } : current);

@@ -4,6 +4,7 @@ import { ArrowDownToLine, ArrowRight, ArrowUpRight, CalendarDays, RefreshCw } fr
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { AnalyticsData } from '../shared/analytics.js';
 import { request, saveDownload } from './api.js';
+import { Skeleton } from './skeletons.js';
 import { useWorkspace } from './workspace-context.js';
 
 const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value / 100);
@@ -49,7 +50,7 @@ function RecentPeople({ data }: { data: AnalyticsData }) {
 export function OverviewActivity() {
   const { data, error } = useAnalytics('30', '', 0);
   if (error) return <p className="form-error">{error}</p>;
-  if (!data) return <div className="analytics-loading" role="status">Loading workspace activity…</div>;
+  if (!data) return <Skeleton variant="tiles" label="Loading workspace activity" rows={8} />;
   return <div className="overview-insights">
     <article className="insight-panel overview-activity"><div className="insight-heading"><div><h2>Capture activity</h2><p>People met each day · last 30 days</p></div><Link to="/analytics" className="subtle-link">Analytics <ArrowUpRight size={14} /></Link></div><div className="chart-total"><strong>{data.metrics.people}</strong><span>people across {data.metrics.companies} companies</span></div><ActivityChart data={data} /></article>
     <article className="insight-panel overview-pipeline"><div className="insight-heading"><div><h2>Conversation stages</h2><p>Current status of people met in the last 30 days</p></div></div><div className="stage-bars">{data.stages.map((item) => <div className="stage-bar-row" key={item.stage}><span><i className={`stage-dot stage-${item.stage}`} />{label(item.stage)}</span><div><i style={{ width: `${data.metrics.people ? item.people / data.metrics.people * 100 : 0}%` }} /></div><strong>{item.people}</strong></div>)}</div><Link to="/people" className="panel-footer-link">View people <ArrowRight size={14} /></Link></article>

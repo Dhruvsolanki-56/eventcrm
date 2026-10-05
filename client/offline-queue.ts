@@ -40,9 +40,13 @@ async function withStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStor
   } finally { db.close(); }
 }
 
+/** Lets the rest of the app (the top-bar offline chip) know the waiting count changed. */
+export const queueChangedEvent = 'gather:offline-queue-changed';
+function announce() { window.dispatchEvent(new Event(queueChangedEvent)); }
+
 /** Returns false when the photo could not be kept, so the caller can show an honest error instead. */
 export async function saveQueuedPhoto(item: QueuedPhoto): Promise<boolean> {
-  try { await withStore('readwrite', (store) => store.put(item)); return true; } catch { return false; }
+  try { await withStore('readwrite', (store) => store.put(item)); announce(); return true; } catch { return false; }
 }
 
 export async function listQueuedPhotos(workspaceId: string): Promise<QueuedPhoto[]> {
@@ -53,7 +57,7 @@ export async function listQueuedPhotos(workspaceId: string): Promise<QueuedPhoto
 }
 
 export async function removeQueuedPhoto(clientScanId: string): Promise<void> {
-  try { await withStore('readwrite', (store) => store.delete(clientScanId)); } catch { /* Nothing more to clean up. */ }
+  try { await withStore('readwrite', (store) => store.delete(clientScanId)); announce(); } catch { /* Nothing more to clean up. */ }
 }
 
 /** True for a request that never reached the server (no connection, DNS, timeout), not for a server answer. */

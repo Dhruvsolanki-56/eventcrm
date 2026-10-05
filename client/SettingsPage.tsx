@@ -7,6 +7,7 @@ import { askConfirm } from './confirm.js';
 import { IdeaChips } from './quick-capture-ui.js';
 import { addListPhrase, neverPromiseIdeas, roleIdeas } from './quick-capture.js';
 import { useWorkspace } from './workspace-context.js';
+import { Skeleton } from './skeletons.js';
 
 type SectionProps = { title: string; description?: string; className?: string; titleId?: string; action?: ReactNode; children: ReactNode };
 
@@ -60,7 +61,7 @@ export default function SettingsPage() {
       {tabs.map(([key, label]) => <button type="button" key={key} aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}
     </nav>
     <div hidden={section !== 'profile'}>
-      {loading ? <div className="settings-card skeleton-block">Loading your settings…</div> : <form className="settings-card settings-form" onSubmit={(event) => void submit(event)}>
+      {loading ? <Skeleton variant="form" label="Loading your settings" /> : <form className="settings-card settings-form" onSubmit={(event) => void submit(event)}>
         {personal ? <>
           <Section title="About me" description="Used only to make your own messages sound like you.">
             <div className="field-grid"><label>Your name<input value={String(form.name ?? session.user.name)} onChange={(event) => update('name', event.target.value)} maxLength={100} /></label><label>Your role<input value={text('role')} onChange={(event) => update('role', event.target.value)} maxLength={100} /></label></div>

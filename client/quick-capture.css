@@ -34,15 +34,6 @@
 .tray-item.is-offline { border-style: dashed; border-color: var(--warn-line); background: var(--warn-soft); }
 
 /* Install prompt */
-.install-prompt { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); color: var(--ink-2); }
-.install-prompt > svg { flex: none; color: var(--accent); }
-.install-prompt > div { display: grid; flex: 1; min-width: 0; }
-.install-prompt strong { color: var(--ink); font-size: 13px; font-weight: 600; }
-.install-prompt span { color: var(--muted); font-size: 12.5px; }
-.install-prompt span svg { vertical-align: -2px; }
-.install-prompt .button { flex: none; }
-.install-close { display: grid; flex: none; place-items: center; width: 32px; height: 32px; border: 0; border-radius: var(--radius); background: transparent; color: var(--muted); }
-.install-close:hover { background: var(--hover); color: var(--ink); }
 
 @media (prefers-reduced-motion: reduce) { .dictate-live i { animation: none; transform: scaleY(.7); } .quick-chip { transition: none; } }
 @media (max-width: 780px) {
