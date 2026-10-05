@@ -1552,3 +1552,18 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .settings-section-body .idea-chips .quick-chip { flex: none; }
   .settings-section-intro p { font-size: 13px; }
 }
+
+/* ---------- Email automation settings ---------- */
+/* The panel body is a column of direct-child labels; this one is a tick box, so it keeps its own row layout. */
+.settings-section-body > label.draft-automation-choice { display: flex; align-items: flex-start; gap: 10px; }
+.automation-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 4px 0 0; padding: 0; list-style: none; counter-reset: step; }
+.automation-steps li { position: relative; display: grid; align-content: start; gap: 2px; padding-left: 30px; counter-increment: step; }
+.automation-steps li::before { content: counter(step); position: absolute; top: 0; left: 0; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-strong); border-radius: 50%; color: var(--ink-2); font-size: 12px; font-weight: 500; }
+.automation-steps strong { color: var(--ink); font-size: 13.5px; font-weight: 500; }
+.automation-steps strong a { color: var(--accent); }
+.automation-steps span { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.reminder-settings .text-button { display: inline; min-height: 0; padding: 0; vertical-align: baseline; }
+@media (max-width: 780px) {
+  .automation-steps { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .reminder-settings .text-button { min-height: 0 !important; }
+}

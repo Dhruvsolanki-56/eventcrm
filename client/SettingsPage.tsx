@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Download, Mic, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import { statusWords } from '../shared/contracts.js';
 import { request, requestDownload, saveDownload } from './api.js';
@@ -114,25 +114,35 @@ function DraftAutomationSettings() {
   const [enabled, setEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [caps, setCaps] = useState<{ emailDrafts: boolean; emailSending: boolean } | null>(null);
   useEffect(() => {
-    void request<{ draftAutomation?: { autoDraftAfterConversation?: boolean } | null }>('/api/settings', {}, { workspaceId: session.workspace.id })
-      .then((settings) => setEnabled(Boolean(settings.draftAutomation?.autoDraftAfterConversation)))
-      .catch((error) => notify((error as Error).message))
-      .finally(() => setLoading(false));
+    void Promise.all([
+      request<{ draftAutomation?: { autoDraftAfterConversation?: boolean } | null }>('/api/settings', {}, { workspaceId: session.workspace.id }),
+      request<{ emailDrafts?: boolean; emailSending?: boolean }>('/api/capabilities').catch(() => ({} as { emailDrafts?: boolean; emailSending?: boolean })),
+    ]).then(([settings, capabilities]) => {
+      setEnabled(Boolean(settings.draftAutomation?.autoDraftAfterConversation));
+      setCaps({ emailDrafts: Boolean(capabilities.emailDrafts), emailSending: Boolean(capabilities.emailSending) });
+    }).catch((error) => notify((error as Error).message)).finally(() => setLoading(false));
   }, [session.workspace.id, notify]);
-  async function save() {
-    setSaving(true);
+  // A single on/off switch saves itself; there is no second button to forget.
+  async function toggle(next: boolean) {
+    const previous = enabled;
+    setEnabled(next); setSaving(true);
     try {
-      await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'draftAutomation', value: { autoDraftAfterConversation: enabled } }) }, { csrfToken, workspaceId: session.workspace.id });
-      notify(enabled ? 'New conversations will prepare an unsent draft.' : 'Automatic draft preparation is off.');
-    } catch (error) { notify((error as Error).message); }
+      await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'draftAutomation', value: { autoDraftAfterConversation: next } }) }, { csrfToken, workspaceId: session.workspace.id });
+      notify(next ? 'Drafts will be prepared when you save a conversation.' : 'Automatic drafts are off.');
+    } catch (error) { setEnabled(previous); notify((error as Error).message); }
     finally { setSaving(false); }
   }
   return <Section className="draft-automation-settings" titleId="draft-automation-title" title="Drafts after a conversation" description="Encore can prepare an editable email as soon as you save a conversation. Nothing is sent on its own.">
     {loading ? <p className="task-group-empty">Loading…</p> : <>
-      <label className="draft-automation-choice"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft per conversation. People without an email address, or who opted out, get none.</small></span></label>
+      <label className="draft-automation-choice"><input type="checkbox" checked={enabled} disabled={saving} onChange={(event) => void toggle(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft per conversation. People without an email address, or who opted out, get none. Saves as soon as you change it.</small></span></label>
+      <ol className="automation-steps" aria-label="How a draft reaches the person">
+        <li><strong>You save a conversation</strong><span>On the person’s page.</span></li>
+        <li><strong>A draft is prepared</strong><span>{caps?.emailDrafts ? 'It starts as a template, then AI improves it in a few seconds.' : 'A clear template with what you discussed. AI writing is not set up.'}</span></li>
+        <li><strong>You approve it in <Link to="/email">Email Desk</Link></strong><span>{caps?.emailSending ? 'Only approved drafts are sent.' : 'Approved drafts wait in the outbox; no mail service is set up to send them.'}</span></li>
+      </ol>
       <details className="settings-fine-print"><summary>What is sent to AI</summary><p>With AI enabled, relevant contact, company, event and conversation details are sent to the AI provider (Google Gemini, and Groq if it is set up); free-tier content may be used to improve their products. If AI is unavailable, you get a clearly labelled template.</p></details>
-      <div className="settings-actions"><button type="button" className="button secondary" disabled={saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save email workflow'}</button></div>
     </>}
   </Section>;
 }
@@ -259,6 +269,8 @@ function DeletePrivateDataPanel() {
   </Section>;
 }
 
+const deviceZone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
+const timeZoneNames: string[] = (() => { try { return (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.('timeZone') ?? []; } catch { return []; } })();
 type ReminderSettingsData = {
   settings: { inAppEnabled: boolean; dailyDigestEnabled: boolean; digestTime: string; timeZone: string };
   recentDigests: Array<{ local_date: string; status: string; last_error: string | null; sent_to_server_at: string | null }>;
@@ -291,7 +303,7 @@ function ReminderSettings() {
     {loading ? <p className="task-group-empty">Loading reminder settings…</p> : <form onSubmit={(event) => void submit(event)}>
       <label className="reminder-choice"><input type="checkbox" checked={settings.inAppEnabled} onChange={(event) => { setSettings({ ...settings, inAppEnabled: event.target.checked }); setSaved(false); }} /><span><strong>Show an in-app reminder</strong><small>When an open follow-up is due and no reply is logged.</small></span></label>
       <label className="reminder-choice"><input type="checkbox" checked={settings.dailyDigestEnabled} onChange={(event) => { setSettings({ ...settings, dailyDigestEnabled: event.target.checked }); setSaved(false); }} /><span><strong>Email me a daily digest</strong><small>{emailSending ? 'Sent only after you turn this on.' : 'Mail is not set up, so the digest is marked “not sent” and no email goes out.'}</small></span></label>
-      <div className="field-grid reminder-fields"><label>Send after<input type="time" value={settings.digestTime} disabled={!settings.dailyDigestEnabled} onChange={(event) => { setSettings({ ...settings, digestTime: event.target.value }); setSaved(false); }} /></label><label>Time zone<input value={settings.timeZone} maxLength={100} onChange={(event) => { setSettings({ ...settings, timeZone: event.target.value }); setSaved(false); }} placeholder="America/Los_Angeles" /><small>A name such as America/Los_Angeles.</small></label></div>
+      <div className="field-grid reminder-fields"><label>Send after<input type="time" value={settings.digestTime} disabled={!settings.dailyDigestEnabled} onChange={(event) => { setSettings({ ...settings, digestTime: event.target.value }); setSaved(false); }} /></label><label>Time zone<input value={settings.timeZone} list="reminder-time-zones" maxLength={100} autoCapitalize="none" spellCheck={false} onChange={(event) => { setSettings({ ...settings, timeZone: event.target.value }); setSaved(false); }} placeholder="Start typing a city, e.g. Kolkata" /><datalist id="reminder-time-zones">{timeZoneNames.map((name) => <option key={name} value={name} />)}</datalist>{deviceZone && deviceZone !== settings.timeZone ? <small>The digest goes out at this time in this zone. <button type="button" className="text-button" onClick={() => { setSettings({ ...settings, timeZone: deviceZone }); setSaved(false); }}>Use this device’s zone ({deviceZone})</button></small> : <small>The digest goes out at this time in this zone.</small>}</label></div>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="settings-actions"><button className="button secondary" disabled={saving}>{saving ? 'Saving…' : saved ? 'Saved' : 'Save reminders'}</button><p className="subtle" role="status">{digestStatus}</p></div>
     </form>}
