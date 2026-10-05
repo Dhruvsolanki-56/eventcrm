@@ -1,6 +1,6 @@
 import { Fragment, forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, LoaderCircle, Thermometer, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
+import { AlertCircle, Archive, ArrowLeft, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, LoaderCircle, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
@@ -582,8 +582,53 @@ function StageBadge({ stage }: { stage: string }) {
   return <span className={`stage-pill ${stage}`}><Icon size={12} aria-hidden="true" />{label}</span>;
 }
 
-function QualityBadge({ quality }: { quality: string }) {
-  return <span className={`stage-pill ${quality}`}><Thermometer size={12} aria-hidden="true" />{quality.charAt(0).toUpperCase() + quality.slice(1)}</span>;
+const pipelineStages = ['new', 'contacted', 'replied', 'meeting', 'won', 'lost'] as const;
+const stageLabel = (stage: string) => stage.charAt(0).toUpperCase() + stage.slice(1);
+const initialsOf = (name: string) => name.split(' ').map((part) => part[0]).join('').slice(0, 2);
+const usd = (minor: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(minor / 100);
+const relativeDay = (value: string) => {
+  const days = Math.round((Date.now() - new Date(value).getTime()) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+};
+
+function Temperature({ quality }: { quality: string | null }) {
+  if (!quality) return <span className="temperature none">—</span>;
+  return <span className={`temperature ${quality}`}><span className="temperature-dot" aria-hidden="true" />{stageLabel(quality)}</span>;
+}
+
+/** Stage chips with counts. Filtering happens on the list already loaded. */
+function StageFilter({ people, value, onChange }: { people: PersonRow[]; value: string; onChange: (stage: string) => void }) {
+  return <div className="stage-filter" role="group" aria-label="Filter by stage">
+    <button type="button" aria-pressed={value === ''} onClick={() => onChange('')}>All <span>{people.length}</span></button>
+    {pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={value === stage} onClick={() => onChange(value === stage ? '' : stage)}><span className={`stage-dot ${stage}`} aria-hidden="true" />{stageLabel(stage)} <span>{people.filter((person) => person.stage === stage).length}</span></button>)}
+  </div>;
+}
+
+const pageSize = 10;
+
+/** Page numbers for a long list: 1 … 4 5 6 … 12, always keeping the first, last and neighbours of the current page. */
+function pageNumbers(page: number, pages: number): Array<number | 'gap'> {
+  const wanted = new Set([1, pages, page - 1, page, page + 1].filter((value) => value >= 1 && value <= pages));
+  const sorted = [...wanted].sort((a, b) => a - b);
+  return sorted.flatMap((value, index) => index > 0 && value - sorted[index - 1]! > 1 ? ['gap' as const, value] : [value]);
+}
+
+function Pagination({ page, total, label, onPage }: { page: number; total: number; label: string; onPage: (page: number) => void }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) return null;
+  const first = (page - 1) * pageSize + 1;
+  const last = Math.min(total, page * pageSize);
+  return <nav className="pagination" aria-label={`${label} pages`}>
+    <span className="pagination-count">{first}–{last} of {total}</span>
+    <div className="pagination-pages">
+      <button type="button" className="pagination-step" disabled={page === 1} onClick={() => onPage(page - 1)} aria-label="Previous page"><ChevronLeft size={16} aria-hidden="true" /></button>
+      {pageNumbers(page, pages).map((value, index) => value === 'gap' ? <span className="pagination-gap" key={`gap-${index}`}>…</span> : <button type="button" key={value} aria-current={value === page ? 'page' : undefined} aria-label={`Page ${value}`} onClick={() => onPage(value)}>{value}</button>)}
+      <button type="button" className="pagination-step" disabled={page === pages} onClick={() => onPage(page + 1)} aria-label="Next page"><ChevronRight size={16} aria-hidden="true" /></button>
+    </div>
+  </nav>;
 }
 
 function PeoplePage() {
@@ -593,6 +638,9 @@ function PeoplePage() {
   const [people, setPeople] = useState<PersonRow[]>([]);
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [showArchived, setShowArchived] = useState(searchParams.get('archived') === '1');
+  const [stage, setStage] = useState(searchParams.get('stage') ?? '');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [query, stage, showArchived]);
   const [restoringId, setRestoringId] = useState('');
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -617,22 +665,36 @@ function PeoplePage() {
     } catch (error) { notify((error as Error).message); }
     finally { setRestoringId(''); }
   }
-  function toggleArchived() {
-    const next = !showArchived;
-    setShowArchived(next);
+  function setParam(key: string, value: string) {
     const params = new URLSearchParams(searchParams);
-    if (next) params.set('archived', '1'); else params.delete('archived');
+    if (value) params.set(key, value); else params.delete(key);
     setSearchParams(params, { replace: true });
   }
+  function toggleArchived() {
+    const next = !showArchived;
+    setShowArchived(next); setParam('archived', next ? '1' : '');
+  }
+  function chooseStage(next: string) { setStage(next); setParam('stage', next); }
+  const visible = stage ? people.filter((person) => person.stage === stage) : people;
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(visible.length / pageSize)));
+  const pageRows = visible.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const total = people.length;
   return <section className="records-view">
-    <div className="page-heading-row"><div><h1>{showArchived ? 'Archived people' : 'People'}</h1>{showArchived && <p className="page-lede">Archived people keep their history. Restore one to work with them again.</p>}</div><div className="people-heading-actions"><button type="button" className="button secondary" onClick={toggleArchived}>{showArchived ? 'Show active people' : 'Show archived people'}</button>{!showArchived && <Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link>}</div></div>
-    <label className="search-box"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies and people" aria-label="Search companies and people" /></label>
-    {!showArchived && query.trim() && companies.length > 0 && <section className="search-company-matches" aria-label="Matching companies"><p className="eyebrow">Companies</p><div className="company-grid">{companies.map((company) => <article className="surface-card company-card" key={company.id}><div className="company-icon"><Building2 size={19} /></div><h2><Link to={`/companies/${company.id}`}>{company.name}</Link></h2>{company.website && <a href={company.website} target="_blank" rel="noreferrer">{company.website}</a>}<div className="company-metrics"><span><strong>{company.people}</strong> people</span><span><strong>{company.encounters}</strong> conversations</span></div><Link className="subtle-link" to={`/companies/${company.id}`}>Company details <ArrowRight size={15} /></Link></article>)}</div></section>}
-    <div className="surface-card records-table"><div className="records-header people-row"><span>Person</span><span>Company</span><span>Stage</span><span>Last updated</span></div>
-      {loading ? <p className="records-empty">Loading people…</p> : people.length ? people.map((person) => showArchived
-        ? <div className="records-row people-row archived-person-row" key={person.id}><span className="person-cell"><span className="avatar small">{person.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || person.phone || 'No title or contact method'}</small></span></span><span>{person.company_name}</span><span><StageBadge stage={person.stage} /></span><span><button type="button" className="button secondary" disabled={restoringId === person.id} onClick={() => void restorePerson(person.id)}>{restoringId === person.id ? 'Restoring…' : 'Restore'}</button></span></div>
-        : <Link className="records-row people-row" key={person.id} to={`/people/${person.id}`}><span className="person-cell"><span className="avatar small">{person.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || person.phone || 'No title or contact method'}</small></span></span><span>{person.company_name}</span><span><StageBadge stage={person.stage} /></span><span>{new Date(String(person.updated_at)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></Link>) : <p className="records-empty">{showArchived ? 'No archived people. Archived records will stay here until restored.' : 'No people match that search. Try another name or capture a card.'}</p>}
+    <div className="page-heading-row"><div><h1>{showArchived ? 'Archived people' : 'People'}</h1><p className="page-lede">{showArchived ? 'Archived people keep their history. Restore one to work with them again.' : loading && !total ? 'Loading…' : `${total} ${total === 1 ? 'person' : 'people'}${query.trim() ? ' match your search' : ''}`}</p></div><div className="people-heading-actions"><button type="button" className="button secondary" onClick={toggleArchived}>{showArchived ? <><ArrowLeft size={15} aria-hidden="true" /> Show active people</> : <><Archive size={15} aria-hidden="true" /> Show archived people</>}</button>{!showArchived && <Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link>}</div></div>
+    <div className="list-toolbar">
+      <label className="search-box"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies and people" aria-label="Search companies and people" /></label>
+      {!showArchived && <StageFilter people={people} value={stage} onChange={chooseStage} />}
     </div>
+    {!showArchived && query.trim() && companies.length > 0 && <section className="search-company-matches" aria-label="Matching companies"><h2>Companies</h2><div className="company-match-list">{companies.map((company) => <Link className="company-match" key={company.id} to={`/companies/${company.id}`} aria-label={`Company details for ${company.name}`}><span className="company-icon"><Building2 size={16} /></span><span><strong>{company.name}</strong><small>{company.people} {company.people === 1 ? 'person' : 'people'} · {company.encounters} conversations</small></span><span className="company-match-go">Company details <ArrowRight size={14} /></span></Link>)}</div></section>}
+    <div className="surface-card records-table"><div className="records-header people-row"><span>Person</span><span>Company</span><span>Stage</span><span>Temperature</span><span>Talks</span><span>{showArchived ? '' : 'Updated'}</span></div>
+      {loading && !people.length ? <p className="records-empty">Loading people…</p> : visible.length ? pageRows.map((person) => {
+        const cells = <><span className="person-cell"><span className="avatar small">{initialsOf(person.name)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || person.phone || 'No title or contact method'}</small></span></span><span className="company-cell">{person.company_name}</span><span><StageBadge stage={person.stage} /></span><span><Temperature quality={person.quality} /></span><span className="number-cell">{person.encounters}</span></>;
+        return showArchived
+          ? <div className="records-row people-row archived-person-row" key={person.id}>{cells}<span><button type="button" className="button secondary" disabled={restoringId === person.id} onClick={() => void restorePerson(person.id)}>{restoringId === person.id ? 'Restoring…' : 'Restore'}</button></span></div>
+          : <Link className="records-row people-row" key={person.id} to={`/people/${person.id}`}>{cells}<span className="date-cell">{relativeDay(String(person.updated_at))}</span></Link>;
+      }) : <div className="records-empty">{showArchived ? 'No archived people. Archived records stay here until restored.' : stage ? <>Nobody is at {stageLabel(stage)} yet. <button type="button" className="text-button" onClick={() => chooseStage('')}>Show everyone</button></> : 'No people match that search. Try another name or capture a card.'}</div>}
+    </div>
+    <Pagination page={currentPage} total={visible.length} label="People" onPage={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} />
   </section>;
 }
 
@@ -640,10 +702,28 @@ function CompaniesPage() {
   const { session, notify } = useWorkspace();
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('');
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [filter]);
   useEffect(() => { void request<{ companies: CompanyRow[] }>('/api/companies', {}, { workspaceId: session.workspace.id }).then((result) => setCompanies(result.companies.map((company) => ({ ...company, website: safeWebsiteHref(company.website) ?? '' })))).catch((error) => notify((error as Error).message)).finally(() => setLoading(false)); }, [session.workspace.id, notify]);
+  const needle = filter.trim().toLowerCase();
+  const visible = needle ? companies.filter((company) => `${company.name} ${company.website ?? ''}`.toLowerCase().includes(needle)) : companies;
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(visible.length / pageSize)));
+  const openValue = companies.reduce((sum, company) => sum + (company.deal_status !== 'lost' && company.deal_status !== 'won' && company.deal_value_minor ? company.deal_value_minor : 0), 0);
   return <section className="records-view">
-    <div className="page-heading-row"><div><h1>Companies</h1></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
-    {loading ? <div className="surface-card records-empty">Loading companies…</div> : <div className="company-grid">{companies.map((company) => <article className="surface-card company-card" key={company.id}><div className="company-icon"><Building2 size={19} /></div><h2><Link to={`/companies/${company.id}`}>{company.name}</Link></h2>{company.website && <a href={company.website} target="_blank" rel="noreferrer">{company.website}</a>}<div className="company-metrics"><span><strong>{company.people}</strong> people</span><span><strong>{company.encounters}</strong> conversations</span></div>{company.deal_value_minor !== null && <p className="deal-summary">{new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(company.deal_value_minor / 100)} · {company.deal_status ?? 'open'}</p>}<Link className="subtle-link" to={`/companies/${company.id}`}>Company details <ArrowRight size={15} /></Link></article>)}{!companies.length && <div className="surface-card records-empty">No companies yet. They’ll appear when you save a person.</div>}</div>}
+    <div className="page-heading-row"><div><h1>Companies</h1><p className="page-lede">{loading ? 'Loading…' : `${companies.length} ${companies.length === 1 ? 'company' : 'companies'}${openValue ? ` · ${usd(openValue)} in open deals` : ''}`}</p></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
+    {companies.length > 6 && <div className="list-toolbar"><label className="search-box"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter companies" aria-label="Filter companies" /></label></div>}
+    {loading ? <div className="surface-card records-empty">Loading companies…</div> : <div className="surface-card records-table"><div className="records-header company-row"><span>Company</span><span>People</span><span>Conversations</span><span>Deal</span><span /></div>
+      {visible.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((company) => <div className="records-row company-row" key={company.id}>
+        <span className="person-cell"><span className="company-icon"><Building2 size={16} /></span><span><Link className="row-link" to={`/companies/${company.id}`}><strong>{company.name}</strong></Link><small>{company.website ? <a href={company.website} target="_blank" rel="noreferrer">{company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</a> : 'No website'}</small></span></span>
+        <span className="number-cell">{company.people}</span>
+        <span className="number-cell">{company.encounters}</span>
+        <span>{company.deal_value_minor !== null ? <span className={`deal-chip ${company.deal_status ?? 'open'}`}>{usd(company.deal_value_minor)} · {company.deal_status ?? 'open'}</span> : <span className="faint-cell">Not set</span>}</span>
+        <span><Link className="subtle-link" to={`/companies/${company.id}`} aria-label={`Company details for ${company.name}`}>Details <ArrowRight size={14} /></Link></span>
+      </div>)}
+      {!visible.length && <p className="records-empty">{companies.length ? 'No company matches that filter.' : 'No companies yet. They appear when you save a person.'}</p>}
+    </div>}
+    <Pagination page={currentPage} total={visible.length} label="Companies" onPage={(next) => { setPage(next); window.scrollTo({ top: 0 }); }} />
   </section>;
 }
 
@@ -708,24 +788,58 @@ function CompanyPage() {
     finally { setRemovingMaterialId(''); }
   }
   if (!detail) return <section className="surface-card skeleton-block">{error || 'Loading company…'}{error && <p><Link className="subtle-link" to="/companies">Back to Companies</Link></p>}</section>;
-  return <section className="records-view"><div className="page-heading-row"><div><Link className="back-link" to="/companies">← Companies</Link><h1>{detail.company.name}</h1><p className="page-lede">{detail.company.people} {detail.company.people === 1 ? 'person' : 'people'} · {detail.company.encounters} {detail.company.encounters === 1 ? 'conversation' : 'conversations'}{detail.company.website ? ` · ${detail.company.website}` : ''}</p></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
-    <div className="company-detail-grid"><section className="surface-card company-people"><div className="section-head"><div><h2>People and conversations</h2></div><Link className="subtle-link" to={`/people?q=${encodeURIComponent(detail.company.name)}`}>Search people</Link></div>{detail.people.map((person) => <Link className="company-person-row" key={person.id} to={`/people/${person.id}`}><span className="avatar small">{person.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || 'Contact details not added'}</small></span><span className="stage-pill">{person.encounters} {person.encounters === 1 ? 'conversation' : 'conversations'}</span><ArrowRight size={16} /></Link>)}{!detail.people.length && <p className="records-empty">No people are available in this space.</p>}</section>
-      <div className="company-side">{canManage && session.workspace.kind === 'company' && <form className="surface-card deal-form" onSubmit={(event) => void saveDeal(event)}><h2>Deal value</h2><label>Potential value (USD)<input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{error && <p className="form-error">{error}</p>}<p className="subtle">Counted once at company level in reports, not once per person.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save deal'}</button></form>}{canMerge && mergeTargets.length > 0 && <section className="surface-card company-merge-panel"><h2>Combine duplicate companies</h2><p>Move this company’s people and brochures into the company you choose. The old name and website stay as matching clues for later scans. Deal details need review if both records have them.</p><label>Company to keep<select value={mergeTargetId} onChange={(event) => { setMergeTargetId(event.target.value); setMergeConfirmation(''); setMergeError(''); }}><option value="">Choose a company</option>{mergeTargets.map((company) => <option value={company.id} key={company.id}>{company.name} · {company.people} {company.people === 1 ? 'person' : 'people'}</option>)}</select></label>{mergeTargetId && <label>Type MERGE to confirm<input value={mergeConfirmation} onChange={(event) => setMergeConfirmation(event.target.value)} autoComplete="off" /></label>}{mergeError && <p className="form-error" role="alert">{mergeError}</p>}<button type="button" className="button secondary" disabled={merging || !mergeTargetId || mergeConfirmation !== 'MERGE'} onClick={() => void mergeIntoSelected()}>{merging ? 'Combining…' : 'Combine company records'}</button></section>}</div>
+  const company = detail.company;
+  const showDeal = canManage && session.workspace.kind === 'company';
+  const showMerge = canMerge && mergeTargets.length > 0;
+  const stageCounts = pipelineStages.map((stage) => [stage, detail.people.filter((person) => person.stage === stage).length] as const).filter(([, count]) => count > 0);
+  return <section className="records-view company-view"><div className="page-heading-row"><div><Link className="back-link" to="/companies">← Companies</Link><div className="person-title"><span className="company-icon large" aria-hidden="true"><Building2 size={22} /></span><div><h1>{company.name}</h1><p className="page-lede">{company.website ? <a href={company.website} target="_blank" rel="noreferrer">{company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</a> : 'No website added'}</p></div></div></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
+    <div className="company-stats">
+      <div><span>People</span><strong>{company.people}</strong></div>
+      <div><span>Conversations</span><strong>{company.encounters}</strong></div>
+      <div><span>Deal</span><strong>{company.deal_value_minor !== null ? usd(company.deal_value_minor) : '—'}{company.deal_status && <small className={`deal-chip ${company.deal_status}`}>{company.deal_status}</small>}</strong></div>
+      <div><span>Brochures</span><strong>{detail.materials.length}</strong></div>
     </div>
-    <section className="surface-card company-materials"><div className="section-head"><div><h2>Brochures and product sheets</h2><p className="subtle">Saved brochure photos stay with this company, separate from people and conversations.</p></div><Link className="button secondary" to="/scan">Capture a brochure</Link></div>
-      {detail.materials.length ? <div className="material-grid">{detail.materials.map((material) => <article className="material-card" key={material.scan_id}><a href={`/api/scans/${material.scan_id}/image`} target="_blank" rel="noreferrer"><img src={`/api/scans/${material.scan_id}/image`} alt={`Brochure for ${detail.company.name}`} /></a><div><strong>Brochure photo</strong><small>{material.event_name ? `${material.event_name} · ` : ''}{new Date(material.saved_at).toLocaleDateString()}</small>{material.items.length > 0 && <p className="material-items"><strong>Products or topics</strong><br />{material.items.join(' · ')}</p>}<button type="button" className="text-button danger-text" disabled={removingMaterialId === material.scan_id} onClick={() => void removeMaterial(material.scan_id)}>{removingMaterialId === material.scan_id ? 'Removing…' : 'Remove material'}</button></div></article>)}</div> : <p className="records-empty">No brochures saved yet. Capture a brochure and choose Company brochure during review.</p>}
-    </section>
-    </section>;
+    <div className={`company-detail-grid${showDeal || showMerge ? '' : ' single'}`}><div className="company-main">
+      <section className="surface-card company-people"><div className="section-head"><div><h2>People</h2>{stageCounts.length > 0 && <p className="company-stage-summary">{stageCounts.map(([stage, count]) => <span key={stage}><span className={`stage-dot ${stage}`} aria-hidden="true" />{count} {stage}</span>)}</p>}</div><Link className="subtle-link" to={`/people?q=${encodeURIComponent(company.name)}`}>Search people</Link></div>
+        {detail.people.map((person) => <Link className="company-person-row" key={person.id} to={`/people/${person.id}`}><span className="avatar small">{initialsOf(person.name)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || 'Contact details not added'}</small></span><StageBadge stage={person.stage} /><span className="company-person-talks">{person.encounters} {person.encounters === 1 ? 'conversation' : 'conversations'}</span><ArrowRight size={16} /></Link>)}
+        {!detail.people.length && <p className="records-empty">No people are available in this space.</p>}</section>
+      <section className="surface-card company-materials"><div className="section-head"><div><h2>Brochures and product sheets</h2><p className="subtle">Brochure photos stay with this company, separate from people and conversations.</p></div><Link className="button secondary" to="/scan">Capture a brochure</Link></div>
+        {detail.materials.length ? <div className="material-grid">{detail.materials.map((material) => <article className="material-card" key={material.scan_id}><a href={`/api/scans/${material.scan_id}/image`} target="_blank" rel="noreferrer"><img src={`/api/scans/${material.scan_id}/image`} alt={`Brochure for ${company.name}`} /></a><div><strong>Brochure photo</strong><small>{material.event_name ? `${material.event_name} · ` : ''}{new Date(material.saved_at).toLocaleDateString()}</small>{material.items.length > 0 && <p className="material-items"><strong>Products or topics</strong><br />{material.items.join(' · ')}</p>}<button type="button" className="text-button danger-text" disabled={removingMaterialId === material.scan_id} onClick={() => void removeMaterial(material.scan_id)}>{removingMaterialId === material.scan_id ? 'Removing…' : 'Remove material'}</button></div></article>)}</div> : <p className="company-empty-note">No brochures yet. Capture one and choose Company brochure during review.</p>}
+      </section>
+    </div>
+      {(showDeal || showMerge) && <aside className="company-side">{showDeal && <form className="surface-card deal-form" onSubmit={(event) => void saveDeal(event)}><h2>Deal value</h2><div className="field-grid"><label>Potential value (USD)<input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label></div>{error && <p className="form-error">{error}</p>}<p className="subtle">Counted once for the company in reports, not once per person.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save deal'}</button></form>}
+        {showMerge && <details className="surface-card company-merge-panel"><summary>Combine duplicate companies</summary><p>Move this company’s people and brochures into the company you choose. The old name and website stay as matching clues for later scans. Deal details need review if both records have them.</p><label>Company to keep<select value={mergeTargetId} onChange={(event) => { setMergeTargetId(event.target.value); setMergeConfirmation(''); setMergeError(''); }}><option value="">Choose a company</option>{mergeTargets.map((target) => <option value={target.id} key={target.id}>{target.name} · {target.people} {target.people === 1 ? 'person' : 'people'}</option>)}</select></label>{mergeTargetId && <label>Type MERGE to confirm<input value={mergeConfirmation} onChange={(event) => setMergeConfirmation(event.target.value)} autoComplete="off" /></label>}{mergeError && <p className="form-error" role="alert">{mergeError}</p>}<button type="button" className="button secondary" disabled={merging || !mergeTargetId || mergeConfirmation !== 'MERGE'} onClick={() => void mergeIntoSelected()}>{merging ? 'Combining…' : 'Combine company records'}</button></details>}
+      </aside>}
+    </div>
+  </section>;
 }
 
 function PipelinePage() {
   const { session, notify } = useWorkspace();
-  const [people, setPeople] = useState<PersonRow[]>([]);
-  useEffect(() => { void request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)).catch((issue) => notify((issue as Error).message)); }, [session.workspace.id, notify]);
-  const stages = ['new','contacted','replied','meeting','won','lost'];
-  return <section className="records-view"><div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">Each person’s current stage. Deal value is tracked per company.</p></div></div><div className="pipeline-grid">{stages.map((stage) => { const rows = people.filter((person) => person.stage === stage); return <section className="surface-card pipeline-column" key={stage}><div className="pipeline-column-head"><h2>{stage}</h2><span className="count-pill">{rows.length}</span></div>{rows.map((person) => <Link className="pipeline-person" to={`/people/${person.id}`} key={person.id}><strong>{person.name}</strong><small>{person.company_name}</small>{person.quality && <QualityBadge quality={person.quality} />}</Link>)}{!rows.length && <p className="subtle">No people here yet.</p>}</section>; })}</div></section>;
+  const [people, setPeople] = useState<PersonRow[] | null>(null);
+  const [filter, setFilter] = useState('');
+  useEffect(() => { void request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)).catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [session.workspace.id, notify]);
+  const needle = filter.trim().toLowerCase();
+  const rows = (people ?? []).filter((person) => !needle || `${person.name} ${person.company_name}`.toLowerCase().includes(needle));
+  const active = rows.filter((person) => person.stage !== 'won' && person.stage !== 'lost').length;
+  return <section className="records-view pipeline-view">
+    <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${rows.filter((person) => person.stage === 'won').length} won · ${rows.filter((person) => person.stage === 'lost').length} lost` : 'Loading…'}</p></div>
+      <label className="search-box pipeline-search"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name or company" aria-label="Filter by name or company" /></label></div>
+    <div className="pipeline-grid">{pipelineStages.map((stage) => {
+      const column = rows.filter((person) => person.stage === stage);
+      return <section className={`pipeline-column ${stage}`} key={stage} aria-label={`${stageLabel(stage)}, ${column.length}`}>
+        <div className="pipeline-column-head"><h2><span className={`stage-dot ${stage}`} aria-hidden="true" />{stageLabel(stage)}</h2><span className="count-pill">{column.length}</span></div>
+        <div className="pipeline-cards">{column.map((person) => <Link className="pipeline-person" to={`/people/${person.id}`} key={person.id}>
+          <strong>{person.name}</strong>
+          <small>{person.company_name}</small>
+          <span className="pipeline-person-meta">{person.quality ? <Temperature quality={person.quality} /> : <span />}<span>{relativeDay(String(person.updated_at))}</span></span>
+        </Link>)}
+        {people && !column.length && <p className="pipeline-empty">{needle ? 'No match' : 'Nobody here yet'}</p>}</div>
+      </section>;
+    })}</div>
+    <p className="pipeline-footnote">Change a person’s stage from their page. Deal value is tracked per company.</p>
+  </section>;
 }
-
 function ReportsPage() {
   const { session, notify } = useWorkspace();
   const [exporting, setExporting] = useState(false);
@@ -872,7 +986,8 @@ function PersonPage() {
   }
   if (!detail) return <section className="surface-card skeleton-block">{error || 'Loading this person…'}{error && <p><Link className="subtle-link" to="/people">Back to People</Link></p>}</section>;
   const { person, timeline, products } = detail;
-  return <section className="person-view"><div className="page-heading-row"><div><Link className="back-link" to="/people">← People</Link><h1>{String(person.name)}</h1><p className="page-lede">{String(person.title || 'Job title not added')} · {String(person.company_name)}</p></div><Link className="button secondary" to="/scan"><ScanLine size={17} /> Add another conversation</Link></div>
+  return <section className="person-view"><div className="page-heading-row person-heading"><div><Link className="back-link" to="/people">← People</Link><div className="person-title"><span className="avatar large" aria-hidden="true">{String(person.name).split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><h1>{String(person.name)}</h1><p className="page-lede">{String(person.title || 'Job title not added')} · <Link to={`/companies/${String(person.company_id)}`}>{String(person.company_name)}</Link></p></div></div></div><div className="person-heading-actions"><Link className="button secondary" to="/scan"><ScanLine size={16} /> Scan another card</Link></div></div>
+    <div className="person-layout"><div className="person-main">
     <nav className="person-action-row" aria-label="Actions for this person" data-active={personPanel}>
       <a className="button secondary" href="#person-conversation" aria-current={personPanel === 'conversation' ? 'location' : undefined} onClick={() => setPersonPanel('conversation')}>Conversation</a>
       <a className="button secondary" href="#person-email" aria-current={personPanel === 'email' ? 'location' : undefined} onClick={() => setPersonPanel('email')}>Email</a>
@@ -882,9 +997,6 @@ function PersonPage() {
       {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deal-value" aria-current={personPanel === 'deal' ? 'location' : undefined} onClick={() => setPersonPanel('deal')}>Deal value</a>}
       <a className="button secondary" href="#person-manage" aria-current={personPanel === 'manage' ? 'location' : undefined} onClick={() => setPersonPanel('manage')}>More</a>
     </nav>
-    
-    <div className="person-layout"><div className="person-main"><article className="surface-card person-card"><div className="section-head"><div><h2>{String(person.company_name)}</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{String(person.quality || 'Not set')}</dd><dt>Conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}<label>Change stage<select value={stageDraft || String(person.stage)} onChange={(event) => { const stage = event.target.value; if (stage === 'lost') { setStageDraft('lost'); setLostReason(''); } else { setStageDraft(''); void changeStage(stage); } }}><option value="new">New</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="meeting">Meeting</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{stageDraft === 'lost' && <div className="lost-reason-form"><label htmlFor="lost-reason">Why was this marked lost?<textarea id="lost-reason" rows={2} maxLength={500} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="A short reason" /></label><button type="button" className="button primary" disabled={!lostReason.trim()} onClick={() => void changeStage('lost', lostReason)}>Save as lost</button><button type="button" className="text-button" onClick={() => { setStageDraft(''); setLostReason(''); }}>Cancel</button></div>}{person.stage === 'lost' && Boolean(person.lost_reason) && <p className="lost-reason-display">Lost because: {String(person.lost_reason)}</p>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}<CompanyAbout key={String(person.company_id)} companyId={String(person.company_id)} companyName={String(person.company_name)} initial={String(person.company_about ?? '')} hasWebsite={Boolean(person.company_website || person.website)} csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onSaved={(about) => setDetail((current) => current ? { ...current, person: { ...current.person, company_about: about } } : current)} /></article>
-    <article className="surface-card timeline-card"><h2>History</h2>{detail.conversationMemories.length > 0 && <div className="memory-history"><strong>Checked email context</strong>{detail.conversationMemories.map((item) => <ConversationMemoryCard key={item.id} item={item} contactId={contactId} onSaved={() => void load()} />)}</div>}{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
     <div className="person-side" data-panel={personPanel}>
       {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (USD)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(person.deal_value_minor) / 100)} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
       <form id="person-conversation" className="surface-card note-form" onSubmit={(event) => void addNote(event)}>
@@ -907,7 +1019,9 @@ function PersonPage() {
       <TaskPlanner contactId={contactId} kind={plannerKind} onKindChange={setPlannerKind} onSaved={() => void load()} />
       <div id="person-manage" className="person-manage"><ArchivePersonPanel contactId={contactId} />
       {(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}</div>
-    </div></div></section>;
+    </div>
+    <article className="surface-card timeline-card"><h2>History</h2>{detail.conversationMemories.length > 0 && <div className="memory-history"><strong>Checked email context</strong>{detail.conversationMemories.map((item) => <ConversationMemoryCard key={item.id} item={item} contactId={contactId} onSaved={() => void load()} />)}</div>}{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
+    <aside className="person-aside"><article className="surface-card person-card"><div className="section-head"><div><h2>Details</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{person.quality ? <Temperature quality={String(person.quality)} /> : 'Not set'}</dd><dt>Conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}<label>Change stage<select value={stageDraft || String(person.stage)} onChange={(event) => { const stage = event.target.value; if (stage === 'lost') { setStageDraft('lost'); setLostReason(''); } else { setStageDraft(''); void changeStage(stage); } }}><option value="new">New</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="meeting">Meeting</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{stageDraft === 'lost' && <div className="lost-reason-form"><label htmlFor="lost-reason">Why was this marked lost?<textarea id="lost-reason" rows={2} maxLength={500} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="A short reason" /></label><button type="button" className="button primary" disabled={!lostReason.trim()} onClick={() => void changeStage('lost', lostReason)}>Save as lost</button><button type="button" className="text-button" onClick={() => { setStageDraft(''); setLostReason(''); }}>Cancel</button></div>}{person.stage === 'lost' && Boolean(person.lost_reason) && <p className="lost-reason-display">Lost because: {String(person.lost_reason)}</p>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}<CompanyAbout key={String(person.company_id)} companyId={String(person.company_id)} companyName={String(person.company_name)} initial={String(person.company_about ?? '')} hasWebsite={Boolean(person.company_website || person.website)} csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onSaved={(about) => setDetail((current) => current ? { ...current, person: { ...current.person, company_about: about } } : current)} /></article></aside></div></section>;
 }
 
 function ConversationMemoryCard({ item, contactId, onSaved }: { item: { id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }; contactId: string; onSaved: () => void }) {

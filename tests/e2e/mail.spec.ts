@@ -117,7 +117,7 @@ test('the edited email draft is what the configured mail server accepts', async 
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Email & reminders/ }).click();
-  await expect(page.getByRole('heading', { name: 'Choose how your messages appear.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sender details' })).toBeVisible();
   await page.getByLabel('From name').fill('Northstar Team');
   await page.getByLabel('From email').fill('leads@northstar.example');
   await page.getByRole('button', { name: 'Save email details' }).click();

@@ -54,7 +54,7 @@ test('workspace email sender can be saved in Settings without claiming mail was 
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Email & reminders/ }).click();
-  await expect(page.getByRole('heading', { name: 'Choose how your messages appear.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sender details' })).toBeVisible();
   await page.getByLabel('From name').fill('Northstar Sample Team');
   await page.getByLabel('From email').fill('hello@northstar.example');
   await page.getByRole('button', { name: 'Save email details' }).click();

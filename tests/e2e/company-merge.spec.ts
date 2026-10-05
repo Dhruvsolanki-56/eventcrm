@@ -31,6 +31,7 @@ test('an admin combines duplicate companies without losing people or deal accoun
   const beforeTarget = await targetResponse.json() as { people: Array<{ id: string }> };
   expect(beforeSource.people.length).toBeGreaterThan(0);
   await page.goto(`/companies/${sourceId}`);
+  await page.getByText('Combine duplicate companies').click();
   await page.getByLabel('Company to keep').selectOption(targetId);
   await page.getByLabel('Type MERGE to confirm').fill('MERGE');
   await page.getByRole('button', { name: 'Combine company records' }).click();

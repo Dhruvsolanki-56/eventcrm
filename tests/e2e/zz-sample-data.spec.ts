@@ -31,7 +31,7 @@ test('sample data can be cleared from Settings without removing accounts or othe
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Data & activity/ }).click();
   const clearPanel = page.locator('.sample-clear-panel');
-  await expect(clearPanel.getByRole('heading', { name: 'Clear sample data.' })).toBeVisible();
+  await expect(clearPanel.getByRole('heading', { name: 'Clear sample data', exact: true })).toBeVisible();
   await clearPanel.getByLabel('Type CLEAR to confirm').fill('CLEAR');
   await clearPanel.getByRole('button', { name: 'Clear sample data' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Maya/ })).toBeVisible();

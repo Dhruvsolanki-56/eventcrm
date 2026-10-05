@@ -891,7 +891,7 @@ test('people, company hierarchy, contact notes, stage updates, Help, and tour co
   await expect(page.locator('.timeline-item').getByText('You marked that they replied').first()).toBeVisible();
   await page.getByRole('link', { name: 'Companies' }).click();
   await expect(page.getByRole('heading', { name: 'Companies', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Acme Packaging' }).first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Acme Packaging', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Follow-ups' }).first().click();
   await expect(page.getByRole('heading', { name: /^Follow-ups$/ })).toBeVisible();
   const followUp = page.locator('.task-row').filter({ hasText: 'Send sample options' });
@@ -979,6 +979,7 @@ test('voice notes save, play back, accept manual text only, and can be deleted',
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'People' }).click();
+  await page.getByLabel('Search companies and people').fill('Tessa Morgan');
   await page.getByRole('link', { name: /Tessa Morgan/ }).click();
   const initialPersonDetail = await (await page.request.get('/api/contacts/demo-ns-contact-1')).json() as { voiceNotes: Array<{ id: string }> };
   const originalVoiceCount = initialPersonDetail.voiceNotes.length;
@@ -1098,7 +1099,7 @@ test('private-space data deletion requires confirmation and removes its searchab
   await page.getByRole('button', { name: /Riley Morgan/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Data & activity/ }).click();
-  await expect(page.getByRole('heading', { name: 'Clear this private space.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Delete this private space' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Delete private-space data' })).toBeDisabled();
 
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
