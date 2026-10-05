@@ -1,4 +1,4 @@
-/* Gather service worker.
+/* Encore service worker.
    It only keeps the app itself (page shell, scripts, styles, icons, OCR files) so Encore can open without a signal.
    It never stores or answers any /api request, so people always see their real data when online. */
 const SHELL = 'gather-shell-v1';

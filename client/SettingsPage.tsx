@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Download, Mic, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import { statusWords } from '../shared/contracts.js';
 import { request, requestDownload, saveDownload } from './api.js';
@@ -27,7 +28,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [section, setSection] = useState<SectionKey>('profile');
+  const [searchParams] = useSearchParams();
+  const requested = searchParams.get('tab');
+  const [section, setSection] = useState<SectionKey>(requested === 'email' || requested === 'team' || requested === 'data' ? requested : 'profile');
   useEffect(() => {
     void request<Record<string, Record<string, unknown> | null>>('/api/settings', {}, { workspaceId: session.workspace.id })
       .then((values) => setForm((values[personal ? 'aboutMe' : 'knowledge'] as Record<string, unknown>) ?? {}))

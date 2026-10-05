@@ -395,7 +395,7 @@ function WorkspaceShell() {
     <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
       <Link to="/home" className="brand-lockup"><BrandMark /><span>Encore</span></Link>
       <Link to="/scan" className="button primary scan-sidebar"><ScanLine size={18} /> Scan a card</Link>
-      <div className="mode-strip"><span className="mode-indicator"><Building2 size={15} /></span><div><small>{company ? `Company: ${workspace.name}` : 'Private space'}</small><strong>{company ? (workspaceData?.event?.name ?? 'Choose an event') : 'Only you can see this'}</strong></div></div>
+      <div className="mode-strip"><span className="mode-indicator"><Building2 size={15} /></span><div><small>{company ? 'Company workspace' : 'Private space'}</small><strong>{company ? workspace.name : 'Only you can see this'}</strong></div></div>
       <nav className="main-nav" aria-label="Main navigation">
         <span className="nav-caption">WORKSPACE</span>
         {links.map(({ to, label, icon: Icon }) => <Fragment key={to}>{to === '/people' && <span className="nav-caption nav-caption-secondary">RECORDS & INSIGHTS</span>}<NavLink to={to} onClick={() => setMobileMenu(false)} className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{label === 'Scan' && <span className="nav-key">S</span>}</NavLink></Fragment>)}
@@ -425,7 +425,7 @@ function WorkspaceShell() {
         <div className="mobile-brand"><BrandMark size={24} />Encore</div>
         <div className="topbar-mode"><span className="mode-dot"></span><span className="topbar-workspace-name">{workspace.name}</span><span className="topbar-separator">/</span><strong>{links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace')}</strong></div>
         {workspaceData?.sampleData && <span className="sample-badge">Sample data</span>}
-        <span className="topbar-event">{workspaceData?.event?.name ?? 'No active event'}</span>
+        {location.pathname !== '/scan' && <span className={`topbar-event${workspaceData?.event ? ' is-live' : ''}`} title="Active event: new captures go here"><span className="live-dot" aria-hidden="true" />{workspaceData?.event?.name ?? 'No active event'}</span>}
         <NotificationsMenu />
         <button className="topbar-avatar" aria-label="Open account menu" onClick={() => { setMobileMenu(true); setMenuOpen(true); }}>{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</button>
       </header>
@@ -522,10 +522,16 @@ function NotificationsMenu() {
       navigate(item.contact_id ? `/people/${item.contact_id}` : '/follow-ups');
     } catch (issue) { notify((issue as Error).message); }
   }
+  async function markAllRead() {
+    try {
+      for (const item of items.filter((entry) => !entry.read_at)) await request(`/api/notifications/${item.id}/read`, { method: 'POST' }, { csrfToken, workspaceId: session.workspace.id });
+      await load();
+    } catch (issue) { notify((issue as Error).message); }
+  }
   return <div className="notifications-wrap">
     <button type="button" className="notification-trigger" aria-label={unread ? `Open reminders, ${unread} new` : 'Open reminders'} aria-expanded={open} onClick={() => void openReminders()}><Bell size={19} />{unread > 0 && <span className="notification-count">{unread > 99 ? '99+' : unread}</span>}</button>
-    {open && <section className="notification-popover" role="dialog" aria-label="Reminders"><div className="notification-heading"><div><h2>Reminders</h2></div><button type="button" className="icon-button" aria-label="Close reminders" onClick={() => setOpen(false)}><X size={17} /></button></div>
-      {loading ? <p className="task-group-empty">Loading reminders…</p> : items.length ? <div className="notification-list">{items.map((item) => <button type="button" className={`notification-item${item.read_at ? '' : ' unread'}`} key={item.id} onClick={() => void openNotification(item)}><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></button>)}</div> : <p className="task-group-empty">No reminders yet. Due follow-ups will show here when you turn reminders on.</p>}
+    {open && <section className="notification-popover" role="dialog" aria-label="Reminders"><div className="notification-heading"><div><h2>Reminders</h2></div>{unread > 0 && <button type="button" className="text-button" onClick={() => void markAllRead()}>Mark all read</button>}<button type="button" className="icon-button" aria-label="Close reminders" onClick={() => setOpen(false)}><X size={17} /></button></div>
+      {loading ? <p className="task-group-empty">Loading reminders…</p> : items.length ? <div className="notification-list">{items.map((item) => <button type="button" className={`notification-item${item.read_at ? '' : ' unread'}`} key={item.id} onClick={() => void openNotification(item)}><span>{item.message}</span><time>{new Date(item.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time></button>)}</div> : <div className="notification-empty"><Bell size={20} aria-hidden="true" /><strong>You’re all caught up</strong><p>Due follow-ups appear here when in-app reminders are on.</p><Link className="subtle-link" to="/settings?tab=email" onClick={() => setOpen(false)}>Reminder settings <ArrowRight size={14} /></Link></div>}
     </section>}
   </div>;
 }
@@ -1689,9 +1695,9 @@ function ScanPage() {
   }
   const readyCount = scans.filter((item) => item.status === 'ready' || item.status === 'failed').length;
   return <section className="scan-view">
-    <div className="page-heading-row"><div><h1>Scan cards</h1></div></div>
+    <div className="page-heading-row scan-heading"><div><h1>Scan cards</h1></div><div className="capture-event-picker"><label className="capture-event-label" htmlFor="capture-event"><CalendarDays size={15} aria-hidden="true" /><span>Saving to</span><span className="sr-only">Event for this capture</span></label><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select>{session.workspace.kind === 'company' && session.workspace.role === 'admin' && <QuickEvent csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onCreated={(created) => { setCaptureEvents((current) => [created, ...current.map((item) => ({ ...item, is_active: 0 }))]); setCaptureEventId(created.id); }} />}</div></div>
     {(!online || waitingOffline > 0) && <div className={`offline-banner${online ? ' is-back' : ''}`} role="status"><WifiOff size={18} aria-hidden="true" /><div><strong>{online ? `${waitingOffline} photo${waitingOffline === 1 ? '' : 's'} saved on this phone` : 'You are offline'}</strong><span>{online ? 'They upload one by one now. Nothing is lost if you close this page.' : 'Keep scanning. Photos are saved on this phone and upload on their own when you are back online.'}</span></div>{online && waitingOffline > 0 && <button type="button" className="button secondary" onClick={() => void flushQueue()}>Upload now</button>}</div>}
-    <div className="capture-event-picker"><div className="capture-event-copy"><label htmlFor="capture-event">Event for this capture</label><span>Keep the conversation with the right event.</span></div><select id="capture-event" value={captureEventId ?? ''} disabled={captureEventId === null} onChange={(event) => setCaptureEventId(event.target.value)}><option value="">No event / other meeting</option>{captureEvents.map((item) => <option key={item.id} value={item.id}>{item.name}{item.is_active ? ' · active' : ''}</option>)}</select>{session.workspace.kind === 'company' && session.workspace.role === 'admin' && <QuickEvent csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onCreated={(created) => { setCaptureEvents((current) => [created, ...current.map((item) => ({ ...item, is_active: 0 }))]); setCaptureEventId(created.id); }} />}</div>
+
     <div className="scan-layout">
       <section className="surface-card viewfinder-card">
         {cameraOn && stream ? <CameraPreview stream={stream} onClose={closeCamera} onCapture={(file) => void uploadFile(file, 'camera', undefined, true)} onQr={(raw) => void addQr(raw)} /> : <>

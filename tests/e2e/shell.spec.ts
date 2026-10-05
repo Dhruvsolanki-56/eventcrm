@@ -26,10 +26,10 @@ test('sample company and attendee accounts enter their own spaces', async ({ pag
   await expect(page.getByRole('heading', { name: 'Good to see you.' })).toBeVisible();
 
   for (const account of [
-    { name: /Maya Chen/, heading: /Good morning, Maya/, strip: /Company: Northstar Packaging/ },
-    { name: /Priya Shah/, heading: /Good morning, Priya/, strip: /Company: Northstar Packaging/ },
-    { name: /Jordan Lee/, heading: /Good morning, Jordan/, strip: /Company: Northstar Packaging/ },
-    { name: /Alex Rivera/, heading: /Good morning, Alex/, strip: /Company: Riverbend Supply/ },
+    { name: /Maya Chen/, heading: /Good morning, Maya/, strip: /^Northstar Packaging$/ },
+    { name: /Priya Shah/, heading: /Good morning, Priya/, strip: /^Northstar Packaging$/ },
+    { name: /Jordan Lee/, heading: /Good morning, Jordan/, strip: /^Northstar Packaging$/ },
+    { name: /Alex Rivera/, heading: /Good morning, Alex/, strip: /^Riverbend Supply$/ },
     { name: /Sam Patel/, heading: /Good morning, Sam/, strip: /Only you can see this/ },
     { name: /Riley Morgan/, heading: /Good morning, Riley/, strip: /Only you can see this/ },
   ]) {

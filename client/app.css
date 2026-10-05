@@ -1248,3 +1248,36 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 .pipeline-column.won { border-top-color: #2f8a5c; }
 .pipeline-column.lost { border-top-color: var(--danger); }
 .pipeline-column.contacted { border-top-color: #8a94a3; }
+
+/* ---------- One place for the event ---------- */
+/* The top bar names the active event; on Scan the header picker takes its place, so each screen shows it once. */
+.topbar-event { display: inline-flex; align-items: center; gap: 7px; }
+.live-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.topbar-event.is-live .live-dot { background: #2f8a5c; box-shadow: 0 0 0 0 rgb(47 138 92 / 45%); animation: live-pulse 2.4s ease-out infinite; }
+@keyframes live-pulse { 0% { box-shadow: 0 0 0 0 rgb(47 138 92 / 45%); } 70%, 100% { box-shadow: 0 0 0 6px rgb(47 138 92 / 0%); } }
+@media (prefers-reduced-motion: reduce) { .topbar-event.is-live .live-dot { animation: none; } }
+.notifications-wrap { margin-left: auto; }
+.topbar-event + .notifications-wrap { margin-left: 0; }
+.scan-heading { align-items: center; }
+.scan-heading .capture-event-picker { position: relative; flex-wrap: nowrap; margin: 0; padding: 4px 4px 4px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); box-shadow: none; }
+.capture-event-label { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.capture-event-label svg { color: var(--accent); }
+.scan-heading .capture-event-picker select { flex: 0 1 260px; min-width: 180px; min-height: 32px; padding-block: 0; border: 0; background-color: transparent; color: var(--ink); font-weight: 600; box-shadow: none; }
+.scan-heading .capture-event-picker select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.scan-heading .quick-event-open { min-height: 32px; border-radius: 999px; }
+.scan-heading .quick-event { position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; width: min(400px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-pop); }
+@media (max-width: 780px) {
+  .scan-heading .capture-event-picker { flex-wrap: wrap; width: 100%; padding: 6px 6px 6px 12px; border-radius: var(--radius-lg); }
+  .scan-heading .capture-event-picker select { flex: 1 1 140px; min-width: 0; }
+  .scan-heading .quick-event-open { width: auto; }
+  .scan-heading .quick-event { left: 0; right: auto; width: 100%; }
+}
+@media (max-width: 780px) { .topbar-event { display: none; } .topbar-event + .notifications-wrap { margin-left: auto; } }
+.notification-heading { gap: 8px; }
+.notification-heading > div { flex: 1; }
+.notification-empty { display: grid; justify-items: center; gap: 4px; padding: 28px 20px; color: var(--muted); text-align: center; }
+.notification-empty svg { margin-bottom: 4px; color: var(--accent); }
+.notification-empty strong { color: var(--ink); font-size: 14px; }
+.notification-empty p { max-width: 240px; margin: 0 0 6px; font-size: 12.5px; }
+.scan-heading .capture-event-picker select#capture-event { border-color: transparent; background-color: transparent; box-shadow: none; }
+.scan-heading .capture-event-picker select#capture-event:hover { background-color: var(--hover); }

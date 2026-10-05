@@ -41,6 +41,6 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   await page.locator('.profile-button').click();
   await page.getByRole('menuitem', { name: /Northstar Packaging.*representative/ }).click();
   await expect(page.locator('.topbar-mode')).toContainText('Northstar Packaging');
-  await expect(page.locator('.mode-strip')).toContainText('Company: Northstar Packaging');
+  await expect(page.locator('.mode-strip')).toContainText('Northstar Packaging');
   expect(duplicateKeyWarnings).toEqual([]);
 });
