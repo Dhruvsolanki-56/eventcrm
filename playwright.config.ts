@@ -2,6 +2,11 @@ import { defineConfig } from '@playwright/test';
 
 const webPort = Number(process.env.E2E_WEB_PORT ?? 5174);
 const apiPort = Number(process.env.E2E_API_PORT ?? 3101);
+// E2E_BROWSER=firefox or webkit runs the suite in that engine; the default is Chromium.
+const browserName = (process.env.E2E_BROWSER ?? 'chromium') as 'chromium' | 'firefox' | 'webkit';
+const launchOptions = browserName === 'chromium'
+  ? { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] }
+  : browserName === 'firefox' ? { firefoxUserPrefs: { 'media.navigator.streams.fake': true, 'media.navigator.permission.disabled': true } } : {};
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -18,8 +23,8 @@ export default defineConfig({
   expect: { timeout: 6_000 },
   use: {
     baseURL: `http://127.0.0.1:${webPort}`,
-    browserName: 'chromium',
-    launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
+    browserName,
+    launchOptions,
     viewport: { width: 1440, height: 1000 },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

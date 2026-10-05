@@ -331,7 +331,8 @@ test('keyboard users can open the camera, take a photo, and reach the review tra
   await expect.poll(() => page.locator('video').evaluate((video: HTMLVideoElement) => video.videoWidth)).toBeGreaterThan(0);
   await tabToAccessibleName('Take photo');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('button', { name: 'Review' }).first()).toBeVisible({ timeout: 15_000 });
+  // The photo is read quickly, so the app may already have opened the review page; either way the person has reached review.
+  await expect.poll(async () => /\/review\//.test(page.url()) || await page.getByRole('button', { name: 'Review' }).count() > 0, { timeout: 15_000 }).toBe(true);
 });
 
 test('concurrent captures add two people under one new company', async ({ page }) => {
@@ -466,6 +467,7 @@ test('knowledge settings save and the shell fits desktop and phone widths', asyn
 });
 
 test('company invite links create scoped team access and removal takes effect immediately', async ({ page, browser, context }) => {
+  test.skip(Boolean(process.env.E2E_BROWSER) && process.env.E2E_BROWSER !== 'chromium', 'This test grants the clipboard-read permission, which only Chromium offers.');
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
@@ -796,6 +798,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
 });
 
 test('review can save product interests and a manual-text voice note', async ({ page, context }) => {
+  test.skip(Boolean(process.env.E2E_BROWSER) && process.env.E2E_BROWSER !== 'chromium', 'This test grants the microphone permission, which only Chromium offers.');
   await context.grantPermissions(['microphone']);
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
@@ -978,6 +981,7 @@ test('attendee spaces only show their own people and cannot select a company wor
 });
 
 test('voice notes save, play back, accept manual text only, and can be deleted', async ({ page, context }) => {
+  test.skip(Boolean(process.env.E2E_BROWSER) && process.env.E2E_BROWSER !== 'chromium', 'This test grants the microphone permission, which only Chromium offers.');
   await context.grantPermissions(['microphone']);
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
@@ -1019,6 +1023,7 @@ test('voice notes save, play back, accept manual text only, and can be deleted',
 });
 
 test('follow-ups snooze, complete, and meetings warn on overlap and can be confirmed or marked no-show', async ({ page, context }) => {
+  test.skip(Boolean(process.env.E2E_BROWSER) && process.env.E2E_BROWSER !== 'chromium', 'This test grants the microphone permission, which only Chromium offers.');
   const testToken = `${Date.now()}`;
   await context.grantPermissions(['microphone']);
   await page.goto('/');

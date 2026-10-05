@@ -1,0 +1,153 @@
+name: CI
+
+# Every push and pull request runs the type-checks, unit tests, production build and the end-to-end suite in Chromium.
+# Firefox, Safari (WebKit) and Postgres run alongside as separate jobs. The last two have never been run to completion
+# in the project's own checks, so they are marked non-blocking until they have gone green once; remove
+# `continue-on-error` from them then. The 100,000-person scale test runs only when started by hand.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: 'Also run the 100,000-person scale test'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The browser transcription library does not need the extra Linux GPU binaries that onnxruntime-node downloads.
+  ONNXRUNTIME_NODE_INSTALL: skip
+  CI: 'true'
+
+jobs:
+  checks:
+    name: Types, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Type-check the app
+        run: npx tsc --noEmit -p .
+      - name: Type-check the server
+        run: npx tsc --noEmit -p tsconfig.server.json
+      - name: Unit tests
+        run: npx vitest run
+      - name: Production build
+        run: npm run build
+
+  e2e-chromium:
+    name: End to end (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Full suite
+        run: npm run test:e2e
+      - name: Mail suite (captures what the mail server receives)
+        run: npm run test:mail
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-chromium-results
+          path: test-results/
+          retention-days: 7
+
+  e2e-other-browsers:
+    name: End to end (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    # Firefox passes locally. WebKit could not be installed on the machine this was set up on, so it has never run.
+    continue-on-error: ${{ matrix.browser == 'webkit' }}
+    env:
+      E2E_BROWSER: ${{ matrix.browser }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run build
+      - name: Full suite (tests that need Chromium-only features skip themselves)
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-${{ matrix.browser }}-results
+          path: test-results/
+          retention-days: 7
+
+  e2e-postgres:
+    name: API checks on Postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The app has a Postgres mode (DATABASE_URL) that has never been exercised here. Only specs that do not read the
+    # SQLite file directly can run against it. Non-blocking until this goes green once.
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: encore
+          POSTGRES_DB: encore
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:encore@localhost:5432/encore
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Specs that only use the API and the screens
+        run: >-
+          npm run test:e2e --
+          api-hardening role-refusals security-checks upload-validation
+          double-click-ui response-lost pipeline-drag quick-event setup
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-postgres-results
+          path: test-results/
+          retention-days: 7
+
+  scale:
+    name: Scale test (100,000 people)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.scale }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Seed and time every list and report
+        run: npm run test:e2e -- scale
+        env:
+          SCALE_TEST: '1'
+          SCALE_N: '100000'

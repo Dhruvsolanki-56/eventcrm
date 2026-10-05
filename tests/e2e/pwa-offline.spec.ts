@@ -23,6 +23,7 @@ const workspace = { id: 'w1', name: 'Offline Co', kind: 'company', role: 'admin'
 const session = { user: { id: 'u1', name: 'Pat Offline', email: 'pat@example.test' }, workspace, availableWorkspaces: [workspace], csrfToken: 'test-token', demoMode: false };
 
 test('the installed app opens offline on the capture screen and refreshes its session when the signal returns', async ({ page, context }) => {
+  test.skip(Boolean(process.env.E2E_BROWSER) && process.env.E2E_BROWSER !== 'chromium', "This test uses Chromium's offline emulation; Firefox's blocks service-worker page loads.");
   test.skip(!existsSync(join(dist, 'index.html')), 'Run npm run build first: this test uses the production build.');
   test.setTimeout(90_000);
   const { server, base } = await serveDist();

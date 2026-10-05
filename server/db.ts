@@ -586,10 +586,10 @@ function peopleScope(actorId: string, workspaceId: string, search: string, inclu
   const term = `%${search.trim().replace(/[\%_]/g, '\$&')}%`;
   const sql = `FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     WHERE c.workspace_id=? AND c.deleted_at IS NULL AND ((?=1 AND c.archived_at IS NOT NULL) OR (?=0 AND c.archived_at IS NULL))
-      AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin') OR EXISTS (SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND ea.user_id=?))
+      AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin') OR c.id IN (SELECT en.contact_id FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=? AND ea.user_id=?))
       AND (?='' OR c.name LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR co.name LIKE ? ESCAPE '\\')`;
   const flag = includeArchived ? 1 : 0;
-  return { sql, args: [workspaceId, flag, flag, actorId, actorId, actorId, search.trim(), term, term, term] };
+  return { sql, args: [workspaceId, flag, flag, actorId, actorId, workspaceId, actorId, search.trim(), term, term, term] };
 }
 
 // One page of people, newest first. `limit` defaults to a screenful; an export or a report passes a larger one to get everyone.
@@ -772,12 +772,8 @@ export async function updateCompanyAbout(actorId: string, workspaceId: string, c
 
 export async function getReportData(actorId: string, workspaceId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const allPeople = await listPeople(actorId, workspaceId, '', false, 1_000_000);
-  const stages = allPeople.reduce<Record<string, number>>((counts, person) => {
-    const stage = String(person.stage);
-    counts[stage] = (counts[stage] ?? 0) + 1;
-    return counts;
-  }, {});
+  const stageCounts = await countPeopleByStage(actorId, workspaceId);
+  const stages = stageCounts.stages;
   const companies = await (listCompanies(actorId, workspaceId));
   const valueByStatus = { open: 0, won: 0, lost: 0 };
   for (const company of companies) {
@@ -798,7 +794,7 @@ export async function getReportData(actorId: string, workspaceId: string) {
   const activeEvent = await (getCurrentEvent(actorId, workspaceId));
   const dailyCaptures: Array<{ day: string; captures: number }> = [];
   if (activeEvent) {
-    const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: activeEvent.time_zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const todayKey = zoneDayFormatter(activeEvent.time_zone).format(new Date());
     const [year, month, day] = todayKey.split('-').map(Number);
     const dayKeys = Array.from({ length: 14 }, (_, index) => new Date(Date.UTC(year, month - 1, day - 13 + index)).toISOString().slice(0, 10));
     const dayCounts = new Map(dayKeys.map((key) => [key, 0]));
@@ -806,7 +802,7 @@ export async function getReportData(actorId: string, workspaceId: string) {
       WHERE s.workspace_id=? AND s.event_id=? AND s.status='saved' AND s.saved_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-20 days') AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${personScope}`)
       .all(workspaceId, activeEvent.id, actorId, actorId, actorId)) as Array<{ saved_at: string }>;
     for (const scan of scans) {
-      const key = new Intl.DateTimeFormat('en-CA', { timeZone: activeEvent.time_zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(scan.saved_at));
+      const key = zoneDayFormatter(activeEvent.time_zone).format(new Date(scan.saved_at));
       if (dayCounts.has(key)) dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
     }
     for (const key of dayKeys) dailyCaptures.push({ day: key.slice(5), captures: dayCounts.get(key) ?? 0 });
@@ -817,7 +813,7 @@ export async function getReportData(actorId: string, workspaceId: string) {
     WHERE e.workspace_id=? GROUP BY e.id ORDER BY e.starts_at DESC`).all(actorId, workspaceId));
   const wonCompanies = companies.filter((company) => company.deal_status === 'won');
   return {
-    stages, valueByStatus, companies: companies.length, people: allPeople.length, events: eventRows,
+    stages, valueByStatus, companies: companies.length, people: stageCounts.total, events: eventRows,
     metrics: { followUpsDone: Number(workMetrics.follow_ups_done ?? 0), replies, meetings: Number(workMetrics.meetings ?? 0), wonCount: wonCompanies.length },
     dailyCaptures, activeEvent: activeEvent ? { id: activeEvent.id, name: activeEvent.name, timeZone: activeEvent.time_zone } : null,
   };
@@ -879,8 +875,11 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
   const companies = [...new Map(people.map((row) => [row.company_id, row])).values()];
   const dayMap = new Map(Array.from({ length: days }, (_, index) => [shiftDay(index + 1 - days), { people: new Set<string>(), conversations: 0 }]));
   const sourceMap = new Map<string, { id: string; name: string; people: Set<string>; conversations: number }>();
+  const dayKeyCache = new Map<string, string>();
   for (const row of current) {
-    const day = dayMap.get(localDateAndTime(new Date(row.occurred_at), timeZone).day);
+    let dayKey = dayKeyCache.get(row.occurred_at);
+    if (dayKey === undefined) { dayKey = zoneDayFormatter(timeZone).format(new Date(row.occurred_at)); dayKeyCache.set(row.occurred_at, dayKey); }
+    const day = dayMap.get(dayKey);
     if (day) { day.people.add(row.id); day.conversations++; }
     const key = row.event_id ?? 'unassigned';
     const source = sourceMap.get(key) ?? { id: key, name: row.event_name ?? 'No event assigned', people: new Set<string>(), conversations: 0 };
@@ -1102,8 +1101,18 @@ function readReminderPreferences(value: string): ReminderPreferences {
     };
   } catch { return defaultReminderPreferences; }
 }
+// Building a date formatter is slow; reports format thousands of dates, so each time zone's formatters are made once.
+const zoneDayFormatters = new Map<string, Intl.DateTimeFormat>();
+const zoneDayTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+function zoneDayFormatter(timeZone: string) {
+  let formatter = zoneDayFormatters.get(timeZone);
+  if (!formatter) { formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }); zoneDayFormatters.set(timeZone, formatter); }
+  return formatter;
+}
 function localDateAndTime(date: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(date);
+  let formatter = zoneDayTimeFormatters.get(timeZone);
+  if (!formatter) { formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }); zoneDayTimeFormatters.set(timeZone, formatter); }
+  const parts = formatter.formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return { day: `${values.year}-${values.month}-${values.day}`, time: `${values.hour}:${values.minute}` };
 }
@@ -1887,7 +1896,14 @@ export async function listEmailDesk(actorId: string, workspaceId: string) {
       AND ${visibleNoteSql('n')} AND (en.event_id IS NULL OR ?=1 OR EXISTS (
         SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))`)
     .all(workspaceId, noteAccess.all, actorId, actorId, noteAccess.all, actorId) as Array<{ contact_id: string }>).map((row) => row.contact_id));
-  const people = (await listPeople(actorId, workspaceId, '', false, 1_000_000)).filter((person) => Boolean(person.email) && !blocked.has(String(person.id)) && !drafts.some((draft) => draft.contact_id === person.id && draft.status === 'draft')).slice(0, 100)
+  // Newest people first, in chunks, until 100 are ready to email; a large workspace is never loaded whole.
+  const eligible: Array<Record<string, unknown>> = [];
+  for (let offset = 0; eligible.length < 100; offset += 500) {
+    const chunk = await listPeople(actorId, workspaceId, '', false, 500, offset);
+    eligible.push(...chunk.filter((person) => Boolean(person.email) && !blocked.has(String(person.id)) && !drafts.some((draft) => draft.contact_id === person.id && draft.status === 'draft')));
+    if (chunk.length < 500) break;
+  }
+  const people = eligible.slice(0, 100)
     .map((person) => ({ ...person, hasContext: withContext.has(String(person.id)) }));
   return { drafts, people };
 }
