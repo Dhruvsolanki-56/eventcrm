@@ -3,7 +3,7 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, usePa
 import { AlertCircle, Archive, ArrowLeft, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, LoaderCircle, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
-import { getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
+import { assertOnline, offlineMessage, getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
 import { needsCardAiFallback, readCardInBrowser, warmCardReader } from './card-ocr.js';
 import { askConfirm } from './confirm.js';
 import { AiDraftSkeleton, AiWritingBar, useJustFinished } from './ai-motion.js';
@@ -13,8 +13,10 @@ import { QuickEvent } from './quick-event.js';
 import { WhenVisible } from './when-visible.js';
 import { BrandMark } from './brand.js';
 import { Skeleton } from './skeletons.js';
+import { formatMoney } from './money.js';
 import { InstallPrompt, markCardSaved } from './install-app.js';
 import { cacheSession, clearCachedSession, readCachedSession } from './offline-session.js';
+import { offlineReadingReady } from './offline-warm.js';
 import { isOfflineError, listQueuedPhotos, queueChangedEvent, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
 import { appendText, applyIdea, fieldsNeedingLook, followUpChips, followUpIdeas, meetingIdeas, remember, rememberedNumber } from './quick-capture.js';
 import { transcribeLocally, type VoiceLanguage } from './local-transcribe.js';
@@ -64,6 +66,8 @@ export default function App() {
   const toastTimer = useRef<number | undefined>(undefined);
   const [workspaceId, setWorkspaceId] = useState(localStorage.getItem('gather-workspace') ?? '');
   const notify = useCallback((message: string, action?: ToastAction) => {
+    // The offline banner already says this once; repeating it as a toast on every failed background load is noise.
+    if (message === offlineMessage) return;
     if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
     setToast({ message, action });
     toastTimer.current = window.setTimeout(() => setToast(null), action ? 8000 : 3200);
@@ -435,6 +439,7 @@ function WorkspaceShell() {
         <button className="topbar-avatar" aria-label="Open account menu" onClick={() => { setMobileMenu(true); setMenuOpen(true); }}>{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</button>
       </header>
       <InstallPrompt />
+      <OfflineNotice />
       <main className="page-content" ref={mainRef}>
         <Routes>
           <Route path="/" element={<Navigate to="/scan" replace />} />
@@ -497,6 +502,19 @@ function CaptureEmailPreferenceMenu() {
 }
 
 type UserNotification = { id: string; kind: string; message: string; contact_id: string | null; read_at: string | null; created_at: string };
+/** Said once, at the top of every screen except Scan (which explains offline use itself): what still works and what has to wait. */
+function OfflineNotice() {
+  const location = useLocation();
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const up = () => setOnline(true); const down = () => setOnline(false);
+    window.addEventListener('online', up); window.addEventListener('offline', down);
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
+  }, []);
+  if (online || location.pathname === '/scan') return null;
+  return <div className="offline-notice" role="status"><WifiOff size={17} aria-hidden="true" /><div><strong>You are offline</strong><span>This screen shows what was loaded earlier and cannot save changes until the signal is back. Scanning still works: photos wait safely on this device.</span></div><Link className="button secondary" to="/scan">Open Scan</Link></div>;
+}
+
 /** Shows on every screen when there is no signal or photos are still waiting, so people know their captures are safe. */
 function OfflineChip() {
   const { session } = useWorkspace();
@@ -619,7 +637,7 @@ function StageBadge({ stage }: { stage: string }) {
 const pipelineStages = ['new', 'contacted', 'replied', 'meeting', 'won', 'lost'] as const;
 const stageLabel = (stage: string) => stage.charAt(0).toUpperCase() + stage.slice(1);
 const initialsOf = (name: string) => name.split(' ').map((part) => part[0]).join('').slice(0, 2);
-const usd = (minor: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(minor / 100);
+const usd = formatMoney;
 const relativeDay = (value: string) => {
   const days = Math.round((Date.now() - new Date(value).getTime()) / 86400000);
   if (days <= 0) return 'Today';
@@ -805,7 +823,7 @@ function CompanyPage() {
   async function saveDeal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!detail) return;
     const parsedAmount = value.trim() ? Number(value) : null;
-    if (parsedAmount !== null && (!Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > 1_000_000_000)) { setError('Enter a positive USD amount.'); return; }
+    if (parsedAmount !== null && (!Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > 1_000_000_000)) { setError('Enter a positive amount in rupees.'); return; }
     setSaving(true); setError('');
     try {
       await request(`/api/companies/${companyId}/deal`, { method: 'PUT', body: JSON.stringify({ valueMinor: parsedAmount === null ? null : Math.round(parsedAmount * 100), status: status || null }) }, { csrfToken, workspaceId: session.workspace.id });
@@ -843,7 +861,7 @@ function CompanyPage() {
         {detail.materials.length ? <div className="material-grid">{detail.materials.map((material) => <article className="material-card" key={material.scan_id}><a href={`/api/scans/${material.scan_id}/image`} target="_blank" rel="noreferrer"><img src={`/api/scans/${material.scan_id}/image`} alt={`Brochure for ${company.name}`} /></a><div><strong>Brochure photo</strong><small>{material.event_name ? `${material.event_name} · ` : ''}{new Date(material.saved_at).toLocaleDateString()}</small>{material.items.length > 0 && <p className="material-items"><strong>Products or topics</strong><br />{material.items.join(' · ')}</p>}<button type="button" className="text-button danger-text" disabled={removingMaterialId === material.scan_id} onClick={() => void removeMaterial(material.scan_id)}>{removingMaterialId === material.scan_id ? 'Removing…' : 'Remove material'}</button></div></article>)}</div> : <p className="company-empty-note">No brochures yet. Capture one and choose Company brochure during review.</p>}
       </section>
     </div>
-      {(showDeal || showMerge) && <aside className="company-side">{showDeal && <form className="surface-card deal-form" onSubmit={(event) => void saveDeal(event)}><h2>Deal value</h2><div className="field-grid"><label>Potential value (USD)<input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label></div>{error && <p className="form-error">{error}</p>}<p className="subtle">Counted once for the company in reports, not once per person.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save deal'}</button></form>}
+      {(showDeal || showMerge) && <aside className="company-side">{showDeal && <form className="surface-card deal-form" onSubmit={(event) => void saveDeal(event)}><h2>Deal value</h2><div className="field-grid"><label>Potential value (₹)<input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label></div>{error && <p className="form-error">{error}</p>}<p className="subtle">Counted once for the company in reports, not once per person.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save deal'}</button></form>}
         {showMerge && <details className="surface-card company-merge-panel"><summary>Combine duplicate companies</summary><p>Move this company’s people and brochures into the company you choose. The old name and website stay as matching clues for later scans. Deal details need review if both records have them.</p><label>Company to keep<select value={mergeTargetId} onChange={(event) => { setMergeTargetId(event.target.value); setMergeConfirmation(''); setMergeError(''); }}><option value="">Choose a company</option>{mergeTargets.map((target) => <option value={target.id} key={target.id}>{target.name} · {target.people} {target.people === 1 ? 'person' : 'people'}</option>)}</select></label>{mergeTargetId && <label>Type MERGE to confirm<input value={mergeConfirmation} onChange={(event) => setMergeConfirmation(event.target.value)} autoComplete="off" /></label>}{mergeError && <p className="form-error" role="alert">{mergeError}</p>}<button type="button" className="button secondary" disabled={merging || !mergeTargetId || mergeConfirmation !== 'MERGE'} onClick={() => void mergeIntoSelected()}>{merging ? 'Combining…' : 'Combine company records'}</button></details>}
       </aside>}
     </div>
@@ -921,7 +939,7 @@ function ReportsPage() {
   const [report, setReport] = useState<{ stages: Record<string, number>; valueByStatus: { open: number; won: number; lost: number }; companies: number; people: number; metrics: { followUpsDone: number; replies: number; meetings: number; wonCount: number }; dailyCaptures: Array<{ day: string; captures: number }>; activeEvent: { id: string; name: string; timeZone: string } | null; events: Array<{ id: string; name: string; spend_minor: number | null; people: number; encounters: number }> } | null>(null);
   useEffect(() => { void request<NonNullable<typeof report>>('/api/reports', {}, { workspaceId: session.workspace.id }).then(setReport).catch((issue) => notify((issue as Error).message)); }, [session.workspace.id, notify]);
   const stageData = report ? ['new','contacted','replied','meeting','won','lost'].map((stage) => ({ stage, people: report.stages[stage] ?? 0 })) : [];
-  const money = (minor: number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(minor / 100);
+  const money = formatMoney;
   const recordedSpendMinor = report?.events.reduce((total, event) => total + (event.spend_minor === null ? 0 : Number(event.spend_minor)), 0) ?? 0;
   const hasRecordedSpend = report?.events.some((event) => event.spend_minor !== null) ?? false;
   const wonValuePerSpend = hasRecordedSpend && recordedSpendMinor > 0 && report
@@ -934,7 +952,7 @@ function ReportsPage() {
     finally { setExporting(false); }
   }
   return <section className="records-view"><div className="page-heading-row"><div><h1>Reports</h1></div><button type="button" className="button secondary" disabled={exporting} onClick={() => void exportPeople()}>{exporting ? 'Preparing…' : 'Export people CSV'}</button></div>
-    {!report ? <Skeleton variant="tiles" label="Loading report" /> : <><div className="report-metrics"><article className="metric-card"><span>People</span><strong className="metric-number">{report.people}</strong></article><article className="metric-card"><span>Companies</span><strong className="metric-number">{report.companies}</strong></article><article className="metric-card"><span>Follow-ups done</span><strong className="metric-number">{report.metrics.followUpsDone}</strong></article><article className="metric-card"><span>Replies</span><strong className="metric-number">{report.metrics.replies}</strong></article><article className="metric-card"><span>Meetings</span><strong className="metric-number">{report.metrics.meetings}</strong></article><article className="metric-card"><span>Won companies</span><strong className="metric-number">{report.metrics.wonCount}</strong></article><article className="metric-card"><span>Open deal value</span><strong className="metric-number">{money(report.valueByStatus.open)}</strong><small>USD · company level</small></article><article className="metric-card"><span>Won deal value</span><strong className="metric-number">{money(report.valueByStatus.won)}</strong><small>USD · counted once per company</small></article><article className="metric-card"><span>Won value ÷ event spend</span><strong className="metric-number">{wonValuePerSpend ?? 'Unavailable'}</strong><small>{wonValuePerSpend ? `Visible records: ${money(report.valueByStatus.won)} won ÷ ${money(recordedSpendMinor)} accessible-event spend; not event attribution or net ROI.` : 'Add a non-zero event spend in Settings.'}</small></article></div>
+    {!report ? <Skeleton variant="tiles" label="Loading report" /> : <><div className="report-metrics"><article className="metric-card"><span>People</span><strong className="metric-number">{report.people}</strong></article><article className="metric-card"><span>Companies</span><strong className="metric-number">{report.companies}</strong></article><article className="metric-card"><span>Follow-ups done</span><strong className="metric-number">{report.metrics.followUpsDone}</strong></article><article className="metric-card"><span>Replies</span><strong className="metric-number">{report.metrics.replies}</strong></article><article className="metric-card"><span>Meetings</span><strong className="metric-number">{report.metrics.meetings}</strong></article><article className="metric-card"><span>Won companies</span><strong className="metric-number">{report.metrics.wonCount}</strong></article><article className="metric-card"><span>Open deal value</span><strong className="metric-number">{money(report.valueByStatus.open)}</strong><small>Company level</small></article><article className="metric-card"><span>Won deal value</span><strong className="metric-number">{money(report.valueByStatus.won)}</strong><small>Counted once per company</small></article><article className="metric-card"><span>Won value ÷ event spend</span><strong className="metric-number">{wonValuePerSpend ?? 'Unavailable'}</strong><small>{wonValuePerSpend ? `Visible records: ${money(report.valueByStatus.won)} won ÷ ${money(recordedSpendMinor)} accessible-event spend; not event attribution or net ROI.` : 'Add a non-zero event spend in Settings.'}</small></article></div>
       <div className="report-grid"><article className="surface-card report-chart"><h2>Conversation progress</h2><div className="chart-wrap"><Suspense fallback={<span className="subtle">Loading chart…</span>}><ReportChart data={stageData} /></Suspense></div></article><article className="surface-card report-chart"><h2>{report.activeEvent?.name ?? 'No active event yet'}</h2>{report.activeEvent ? <div className="chart-wrap"><Suspense fallback={<span className="subtle">Loading chart…</span>}><CaptureChart data={report.dailyCaptures} /></Suspense></div> : <p className="records-empty">Choose an active event in Settings to see daily captures.</p>}</article><article className="surface-card report-events"><h2>Conversations by event</h2>{report.events.map((event) => <div className="event-report-row" key={event.id}><strong>{event.name}</strong><span>{event.people} people · {event.encounters} conversations</span><small>{event.spend_minor === null ? 'Spend not set.' : `Event spend: ${money(Number(event.spend_minor))}`}</small></div>)}{!report.events.length && <p className="records-empty">No event activity yet.</p>}</article></div>
     </>}</section>;
 }
@@ -1052,7 +1070,7 @@ function PersonPage() {
   async function saveCompanyDeal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!detail) return;
     const parsedAmount = dealValue.trim() ? Number(dealValue) : null;
-    if (parsedAmount !== null && (!Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > 1_000_000_000)) { setDealError('Enter a valid USD amount of $0 or more.'); return; }
+    if (parsedAmount !== null && (!Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > 1_000_000_000)) { setDealError('Enter a valid amount in rupees, ₹0 or more.'); return; }
     setSavingDeal(true); setDealError('');
     const valueMinor = parsedAmount === null ? null : Math.round(parsedAmount * 100);
     try {
@@ -1079,7 +1097,7 @@ function PersonPage() {
       <a className="button secondary" href="#person-manage" aria-current={personPanel === 'manage' ? 'location' : undefined} onClick={() => setPersonPanel('manage')}>More</a>
     </nav>
     <div className="person-side" data-panel={personPanel}>
-      {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (USD)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(person.deal_value_minor) / 100)} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
+      {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (₹)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${formatMoney(Number(person.deal_value_minor))} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
       <form id="person-conversation" className="surface-card note-form" onSubmit={(event) => void addNote(event)}>
         <h2>New conversation</h2>
         <label htmlFor="conversation-event">Where did you meet?</label>
@@ -1325,6 +1343,7 @@ function VoiceNotesPanel({ contactId, notes, onChange }: { contactId: string; no
   async function transcribeSavedNote(noteId: string) {
     setLocalTranscribeId(noteId); setLocalTranscribeProgress('Opening the recording…'); setError('');
     try {
+      assertOnline();
       const response = await fetch(`/api/notes/${noteId}/audio`, { credentials: 'same-origin', cache: 'no-store', headers: { 'X-Workspace-Id': session.workspace.id } });
       if (!response.ok) throw new Error('This recording could not be opened.');
       const text = await transcribeLocally(await response.blob(), setLocalTranscribeProgress, transcriptionLanguage);
@@ -1512,6 +1531,25 @@ function sentence(text: string) {
   return clean ? `${clean.charAt(0).toUpperCase()}${clean.slice(1)}.` : '';
 }
 
+/** Why a card could not be read. `ai` says what the online reader did: not used, did not answer, or answered with nothing. */
+type ReadFailure = { engine: boolean; ai: 'off' | 'failed' | 'empty' };
+
+function ReadFailureNotice({ failure, onRetry, onRetake, onType }: { failure: ReadFailure; onRetry: () => void; onRetake: () => void; onType: () => void }) {
+  const reasons = [
+    failure.engine ? 'The on-device reader could not start. It needs a connection the first time it loads.' : 'Very little text could be found. The photo may be blurry, dark, small, or not a card.',
+    failure.ai === 'failed' ? 'The online reader did not answer, so it could not help this time.' : failure.ai === 'empty' ? 'The online reader looked as well and found nothing.' : '',
+  ].filter(Boolean);
+  return <div className="read-failure" role="alert">
+    <span className="read-failure-icon"><ScanLine size={20} aria-hidden="true" /></span>
+    <div className="read-failure-body">
+      <strong>We couldn’t read this card</strong>
+      <p>Nothing was guessed and nothing is saved. You can try again, take a clearer photo, or type what you see.</p>
+      <ul>{reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      <div className="read-failure-actions"><button type="button" className="button primary" onClick={onRetry}><RotateCw size={15} aria-hidden="true" /> Read again</button><button type="button" className="button secondary" onClick={onRetake}>Retake photo</button><button type="button" className="text-button" onClick={onType}>Type it myself</button></div>
+    </div>
+  </div>;
+}
+
 /** The last few people saved in this workspace, so the side of Scan shows progress instead of empty space. */
 function RecentSaves({ refreshKey }: { refreshKey: number }) {
   const { session } = useWorkspace();
@@ -1549,7 +1587,7 @@ function ScanPage() {
   const [scans, setScans] = useState<ScanView[]>([]);
   const [cameraError, setCameraError] = useState('');
   const [readingMode, setReadingMode] = useState<'demo' | 'provider' | 'browser' | 'manual' | null>(null);
-  useEffect(() => { if (readingMode !== 'browser') return; const timer = window.setTimeout(() => { void warmCardReader().catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [readingMode]);
+  useEffect(() => { if (readingMode !== 'browser') return; if (navigator.onLine === false && !offlineReadingReady()) return; const timer = window.setTimeout(() => { void warmCardReader().catch(() => undefined); }, 250); return () => window.clearTimeout(timer); }, [readingMode]);
   const [geminiCardsAvailable, setGeminiCardsAvailable] = useState<boolean | null>(null);
   const [captureEvents, setCaptureEvents] = useState<Array<{ id: string; name: string; is_active: number }>>([]);
   const [captureEventId, setCaptureEventId] = useState<string | null>(null);
@@ -2030,6 +2068,8 @@ function ReviewPage() {
   const [ocrRunning, setOcrRunning] = useState(Boolean(singleCapture && captureFile));
   const [ocrProgress, setOcrProgress] = useState(0);
   const [ocrStage, setOcrStage] = useState('Starting the on-device reader…');
+  const [readFailure, setReadFailure] = useState<ReadFailure | null>(null);
+  const [readAttempt, setReadAttempt] = useState(0);
   const [aiCardAssist, setAiCardAssist] = useState(false);
   const [aiCardProvider, setAiCardProvider] = useState<string | null>(null);
   const [aiReading, setAiReading] = useState(false);
@@ -2100,11 +2140,13 @@ function ReviewPage() {
     ocrStartedFor.current = scanId;
     setOcrRunning(true);
     setError('');
+    setReadFailure(null);
     void (async () => {
       try {
         let photo = captureFile;
         if (!photo) {
           setOcrStage('Opening the uploaded photo on this device…');
+          assertOnline();
           const response = await fetch(`/api/scans/${scanId}/image`, {
             credentials: 'same-origin', cache: 'no-store',
             headers: { 'X-Workspace-Id': ocrAuth.current.workspaceId },
@@ -2114,17 +2156,20 @@ function ReviewPage() {
         }
         let fields: ReviewLead | null = null;
         let usedGemini = false;
+        let engineFailed = false;
+        let aiState: ReadFailure['ai'] = 'off';
         try { const result = await readCardInBrowser(photo, (progress, stage) => { setOcrProgress(progress); setOcrStage(stage || 'Reading the card…'); }); if (result.confidence >= 20) fields = result.fields; }
-        catch { setOcrStage('Local reading could not finish. Checking another option…'); }
+        catch { engineFailed = true; setOcrStage('Local reading could not finish. Checking another option…'); }
         const needsHelp = needsCardAiFallback(fields);
         if (useGeminiCards && needsHelp) {
           try {
             setOcrStage('Checking unclear details with Gemini…');
             const ai = await request<{ fields: ReviewLead }>(`/api/scans/${scanId}/ai-read`, { method: 'POST' }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
             if (Object.values(ai.fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) { fields = ai.fields; usedGemini = true; setAiReadMessage('Gemini suggested these details. Compare them with the photo before saving.'); }
-          } catch { setOcrStage('Gemini was unavailable. Check the local reading yourself.'); }
+            else aiState = 'empty';
+          } catch { aiState = 'failed'; setOcrStage('Gemini was unavailable. Check the local reading yourself.'); }
         }
-        if (!fields || !Object.values(fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw new Error('We couldn’t make out enough text. Type the details you can see.');
+        if (!fields || !Object.values(fields).some((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))) throw Object.assign(new Error('We couldn’t read this card.'), { readFailure: { engine: engineFailed, ai: aiState } satisfies ReadFailure });
         const applied = await request<{ applied: boolean }>(`/api/scans/${scanId}/ocr`, { method: 'POST', headers: usedGemini ? { 'X-Read-Source': 'ai' } : undefined, body: JSON.stringify(fields) }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId });
         if (!applied.applied) return;
         const latest = await request<{ scan: { extracted: ReviewLead | null; uncertain: string[] } }>(`/api/scans/${scanId}`, {}, { workspaceId: ocrAuth.current.workspaceId });
@@ -2136,12 +2181,13 @@ function ReviewPage() {
       } catch (issue) {
         const latest = await request<{ scan: { status: string } }>(`/api/scans/${scanId}`, {}, { workspaceId: ocrAuth.current.workspaceId }).catch(() => null);
         if (latest?.scan.status === 'ready' || latest?.scan.status === 'saved') return;
-        setError(`${(issue as Error).message} Nothing is saved yet.`);
+        const reasons = (issue as { readFailure?: ReadFailure }).readFailure;
+        if (reasons) setReadFailure(reasons); else setError(`${(issue as Error).message} Nothing is saved yet.`);
         setScan((current) => current ? { ...current, status: 'failed' } : current);
         await request(`/api/scans/${scanId}/ocr-failure`, { method: 'POST' }, { csrfToken: ocrAuth.current.csrfToken, workspaceId: ocrAuth.current.workspaceId }).catch(() => undefined);
       } finally { setOcrRunning(false); }
     })();
-  }, [captureFile, scan, scanId, singleCapture, useGeminiCards]);
+  }, [captureFile, scan, scanId, singleCapture, useGeminiCards, readAttempt]);
 
   useEffect(() => {
     if (session.workspace.kind !== 'company') return;
@@ -2295,7 +2341,7 @@ function ReviewPage() {
   const ReviewStatusIcon = status === 'failed' ? CircleX : status === 'ready' || status === 'saved' ? CircleCheck : CircleDot;
   return <section className={`review-view${singleCapture ? ' review-dialog-page' : ''}`} role={singleCapture ? 'dialog' : undefined} aria-modal={singleCapture ? true : undefined} aria-labelledby="review-page-title" onKeyDown={(event) => { if (singleCapture && event.key === 'Escape' && !photoExpanded) navigate('/scan'); }}>
     <div className="page-heading-row"><div><h1 id="review-page-title">{materialAlreadySaved ? 'Brochure saved to the company.' : status === 'saved' ? 'This person is saved.' : reviewMode === 'brochure' ? 'Review this brochure' : 'Review this card'}</h1><p className="page-lede">Compare the details with the photo. Nothing is saved until you confirm.</p></div><Link className="button secondary review-close" to="/scan"><X size={16} aria-hidden="true" />{singleCapture ? 'Close' : 'Back to cards'}</Link></div>
-    {error && <p className="form-error review-error" role="alert">{error}</p>}
+    {error && <div className="review-error-row"><div className="review-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><span>{error}</span></div></div>}
     {!scan ? <div className="surface-card review-wait"><RotateCw size={19} /><strong>Opening your photo…</strong><p>Review will appear as soon as the upload is ready.</p></div> :
     <div className="review-layout">
       <aside className="surface-card review-source">
@@ -2304,11 +2350,12 @@ function ReviewPage() {
         {photoWarning && <p className="review-quality-warning" role="status"><AlertCircle size={16} />{photoWarning}</p>}
         {aiReadMessage && <p className="review-read-message" role="status">{aiReadMessage}</p>}
         {aiCardAssist && Boolean(scan?.mimeType) && status !== 'saved' && <details className="ai-card-assist"><summary>Need another read?</summary><p>If details are missing, ask AI to try again. {aiCardProvider === 'gemini' ? 'This sends the photo to Google again; on its free tier, Google may use it to improve products. ' : ''}Check its suggestion against the photo.</p><button type="button" className="button secondary" disabled={aiReading || ocrRunning} onClick={() => void improveWithAi()}>{aiReading ? <><LoaderCircle size={14} className="status-spin" aria-hidden="true" /> Checking with AI…</> : 'Ask AI to check this photo'}</button></details>}
-        {status === 'failed' && !ocrRunning && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
+        {status === 'failed' && !ocrRunning && !readFailure && <div className="manual-entry-note"><AlertCircle size={18} /><div><strong>We couldn’t read this photo.</strong><p>Nothing was guessed. Type the details you can see.</p></div></div>}
       </aside>
       <form id="review-save-form" className="surface-card review-form" onSubmit={(event) => reviewMode === 'brochure' ? void saveMaterial(event) : void submit(event)}>
         {session.workspace.kind === 'company' && typeof scan?.mimeType === 'string' && !materialAlreadySaved && <div className="capture-kind-switch" role="group" aria-label="Save this photo as"><button type="button" className={reviewMode === 'person' ? 'selected' : ''} aria-pressed={reviewMode === 'person'} onClick={() => { reviewModeChanged.current = true; setReviewMode('person'); setDecision(null); }}>Person lead</button><button type="button" className={reviewMode === 'brochure' ? 'selected' : ''} aria-pressed={reviewMode === 'brochure'} onClick={() => { reviewModeChanged.current = true; setReviewMode('brochure'); setDecision(null); setCompanyChoice(''); }}>Company brochure</button></div>}
         <div className="review-form-heading"><div><h2>{reviewMode === 'brochure' ? 'Save a brochure' : 'Contact details'}</h2></div><span className={`review-status ${ocrRunning ? 'reading' : status}`}>{ocrRunning ? <RotateCw size={14} aria-hidden="true" /> : <ReviewStatusIcon size={14} aria-hidden="true" />}{ocrRunning ? useGeminiCards ? 'Reading photo' : 'Reading on this device' : displayStatus[status as ScanView['status']] ?? 'Loading…'}</span></div>
+        {readFailure && status === 'failed' && !ocrRunning && reviewMode === 'person' && <ReadFailureNotice failure={readFailure} onRetry={() => { ocrStartedFor.current = ''; setReadFailure(null); setError(''); setReadAttempt((count) => count + 1); }} onRetake={() => navigate('/scan')} onType={() => document.querySelector<HTMLInputElement>('.review-form [data-field="name"]')?.focus()} />}
         {reviewPending && <div className="review-reading-note" role="status"><RotateCw size={17} aria-hidden="true" /><div><strong>Start checking the photo now.</strong><span>{ocrRunning ? sentence(ocrStage) : 'Reading is starting.'} You can type while it finishes; your edits will stay. Save becomes available when reading ends.</span>{ocrRunning && !ocrStage.includes('Gemini') && <progress className="ocr-progress" max="100" value={ocrProgress} aria-label="On-device reading progress" />}</div></div>}
         
         {status === 'ready' && reviewMode === 'person' && !fieldsDisabled && <p className={`review-glance${needsLook.length ? ' needs-look' : ''}`} role="status"><CircleCheck size={17} aria-hidden="true" /><span>{needsLook.length === 0 ? <><strong>Everything was found on the card.</strong> Compare it with the photo, then save.</> : <><strong>{personKeys.length - emptyKeys.length} of {personKeys.length} details were found.</strong>{needsLook.some((key) => !emptyKeys.includes(key)) ? <> Check: {needsLook.filter((key) => !emptyKeys.includes(key)).map((key) => fieldWords[key]).join(', ')}.</> : null}{emptyKeys.length ? <> Missing: {emptyKeys.map((key) => fieldWords[key]).join(', ')}.</> : null}</>}</span></p>}

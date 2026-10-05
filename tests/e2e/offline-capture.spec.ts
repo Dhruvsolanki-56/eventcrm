@@ -6,7 +6,9 @@ test('a photo taken offline is kept on the phone and uploads once when the conne
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.goto('/scan');
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
-  const before = await page.locator('.tray-item').count();
+  // Count from the server, not the screen: the tray fills in a moment after the heading appears.
+  const before = ((await (await page.request.get('/api/scans')).json()) as { scans: unknown[] }).scans.length;
+  await expect(page.locator('.tray-item')).toHaveCount(before);
 
   const image = await page.evaluate(async () => {
     const canvas = document.createElement('canvas'); canvas.width = 840; canvas.height = 480;

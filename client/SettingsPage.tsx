@@ -8,6 +8,7 @@ import { IdeaChips } from './quick-capture-ui.js';
 import { addListPhrase, neverPromiseIdeas, roleIdeas } from './quick-capture.js';
 import { useWorkspace } from './workspace-context.js';
 import { Skeleton } from './skeletons.js';
+import { formatMoney } from './money.js';
 
 type SectionProps = { title: string; description?: string; className?: string; titleId?: string; action?: ReactNode; children: ReactNode };
 
@@ -307,7 +308,7 @@ function eventEditor(event: TeamSettingsData['events'][number]): EventEditorStat
   return { id: event.id, name: event.name, startDate: event.starts_at.slice(0, 10), endDate: event.ends_at.slice(0, 10), timeZone: event.time_zone, spend: event.spend_minor === null ? '' : (event.spend_minor / 100).toFixed(2), active: Boolean(event.is_active) };
 }
 const shortDate = (value: string) => new Date(`${value.slice(0, 10)}T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const money = (minor: number | null) => minor === null ? '' : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(minor / 100);
+const money = (minor: number | null) => minor === null ? '' : formatMoney(minor);
 
 function EventSettings() {
   const { session, csrfToken, notify } = useWorkspace();
@@ -351,7 +352,7 @@ function EventSettings() {
   }
   const editor = draft && <form className="event-edit-form" onSubmit={(event) => void submit(event)} aria-label={draft.id ? `Edit ${draft.name}` : 'New event'}>
     <div className="field-grid"><label>Event name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} maxLength={160} required autoFocus={!draft.id} /></label><label>Time zone<input value={draft.timeZone} onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })} maxLength={80} placeholder="America/Los_Angeles" required /><small>Use a time zone name such as America/Los_Angeles.</small></label></div>
-    <div className="field-grid three"><label>Starts<input type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} required /></label><label>Ends<input type="date" value={draft.endDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} required /></label><label>Event spend (USD)<input type="number" min="0" step="0.01" value={draft.spend} onChange={(event) => setDraft({ ...draft, spend: event.target.value })} placeholder="Not set" /></label></div>
+    <div className="field-grid three"><label>Starts<input type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} required /></label><label>Ends<input type="date" value={draft.endDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} required /></label><label>Event spend (₹)<input type="number" min="0" step="0.01" value={draft.spend} onChange={(event) => setDraft({ ...draft, spend: event.target.value })} placeholder="Not set" /></label></div>
     <label className="active-event-toggle"><input type="checkbox" checked={draft.active} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} /> Make this the active event</label>
     <div className="event-form-footer"><button type="button" className="button secondary" onClick={() => { setDraft(null); setError(''); }}>Close</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : draft.id ? 'Save event' : 'Add event'}</button></div>
   </form>;

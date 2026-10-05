@@ -427,7 +427,7 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
   await page.getByLabel('Change stage').selectOption('won');
   await expect.poll(async () => (((await page.request.get(`/api/contacts/${contactId}`)).json()) as Promise<{ person: { stage: string } }>).then((value) => value.person.stage)).toBe('won');
   await page.getByRole('link', { name: 'Deal value', exact: true }).click();
-  await page.getByLabel('Potential value (USD)').fill('4200');
+  await page.getByLabel('Potential value (₹)').fill('4200');
   await page.getByLabel('Deal status').selectOption('won');
   await page.getByRole('button', { name: 'Save deal' }).click();
   await expect(page.getByRole('status').getByText('Company deal details saved.')).toBeVisible();
@@ -437,7 +437,7 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
 
   await page.goto('/reports');
   await expect(page.locator('.metric-card').filter({ hasText: 'Won companies' }).locator('.metric-number')).toHaveText('1');
-  await expect(page.locator('.metric-card').filter({ hasText: 'Won deal value' }).locator('.metric-number')).toHaveText('$4,200');
+  await expect(page.locator('.metric-card').filter({ hasText: 'Won deal value' }).locator('.metric-number')).toHaveText('₹4,200');
 });
 
 test('new accounts cannot sign in before email verification and receive a one-time verify link', async ({ browser }) => {

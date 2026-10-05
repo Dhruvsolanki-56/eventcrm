@@ -555,13 +555,13 @@ test('company admins can create events, set dates and spend, and switch the acti
   await page.getByRole('textbox', { name: /Use a time zone name/ }).fill('America/Los_Angeles');
   await page.getByLabel('Starts').fill('2026-10-20');
   await page.getByLabel('Ends').fill('2026-10-22');
-  await page.getByLabel('Event spend (USD)').fill('12345');
+  await page.getByLabel('Event spend (₹)').fill('12345');
   await page.getByLabel('Make this the active event').check();
   await page.getByRole('button', { name: 'Add event' }).last().click();
   await expect(page.getByText(eventName).first()).toBeVisible();
   await expect(page.locator('.topbar-event')).toHaveText(eventName);
   await page.getByRole('link', { name: 'Reports' }).click();
-  await expect(page.getByText('Event spend: $12,345').first()).toBeVisible();
+  await expect(page.getByText('Event spend: ₹12,345').first()).toBeVisible();
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Events & team/ }).click();
   await page.getByRole('button', { name: /Pacific Packaging Expo/ }).first().click();

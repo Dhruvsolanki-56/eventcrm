@@ -5,9 +5,10 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import type { AnalyticsData } from '../shared/analytics.js';
 import { request, saveDownload } from './api.js';
 import { Skeleton } from './skeletons.js';
+import { formatMoney } from './money.js';
 import { useWorkspace } from './workspace-context.js';
 
-const money = (value: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value / 100);
+const money = formatMoney;
 const label = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 const colors = ['#447767', '#739886', '#9eb7aa', '#d1ddd6'];
 
@@ -80,8 +81,8 @@ export default function AnalyticsPage() {
       <div className="analytics-kpis">
         <article><span>People met</span><strong>{data.metrics.people}</strong><small className={change > 0 ? 'positive' : ''}>{change > 0 ? '+' : ''}{change} vs. previous {days} days</small></article>
         <article><span>Companies reached</span><strong>{data.metrics.companies}</strong><small>Distinct company records</small></article>
-        <article><span>Open deal value</span><strong>{money(data.metrics.openValue)}</strong><small>Current value · USD</small></article>
-        <article><span>Won deal value</span><strong>{money(data.metrics.wonValue)}</strong><small>{data.metrics.wonCompanies} won {data.metrics.wonCompanies === 1 ? 'company' : 'companies'} · USD</small></article>
+        <article><span>Open deal value</span><strong>{money(data.metrics.openValue)}</strong><small>Current value</small></article>
+        <article><span>Won deal value</span><strong>{money(data.metrics.wonValue)}</strong><small>{data.metrics.wonCompanies} won {data.metrics.wonCompanies === 1 ? 'company' : 'companies'}</small></article>
       </div>
       <article className="insight-panel workflow-panel"><div className="insight-heading"><div><h2>Capture to email</h2><p>Each count is an observed step during this period, not a single-person conversion funnel.</p></div><Link to="/email" className="subtle-link">Open Email Desk <ArrowUpRight size={14} /></Link></div><div className="workflow-steps">{([['Captured', data.workflow.captured], ['Reviewed & saved', data.workflow.reviewed], ['Draft prepared', data.workflow.draftsPrepared], ['User approved', data.workflow.userApproved], ['Mail server accepted', data.workflow.serverAccepted], ['Reply recorded', data.workflow.repliesRecorded]] as const).map(([name, count]) => <div key={name}><strong>{count}</strong><span>{name}</span></div>)}</div><p className="chart-note">Median capture to saved review: {data.workflow.medianCaptureToReviewMinutes === null ? 'Not enough data' : `${data.workflow.medianCaptureToReviewMinutes} min`} · Conversation to draft: {data.workflow.medianConversationToDraftMinutes === null ? 'Not enough data' : `${data.workflow.medianConversationToDraftMinutes} min`}. Mail-server acceptance does not prove inbox delivery. Replies count only a manually recorded reply linked to an accepted email.</p><div className="analytics-table-wrap"><table className="analytics-table"><thead><tr><th>Event</th><th>Captured</th><th>Saved</th><th>Drafts</th><th>Approved</th><th>Server accepted</th><th>Replies</th></tr></thead><tbody>{data.workflow.events.map((event) => <tr key={event.id}><td>{event.name}</td><td>{event.captured}</td><td>{event.reviewed}</td><td>{event.draftsPrepared}</td><td>{event.userApproved}</td><td>{event.serverAccepted}</td><td>{event.repliesRecorded}</td></tr>)}{!data.workflow.events.length && <tr><td colSpan={7} className="analytics-empty">No workflow steps recorded in this period.</td></tr>}</tbody></table></div></article>
       <div className="analytics-main-grid">

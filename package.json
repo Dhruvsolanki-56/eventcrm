@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:e2e": "node scripts/run-e2e.mjs",
     "test:mail": "node scripts/run-e2e.mjs --smtp-capture tests/e2e/mail.spec.ts tests/e2e/email-rate-limit.spec.ts",
-    "test:manual-reading": "node scripts/run-e2e.mjs --manual-reading tests/e2e/manual-reading.spec.ts",
+    "test:manual-reading": "node scripts/run-e2e.mjs --manual-reading tests/e2e/manual-reading.spec.ts tests/e2e/read-failure.spec.ts",
     "test:scan-quota": "node scripts/run-e2e.mjs --scan-quota tests/e2e/scan-quota.spec.ts",
     "test:note-quota": "node scripts/run-e2e.mjs --note-quota tests/e2e/note-quota.spec.ts",
     "test:note-count-quota": "node scripts/run-e2e.mjs --note-count-quota tests/e2e/note-count-quota.spec.ts",
@@ -30,7 +30,7 @@
     "backup:offsite": "node scripts/backup-offsite.mjs",
     "restore": "node scripts/restore-backup.mjs",
     "test:ops": "vitest run tests/backup-offsite.test.mjs",
-    "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json && node scripts/copy-runtime-assets.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/write-precache.mjs && tsc -p tsconfig.server.json && node scripts/copy-runtime-assets.mjs",
     "test:production-smoke": "npm run build && node scripts/smoke-production.mjs",
     "test:public-demo-smoke": "npm run build && node scripts/smoke-public-demo.mjs",
     "start": "node dist-server/server/index.js"

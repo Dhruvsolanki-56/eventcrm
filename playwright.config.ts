@@ -7,7 +7,7 @@ export default defineConfig({
   testDir: './tests/e2e',
   testIgnore: [
     ...(process.env.SMTP_CAPTURE_PATH ? [] : ['**/mail.spec.ts']),
-    ...(process.env.GATHER_MANUAL_READING_MODE === '1' ? [] : ['**/manual-reading.spec.ts']),
+    ...(process.env.GATHER_MANUAL_READING_MODE === '1' ? [] : ['**/manual-reading.spec.ts', '**/read-failure.spec.ts']),
     ...(process.env.GATHER_SCAN_QUOTA_MODE === '1' ? [] : ['**/scan-quota.spec.ts']),
   ],
   fullyParallel: false,

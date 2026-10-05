@@ -10,6 +10,17 @@ const recent = new Map<string, { at: number; value: unknown }>();
 const KEEP_MS = 4_000;
 const keepable = /^\/api\/(workspace|capabilities|events\/accessible|products|settings|team|onboarding)(\?|$)/;
 
+/** When the browser already knows there is no connection, do not send the request at all: it would only fail and print a red error in the console. */
+export const offlineMessage = 'You are offline. This will work again when you are back online.';
+
+export function assertOnline() {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const error = new Error(offlineMessage) as ApiError;
+    error.code = 'offline';
+    throw error;
+  }
+}
+
 export async function request<T>(path: string, init: RequestInit = {}, options: { csrfToken?: string; workspaceId?: string } = {}): Promise<T> {
   const method = (init.method ?? 'GET').toUpperCase();
   if (method !== 'GET' || init.body || init.signal) {
@@ -31,6 +42,7 @@ export async function request<T>(path: string, init: RequestInit = {}, options: 
 }
 
 async function send<T>(path: string, init: RequestInit, options: { csrfToken?: string; workspaceId?: string }): Promise<T> {
+  assertOnline();
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (!['GET', 'HEAD', 'OPTIONS'].includes((init.method ?? 'GET').toUpperCase()) && options.csrfToken) {
@@ -51,6 +63,7 @@ async function send<T>(path: string, init: RequestInit, options: { csrfToken?: s
 }
 
 export async function requestDownload(path: string, workspaceId: string) {
+  assertOnline();
   const response = await fetch(path, {
     headers: { 'X-Workspace-Id': workspaceId },
     credentials: 'same-origin',
