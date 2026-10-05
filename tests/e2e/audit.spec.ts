@@ -96,7 +96,7 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await expect(page.locator('.report-chart')).toHaveCount(2);
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export people CSV' }).click();
-  expect((await download).suggestedFilename()).toBe('gather-people.csv');
+  expect((await download).suggestedFilename()).toBe('encore-people.csv');
   const exportAudit = await (await page.request.get('/api/export/data.json')).json() as { data: { auditEvents: Array<{ action: string; details: { format?: string } }> } };
   expect(exportAudit.data.auditEvents.some((item) => item.action === 'data_exported' && item.details?.format === 'people_csv')).toBe(true);
   await page.getByRole('button', { name: 'Help' }).click();

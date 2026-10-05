@@ -581,7 +581,8 @@ export async function getDashboard(actorId: string, workspaceId: string) {
   return { counts: { ...counts, drafts_ready: draftsReady }, due, nextReviewScanId, hasPersonalizationDetails, timeZone };
 }
 
-export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false) {
+// The screen shows the 200 most recent matches (search finds the rest); an export passes a larger limit to get everyone.
+export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false, limit = 200) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const term = `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`;
   return await (db.prepare(`SELECT c.id,c.name,c.title,c.email,c.phone,c.website,c.quality,c.stage,c.version,c.updated_at,
@@ -594,7 +595,7 @@ export async function listPeople(actorId: string, workspaceId: string, search = 
     WHERE c.workspace_id=? AND c.deleted_at IS NULL AND ((?=1 AND c.archived_at IS NOT NULL) OR (?=0 AND c.archived_at IS NULL))
       AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin') OR EXISTS (SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND ea.user_id=?))
       AND (?='' OR c.name LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR co.name LIKE ? ESCAPE '\\')
-    GROUP BY c.id ORDER BY c.updated_at DESC,c.name LIMIT 200`).all(workspaceId, includeArchived ? 1 : 0, includeArchived ? 1 : 0, actorId, actorId, actorId, search.trim(), term, term, term)) as Array<Record<string, unknown>>;
+    GROUP BY c.id ORDER BY c.updated_at DESC,c.name LIMIT ?`).all(workspaceId, includeArchived ? 1 : 0, includeArchived ? 1 : 0, actorId, actorId, actorId, search.trim(), term, term, term, limit)) as Array<Record<string, unknown>>;
 }
 
 export async function listCompanies(actorId: string, workspaceId: string, search = '') {
@@ -890,7 +891,7 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
 }
 
 export async function exportPeople(actorId: string, workspaceId: string) {
-  const people = await listPeople(actorId, workspaceId);
+  const people = await listPeople(actorId, workspaceId, '', false, 1_000_000);
   return people.map(({ name, title, company_name, email, phone, website, quality, stage }) => ({ name, title, company: company_name, email, phone, website, quality, stage }));
 }
 

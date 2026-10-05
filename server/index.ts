@@ -862,7 +862,7 @@ app.get('/api/export/people.csv', exportLimiter, requireContext, async (_req, re
     return `"${text.replace(/"/g, '""')}"`;
   };
   const csv = [columns.map(cell).join(','), ...rows.map((row) => columns.map((column) => cell(row[column])).join(','))].join('\r\n');
-  res.setHeader('Cache-Control', 'no-store'); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="gather-people.csv"');
+  res.setHeader('Cache-Control', 'no-store'); res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', 'attachment; filename="encore-people.csv"');
   res.send(csv);
 });
 
