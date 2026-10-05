@@ -3,6 +3,15 @@ const safeCodes = new Set([
   'EMESSAGE', 'ENETUNREACH', 'ESOCKET', 'ETIMEDOUT', 'EAI_AGAIN', 'EDNS',
 ]);
 
+// Rule messages written for people ("Choose an event you can access.") come from the plain Errors our own code throws.
+// Database, file-system and library errors can name tables, columns or server paths, so those never reach a response.
+export function userMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const ours = error.constructor === Error || error.name === 'AccessDeniedError';
+  const fromTheSystem = 'code' in error || 'syscall' in error || 'errno' in error;
+  return ours && !fromTheSystem && error.message.trim() ? error.message : fallback;
+}
+
 export const serverCardReaderUnavailableMessage = 'Server reading is off. Open Review to try on-device reading, or type it in.';
 
 export function safeFailureCode(error: unknown): string {

@@ -10,6 +10,11 @@ import { PostgresDatabase } from './postgres-compat.js';
 import { isGroqEmailEnabled } from './groq-email.js';
 import { closePostgres, isPostgresConfigured, migratePostgres } from './postgres.js';
 
+// A permission refusal. The message is written for the person who sees it; the HTTP layer answers these with 403.
+export class AccessDeniedError extends Error {
+  constructor(message: string) { super(message); this.name = 'AccessDeniedError'; }
+}
+
 export type WorkspaceRole = 'admin' | 'manager' | 'representative' | 'attendee';
 export type WorkspaceKind = 'company' | 'personal';
 export type WorkspaceInfo = { id: string; name: string; kind: WorkspaceKind; role: WorkspaceRole };
@@ -246,7 +251,7 @@ export async function hasSampleWorkspaceData(actorId: string, workspaceId: strin
 
 async function requireCompanyAdmin(actorId: string, workspaceId: string) {
   const workspace = await (workspaceForActor(actorId, workspaceId));
-  if (!workspace || workspace.kind !== 'company' || workspace.role !== 'admin') throw new Error('Only a company admin can manage team access.');
+  if (!workspace || workspace.kind !== 'company' || workspace.role !== 'admin') throw new AccessDeniedError('Only a company admin can manage team access.');
   return workspace;
 }
 
@@ -282,13 +287,32 @@ function validateEventInput(input: EventInput) {
 }
 
 export async function saveWorkspaceEvent(actorId: string, workspaceId: string, eventId: string | null, input: EventInput) {
+  const saved = await saveWorkspaceEventDetailed(actorId, workspaceId, eventId, input);
+  return saved ? saved.id : false;
+}
+
+// Creating an event with the same name and dates as one that already exists (a double click, or a retry after a lost
+// response) returns that event instead of adding a second one.
+export async function saveWorkspaceEventDetailed(actorId: string, workspaceId: string, eventId: string | null, input: EventInput): Promise<{ id: string; created: boolean } | false> {
   await (requireCompanyAdmin(actorId, workspaceId));
   validateEventInput(input);
-  const id = eventId ?? randomUUID();
+  let id = eventId ?? randomUUID();
   if (eventId && !await (db.prepare(`SELECT id FROM events WHERE workspace_id=? AND id=?`).get(workspaceId, eventId))) return false;
   const startsAt = new Date(input.startsAt).toISOString();
   const endsAt = new Date(input.endsAt).toISOString();
+  let created = !eventId;
   await (db.transaction(async () => {
+    if (!eventId) {
+      const same = await (db.prepare(`SELECT id FROM events WHERE workspace_id=? AND lower(name)=lower(?) AND starts_at=? AND ends_at=? LIMIT 1`).get(workspaceId, input.name.trim(), startsAt, endsAt)) as { id: string } | undefined;
+      if (same) {
+        id = same.id; created = false;
+        if (input.active) {
+          await (db.prepare(`UPDATE events SET is_active=0 WHERE workspace_id=?`).run(workspaceId));
+          await (db.prepare(`UPDATE events SET is_active=1 WHERE workspace_id=? AND id=?`).run(workspaceId, same.id));
+        }
+        return;
+      }
+    }
     if (input.active) await (db.prepare(`UPDATE events SET is_active=0 WHERE workspace_id=?`).run(workspaceId));
     if (eventId) {
       await (db.prepare(`UPDATE events SET name=?,starts_at=?,ends_at=?,time_zone=?,spend_minor=?,is_active=? WHERE workspace_id=? AND id=?`)
@@ -304,7 +328,7 @@ export async function saveWorkspaceEvent(actorId: string, workspaceId: string, e
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,?,? ,?,?)`)
       .run(randomUUID(), workspaceId, actorId, eventId ? 'event_updated' : 'event_created', 'event', id, JSON.stringify({ name: input.name.trim(), startsAt, endsAt, timeZone: input.timeZone, spendMinor: input.spendMinor, active: input.active })));
   })());
-  return id;
+  return { id, created };
 }
 
 export async function createWorkspaceInvite(actorId: string, workspaceId: string, role: 'manager' | 'representative', eventIds: string[]) {
@@ -497,7 +521,7 @@ async function companyAccessible(actorId: string, workspaceId: string, companyId
 }
 
 async function assertContactAccess(actorId: string, workspaceId: string, contactId: string, includeArchived = false) {
-  if (!await (contactAccessible(actorId, workspaceId, contactId, includeArchived))) throw new Error('You do not have access to this person in this event. Ask your admin for access.');
+  if (!await (contactAccessible(actorId, workspaceId, contactId, includeArchived))) throw new AccessDeniedError('You do not have access to this person. They may be archived, or in an event you are not on. Ask your admin if you need access.');
 }
 
 export async function getCurrentEvent(actorId: string, workspaceId: string) {
@@ -659,7 +683,7 @@ export async function mergeCompany(actorId: string, workspaceId: string, sourceI
   await (assertWorkspaceAccess(actorId, workspaceId));
   const workspace = await (workspaceForActor(actorId, workspaceId));
   if (!workspace || workspace.kind === 'company' && workspace.role !== 'admin') {
-    throw new Error('Only a company admin can merge company records.');
+    throw new AccessDeniedError('Only a company admin can merge company records.');
   }
   if (sourceId === targetId) throw new Error('Choose another company to keep.');
   return await (db.transaction(async () => {
@@ -693,7 +717,7 @@ export async function mergeCompany(actorId: string, workspaceId: string, sourceI
 
 export async function updateCompanyDeal(actorId: string, workspaceId: string, companyId: string, valueMinor: number | null, status: 'open' | 'won' | 'lost' | null) {
   const workspace = await (workspaceForActor(actorId, workspaceId));
-  if (!workspace || !['admin','manager'].includes(workspace.role)) throw new Error('An admin or manager updates company deal values.');
+  if (!workspace || !['admin','manager'].includes(workspace.role)) throw new AccessDeniedError('An admin or manager updates company deal values.');
   if (workspace.kind !== 'company') throw new Error('Deal values are only used in company spaces.');
   if (!await (companyAccessible(actorId, workspaceId, companyId))) return false;
   const changed = await (db.prepare(`UPDATE companies SET deal_value_minor=?,deal_status=? WHERE workspace_id=? AND id=? AND archived_at IS NULL`)
@@ -873,7 +897,7 @@ export async function exportPeople(actorId: string, workspaceId: string) {
 export async function getWorkspaceExport(actorId: string, workspaceId: string) {
   const workspace = await (workspaceForActor(actorId, workspaceId));
   if (!workspace || (workspace.kind === 'company' && workspace.role !== 'admin') || (workspace.kind === 'personal' && workspace.role !== 'attendee')) {
-    throw new Error('Only the company admin or private-space owner can export all workspace data.');
+    throw new AccessDeniedError('Only the company admin or private-space owner can export all workspace data.');
   }
   const rawScans = await (db.prepare(`SELECT id,event_id,client_scan_id,source,status,extracted_json,uncertain_json,contact_id,material_company_id,queued_at,reading_started_at,ready_at,saved_at,image_mime,image_path FROM scans WHERE workspace_id=? ORDER BY queued_at`).all(workspaceId)) as Array<Record<string, unknown>>;
   const rawNotes = await (db.prepare(`SELECT id,contact_id,encounter_id,kind,body,transcript,transcript_status,audio_mime,duration_seconds,created_at,audio_path FROM notes WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)) as Array<Record<string, unknown>>;
@@ -913,7 +937,7 @@ export async function recordWorkspaceExport(actorId: string, workspaceId: string
   const workspace = await (workspaceForActor(actorId, workspaceId));
   if (!workspace || (format === 'people_csv' && (workspace.kind !== 'company' || !['admin','manager'].includes(workspace.role))) ||
     (format === 'workspace_json' && (workspace.kind === 'company' ? workspace.role !== 'admin' : workspace.role !== 'attendee'))) {
-    throw new Error('You do not have permission to export this workspace.');
+    throw new AccessDeniedError('You do not have permission to export this workspace.');
   }
   await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'data_exported','workspace',?,?)`)
     .run(randomUUID(), workspaceId, actorId, workspaceId, JSON.stringify({ format, includesMedia: format === 'workspace_json' })));
@@ -923,7 +947,7 @@ export async function clearPersonalWorkspaceData(actorId: string, workspaceId: s
   const workspace = await (workspaceForActor(actorId, workspaceId));
   const owner = await (db.prepare(`SELECT owner_user_id FROM workspaces WHERE id=? AND kind='personal'`).get(workspaceId)) as { owner_user_id: string } | undefined;
   if (!workspace || workspace.kind !== 'personal' || workspace.role !== 'attendee' || owner?.owner_user_id !== actorId) {
-    throw new Error('Only the owner can delete data from a private space.');
+    throw new AccessDeniedError('Only the owner can delete data from a private space.');
   }
   const activeJobs = Number((await (db.prepare(`SELECT COUNT(*) AS total FROM jobs WHERE workspace_id=? AND status='running'`).get(workspaceId)) as { total: number }).total);
   if (activeJobs > 0) throw new Error('A background task is finishing in this space. Wait a moment, then try deleting again.');
@@ -967,11 +991,11 @@ export async function clearSampleWorkspaceData(actorId: string, workspaceId: str
   const workspace = await (workspaceForActor(actorId, workspaceId));
   if (!sampleUser?.email.endsWith('@gather.test') || !workspaceId.startsWith('demo-') || !workspace ||
     (workspace.kind === 'company' ? workspace.role !== 'admin' : workspace.role !== 'attendee')) {
-    throw new Error('Only a sample workspace admin or owner can clear sample data.');
+    throw new AccessDeniedError('Only a sample workspace admin or owner can clear sample data.');
   }
   if (workspace.kind === 'personal') {
     const owner = await (db.prepare(`SELECT owner_user_id FROM workspaces WHERE id=? AND kind='personal'`).get(workspaceId)) as { owner_user_id: string } | undefined;
-    if (owner?.owner_user_id !== actorId) throw new Error('Only the owner can clear sample data from this private space.');
+    if (owner?.owner_user_id !== actorId) throw new AccessDeniedError('Only the owner can clear sample data from this private space.');
   }
   const activeJobs = Number((await (db.prepare(`SELECT COUNT(*) AS total FROM jobs WHERE workspace_id=? AND status='running'`).get(workspaceId)) as { total: number }).total);
   if (activeJobs > 0) throw new Error('A background task is finishing here. Wait a moment, then clear sample data.');
@@ -1182,12 +1206,18 @@ export async function createTask(actorId: string, workspaceId: string, contactId
   if (input.kind === 'meeting') {
     const conflict = await (db.prepare(`SELECT t.id,t.due_at,c.name AS contact_name FROM tasks t JOIN contacts c ON c.id=t.contact_id AND c.workspace_id=t.workspace_id
       WHERE t.workspace_id=? AND t.kind='meeting' AND t.status='confirmed' AND t.created_by=?
-        AND ABS(julianday(t.due_at)-julianday(?)) < (30.0/1440.0) AND c.deleted_at IS NULL LIMIT 1`)
-      .get(workspaceId, actorId, due.toISOString())) as { id: string; due_at: string; contact_name: string } | undefined;
+        AND t.due_at > ? AND t.due_at < ? AND c.deleted_at IS NULL LIMIT 1`)
+      .get(workspaceId, actorId, new Date(due.getTime() - 30 * 60_000).toISOString(), new Date(due.getTime() + 30 * 60_000).toISOString())) as { id: string; due_at: string; contact_name: string } | undefined;
     if (conflict && !input.allowOverlap) return { created: false as const, conflict };
   }
   const id = randomUUID();
-  await (db.transaction(async () => {
+  const title = input.title.trim() || (input.kind === 'meeting' ? 'Meeting' : 'Follow up');
+  const note = input.note.trim();
+  const outcome = await (db.transaction(async () => {
+    // The same person, time, kind and wording already waiting is a double click or a retry, not a second follow-up.
+    const repeat = await (db.prepare(`SELECT id FROM tasks WHERE workspace_id=? AND contact_id=? AND kind=? AND due_at=? AND title=? AND note=? AND created_by=?
+      AND status IN ('open','proposed','confirmed') LIMIT 1`).get(workspaceId, contactId, input.kind, due.toISOString(), title, note, actorId)) as { id: string } | undefined;
+    if (repeat) return { taskId: repeat.id, duplicate: true };
     const workspaceLimit = configuredStorageLimit('TASK_COUNT_WORKSPACE_LIMIT', 25000);
     const totalLimit = configuredStorageLimit('TASK_COUNT_TOTAL_LIMIT', 100000);
     const workspaceCount = (await (db.prepare(`SELECT COUNT(*) AS total FROM tasks WHERE workspace_id=?`).get(workspaceId)) as { total: number }).total;
@@ -1195,11 +1225,12 @@ export async function createTask(actorId: string, workspaceId: string, contactId
     if (workspaceCount >= workspaceLimit) throw new TaskStorageLimitError('workspace');
     if (totalCount >= totalLimit) throw new TaskStorageLimitError('service');
     await (db.prepare(`INSERT INTO tasks(id,workspace_id,contact_id,event_id,kind,status,due_at,time_zone,title,note,created_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, workspaceId, contactId, event?.id ?? null, input.kind, input.kind === 'meeting' ? 'proposed' : 'open', due.toISOString(), timeZone, input.title.trim() || (input.kind === 'meeting' ? 'Meeting' : 'Follow up'), input.note.trim(), actorId));
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, workspaceId, contactId, event?.id ?? null, input.kind, input.kind === 'meeting' ? 'proposed' : 'open', due.toISOString(), timeZone, title, note, actorId));
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'task_created','task',?,?)`)
       .run(randomUUID(), workspaceId, actorId, id, JSON.stringify({ kind: input.kind, dueAt: due.toISOString() })));
+    return { taskId: id, duplicate: false };
   })());
-  return { created: true as const, taskId: id };
+  return { created: true as const, ...outcome };
 }
 
 export class TaskStorageLimitError extends Error {
@@ -1281,7 +1312,7 @@ export async function setPersonArchived(actorId: string, workspaceId: string, co
   if (!workspace) throw new Error('Workspace access changed. Choose an available space.');
   if (workspace.kind === 'personal') {
     const owner = await (db.prepare(`SELECT owner_user_id FROM workspaces WHERE id=? AND kind='personal'`).get(workspaceId)) as { owner_user_id: string } | undefined;
-    if (workspace.role !== 'attendee' || owner?.owner_user_id !== actorId) throw new Error('Only the owner can archive or restore people in a private space.');
+    if (workspace.role !== 'attendee' || owner?.owner_user_id !== actorId) throw new AccessDeniedError('Only the owner can archive or restore people in a private space.');
   }
   await (assertContactAccess(actorId, workspaceId, contactId, true));
   return await (db.transaction(async () => {
@@ -1299,7 +1330,7 @@ export async function setPersonArchived(actorId: string, workspaceId: string, co
 export async function deletePerson(actorId: string, workspaceId: string, contactId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const workspace = await (workspaceForActor(actorId, workspaceId));
-  if (!workspace || (workspace.kind === 'company' && workspace.role !== 'admin')) throw new Error('Only a company admin can delete a person and their full event history.');
+  if (!workspace || (workspace.kind === 'company' && workspace.role !== 'admin')) throw new AccessDeniedError('Only a company admin can delete a person and their full event history.');
   await (assertContactAccess(actorId, workspaceId, contactId));
   const person = await (db.prepare(`SELECT id,company_id FROM contacts WHERE workspace_id=? AND id=? AND deleted_at IS NULL`).get(workspaceId, contactId)) as { id: string; company_id: string } | undefined;
   if (!person) return undefined;
@@ -1416,7 +1447,11 @@ export async function addPersonNote(actorId: string, workspaceId: string, contac
   await (assertWorkspaceAccess(actorId, workspaceId));
   await (assertContactAccess(actorId, workspaceId, contactId));
   const id = randomUUID();
-  await (db.transaction(async () => {
+  return await (db.transaction(async () => {
+    // The same text for the same person from the same author a moment ago is a double click or a retry.
+    const repeat = await (db.prepare(`SELECT id FROM notes WHERE workspace_id=? AND contact_id=? AND created_by=? AND kind='text' AND body=? AND created_at>=? LIMIT 1`)
+      .get(workspaceId, contactId, actorId, body.trim(), new Date(Date.now() - 15_000).toISOString())) as { id: string } | undefined;
+    if (repeat) return { duplicate: true };
     const workspaceBytes = (await (db.prepare(`SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) AS total FROM notes WHERE workspace_id=? AND kind='text'`).get(workspaceId)) as { total: number }).total;
     const totalBytes = (await (db.prepare(`SELECT COALESCE(SUM(length(CAST(body AS BLOB))),0) AS total FROM notes WHERE kind='text'`).get()) as { total: number }).total;
     const workspaceCount = (await (db.prepare(`SELECT COUNT(*) AS count FROM notes WHERE workspace_id=? AND kind='text'`).get(workspaceId)) as { count: number }).count;
@@ -1432,6 +1467,7 @@ export async function addPersonNote(actorId: string, workspaceId: string, contac
       .run(id, workspaceId, contactId, await (noteEncounter(actorId, workspaceId, contactId)), actorId, body.trim()));
     await (db.prepare(`UPDATE contacts SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),version=version+1 WHERE id=? AND workspace_id=?`).run(contactId, workspaceId));
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id) VALUES (?,?,?,'note_added','contact',?)`).run(randomUUID(), workspaceId, actorId, contactId));
+    return { duplicate: false };
   })());
 }
 
@@ -1704,13 +1740,30 @@ export async function getEmailDraftSuggestion(actorId: string, workspaceId: stri
 export async function createEmailDraft(actorId: string, workspaceId: string, contactId: string, generated?: { subject: string; body: string }) {
   const suggestion = await (buildEmailSuggestion(actorId, workspaceId, contactId));
   const draft = generated ? { ...suggestion, subject: generated.subject, body: generated.body } : suggestion;
-  const id = randomUUID();
-  await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by,sources_json) VALUES (?,?,?,?,?,?,?,'draft',?,?)`)
-    .run(id, workspaceId, contactId, draft.encounterId, draft.recipient, draft.subject, draft.body, actorId, JSON.stringify(draft.sourcesUsed)));
-  const { aiContext: _aiContext, encounterId: _encounterId, ...publicDraft } = draft;
+  let id: string = randomUUID();
+  let reused: { subject: string; body: string } | null = null;
+  await (db.transaction(async () => {
+    // Asking again for the same person and conversation while a draft is still open (a double click, a retry)
+    // opens that draft, with any edits already made, instead of piling up copies.
+    if (!generated) {
+      const open = await (db.prepare(`SELECT id,subject,body FROM emails WHERE workspace_id=? AND contact_id=? AND created_by=? AND status='draft'
+        AND ${draft.encounterId ? 'encounter_id=?' : 'encounter_id IS NULL'} ORDER BY created_at DESC LIMIT 1`)
+        .get(workspaceId, contactId, actorId, ...(draft.encounterId ? [draft.encounterId] : []))) as { id: string; subject: string; body: string } | undefined;
+      if (open) { id = open.id; reused = { subject: open.subject, body: open.body }; return; }
+    }
+    await (db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by,sources_json) VALUES (?,?,?,?,?,?,?,'draft',?,?)`)
+      .run(id, workspaceId, contactId, draft.encounterId, draft.recipient, draft.subject, draft.body, actorId, JSON.stringify(draft.sourcesUsed)));
+  })());
+  const { aiContext: _aiContext, encounterId: _encounterId, ...suggestedDraft } = draft;
+  const publicDraft = reused ? { ...suggestedDraft, ...(reused as { subject: string; body: string }) } : suggestedDraft;
   const aiConfigured = isGroqEmailEnabled() || process.env.AI_MODE === 'provider' && (process.env.AI_PROVIDER === 'gemini' ? Boolean(process.env.GEMINI_API_KEY?.trim()) : (process.env.AI_PROVIDER || 'anthropic') === 'anthropic' && Boolean(process.env.ANTHROPIC_API_KEY?.trim()));
-  const generation = generated ? 'ai' as const : aiConfigured ? 'fallback' as const : 'template' as const;
-  return { id, ...publicDraft, generation, status: 'draft' as const };
+  let generation: 'ai' | 'fallback' | 'template' | 'pending' = generated ? 'ai' : aiConfigured ? 'fallback' : 'template';
+  if (reused) {
+    const job = await (db.prepare(`SELECT status FROM jobs WHERE workspace_id=? AND type='email_draft' AND json_extract(payload_json,'$.emailId')=? ORDER BY created_at DESC LIMIT 1`)
+      .get(workspaceId, id)) as { status: string } | undefined;
+    generation = job ? job.status === 'succeeded' ? 'ai' : job.status === 'failed' ? 'fallback' : 'pending' : 'template';
+  }
+  return { id, ...publicDraft, generation, status: 'draft' as const, reused: reused !== null };
 }
 
 // Keep model latency out of capture and conversation saves. The job only carries
@@ -2067,7 +2120,7 @@ export async function createQrScan(input: { actorId: string; workspaceId: string
   const scanId = randomUUID();
   return await (db.transaction(async () => {
     if (input.eventId && !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(input.workspaceId, input.eventId, input.actorId))) {
-      throw new Error('You no longer have access to this event. Ask your admin for access.');
+      throw new AccessDeniedError('You no longer have access to this event. Ask your admin for access.');
     }
     const existing = await (db.prepare(`SELECT s.id,s.client_scan_id,s.source,s.image_mime,s.status,s.extracted_json,s.uncertain_json,s.error_message,s.contact_id,s.queued_at,s.ready_at,s.saved_at FROM scans s WHERE s.workspace_id=? AND s.client_scan_id=? AND ((s.event_id IS NULL AND s.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))`)
       .get(input.workspaceId, input.clientScanId, input.actorId, input.actorId)) as ScanRow | undefined;
@@ -2165,7 +2218,7 @@ export async function applyQrToScan(actorId: string, workspaceId: string, scanId
   const scan = await (db.prepare(`SELECT event_id,status,created_by FROM scans WHERE workspace_id=? AND id=?`).get(workspaceId, scanId)) as { event_id: string | null; status: string; created_by: string | null } | undefined;
   if (!scan || ['saved','discarded'].includes(scan.status)) return false;
   if (scan.event_id ? !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId)) : scan.created_by !== actorId) {
-    throw new Error('You no longer have access to this event. Ask your admin for access.');
+    throw new AccessDeniedError('You no longer have access to this event. Ask your admin for access.');
   }
   return await (db.transaction(async () => {
     const current = await (db.prepare(`SELECT extracted_json FROM scans WHERE workspace_id=? AND id=?`).get(workspaceId, scanId)) as { extracted_json: string | null };
@@ -2191,7 +2244,7 @@ export async function markScanNeedsInputByActor(actorId: string, workspaceId: st
   const scan = await (db.prepare(`SELECT event_id,status,created_by FROM scans WHERE workspace_id=? AND id=?`).get(workspaceId, scanId)) as { event_id: string | null; status: string; created_by: string | null } | undefined;
   if (!scan || ['saved','discarded'].includes(scan.status)) return false;
   if (scan.event_id ? !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId)) : scan.created_by !== actorId) {
-    throw new Error('You no longer have access to this event. Ask your admin for access.');
+    throw new AccessDeniedError('You no longer have access to this event. Ask your admin for access.');
   }
   return (await db.prepare(`UPDATE scans SET status='failed',error_message=?,ready_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=? AND status IN ('queued','reading','failed')`)
     .run(message, workspaceId, scanId)).changes > 0;
@@ -2224,24 +2277,21 @@ export async function claimNextJob(): Promise<JobRow | undefined> {
   })());
 }
 
-export async function completeJob(jobId: string) {
-  await (db.prepare(`UPDATE jobs SET status='succeeded',payload_json=CASE WHEN type IN ('password_reset_email','email_verification') THEN json_set(payload_json,'$.token','') ELSE payload_json END,
-    lease_until=NULL,last_error=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running'`)
-    .run(jobId));
-  await clearSentEmailToken(jobId);
-}
-
-// The unsubscribe link token is only needed while an email is being sent. Afterwards only its hash (on the email) is kept.
+// Secrets in a job's payload (one-time links, unsubscribe tokens) are only needed while the job is being worked on.
 // Plain JSON handling rather than SQL json functions, so it behaves the same on SQLite and Postgres.
-async function clearSentEmailToken(jobId: string) {
-  const row = await (db.prepare(`SELECT payload_json FROM jobs WHERE id=? AND type='email_send' AND status='succeeded'`).get(jobId)) as { payload_json: string } | undefined;
-  if (row) await scrubUnsubscribeToken(jobId, row.payload_json);
+const jobSecretField: Record<string, string> = { password_reset_email: 'token', email_verification: 'token', email_send: 'unsubscribeToken' };
+
+export async function completeJob(jobId: string) {
+  await (db.prepare(`UPDATE jobs SET status='succeeded',lease_until=NULL,last_error=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running'`)
+    .run(jobId));
+  const row = await (db.prepare(`SELECT type,payload_json FROM jobs WHERE id=? AND status='succeeded'`).get(jobId)) as { type: string; payload_json: string } | undefined;
+  if (row && jobSecretField[row.type]) await blankPayloadField(jobId, row.payload_json, jobSecretField[row.type]!);
 }
-async function scrubUnsubscribeToken(jobId: string, payloadJson: string) {
+async function blankPayloadField(jobId: string, payloadJson: string, field: string) {
   try {
     const payload = JSON.parse(payloadJson) as Record<string, unknown>;
-    if (!payload.unsubscribeToken) return;
-    await (db.prepare(`UPDATE jobs SET payload_json=? WHERE id=?`).run(JSON.stringify({ ...payload, unsubscribeToken: '' }), jobId));
+    if (!payload[field]) return;
+    await (db.prepare(`UPDATE jobs SET payload_json=? WHERE id=?`).run(JSON.stringify({ ...payload, [field]: '' }), jobId));
   } catch { /* an unreadable payload has nothing to clear */ }
 }
 // Emails sent before this change still hold their token; clear them once, in small batches.
@@ -2249,7 +2299,7 @@ export async function clearOldSentEmailTokens() {
   for (let round = 0; round < 200; round++) {
     const rows = await (db.prepare(`SELECT id,payload_json FROM jobs WHERE type='email_send' AND status='succeeded' AND payload_json LIKE '%"unsubscribeToken":"_%' LIMIT 200`).all()) as Array<{ id: string; payload_json: string }>;
     if (!rows.length) return;
-    for (const row of rows) await scrubUnsubscribeToken(row.id, row.payload_json);
+    for (const row of rows) await blankPayloadField(row.id, row.payload_json, 'unsubscribeToken');
   }
 }
 
@@ -2258,9 +2308,7 @@ export async function failJobAttempt(job: JobRow, message: string) {
   const delaySeconds = process.env.NODE_ENV === 'test' ? 0 : Math.min(3600, 10 * (2 ** Math.max(0, job.attempts - 1)));
   await (db.prepare(`UPDATE jobs SET status=?,run_at=?,lease_until=NULL,last_error=?,finished_at=? WHERE id=?`)
     .run(terminal ? 'failed' : 'queued', new Date(Date.now() + delaySeconds * 1000).toISOString(), message.slice(0, 1000), terminal ? new Date().toISOString() : null, job.id));
-  if (terminal && ['password_reset_email','email_verification'].includes(job.type)) {
-    await (db.prepare(`UPDATE jobs SET payload_json=json_set(payload_json,'$.token','') WHERE id=?`).run(job.id));
-  }
+  if (terminal && ['password_reset_email','email_verification'].includes(job.type)) await blankPayloadField(job.id, job.payload_json, 'token');
   if (terminal && job.type === 'card_read') {
     try {
       const payload = JSON.parse(job.payload_json) as { scanId: string };
@@ -2418,9 +2466,9 @@ export async function saveScannedLead(actorId: string, workspaceId: string, inpu
     { id: string; event_id: string | null; status: string; contact_id: string | null; created_by: string | null; event_time_zone: string | null } | undefined;
   if (!scan) throw new Error('This photo is no longer available. Add it again.');
   if (scan.event_id && !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId))) {
-    throw new Error('You no longer have access to this event. Ask your admin for access.');
+    throw new AccessDeniedError('You no longer have access to this event. Ask your admin for access.');
   }
-  if (!scan.event_id && scan.created_by !== actorId) throw new Error('You no longer have access to this photo.');
+  if (!scan.event_id && scan.created_by !== actorId) throw new AccessDeniedError('You no longer have access to this photo.');
   if (scan.status === 'saved' && scan.contact_id) return { saved: true as const, duplicate: true, contactId: scan.contact_id };
   if (!['ready','failed'].includes(scan.status)) throw new Error('This photo is still being read. Wait a moment and try again.');
   const name = input.name.trim();
@@ -2539,9 +2587,9 @@ export async function saveScannedMaterial(actorId: string, workspaceId: string, 
     .get(input.scanId, workspaceId)) as { id: string; event_id: string | null; status: string; contact_id: string | null; created_by: string | null; image_path: string | null; image_mime: string | null; material_company_id: string | null } | undefined;
   if (!scan || !scan.image_path || !scan.image_mime) throw new Error('This photo is no longer available. Add it again.');
   if (scan.event_id && !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId))) {
-    throw new Error('You no longer have access to this event. Ask your admin for access.');
+    throw new AccessDeniedError('You no longer have access to this event. Ask your admin for access.');
   }
-  if (!scan.event_id && scan.created_by !== actorId) throw new Error('You no longer have access to this photo.');
+  if (!scan.event_id && scan.created_by !== actorId) throw new AccessDeniedError('You no longer have access to this photo.');
   if (scan.material_company_id) {
     const savedCompany = await (db.prepare(`SELECT id,name FROM companies WHERE workspace_id=? AND id=?`).get(workspaceId, scan.material_company_id)) as { id: string; name: string } | undefined;
     return { saved: true as const, duplicate: true, companyId: savedCompany?.id, companyName: savedCompany?.name };
@@ -2602,7 +2650,7 @@ export async function removeScannedMaterial(actorId: string, workspaceId: string
     { event_id: string | null; created_by: string | null; contact_id: string | null; material_company_id: string | null } | undefined;
   if (!scan || !scan.material_company_id) return false;
   if (scan.event_id ? !await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, scan.event_id, actorId)) : scan.created_by !== actorId) {
-    throw new Error('You no longer have access to this material.');
+    throw new AccessDeniedError('You no longer have access to this material.');
   }
   return await (db.transaction(async () => {
     await (db.prepare(`UPDATE scans SET material_company_id=NULL,status=CASE WHEN contact_id IS NULL THEN 'ready' ELSE 'saved' END,

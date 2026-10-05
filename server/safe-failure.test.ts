@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeFailureCode, safeJobFailureMessage, serverCardReaderUnavailableMessage } from './safe-failure.js';
+import { safeFailureCode, safeJobFailureMessage, serverCardReaderUnavailableMessage, userMessage } from './safe-failure.js';
 
 describe('safe background failure details', () => {
   it('keeps provider messages, recipients, and credentials out of stored and logged errors', () => {
@@ -21,5 +21,24 @@ describe('safe background failure details', () => {
     expect(serverCardReaderUnavailableMessage).toMatch(/on-device reading/);
     expect(serverCardReaderUnavailableMessage).not.toMatch(/automatic reading is not set up/i);
     expect(safeJobFailureMessage('card_read')).toMatch(/on-device reading/);
+  });
+});
+
+describe('messages shown to people', () => {
+  const fallback = 'That did not work.';
+  it('shows our own rule messages', () => {
+    expect(userMessage(new Error('Choose an event you can access.'), fallback)).toBe('Choose an event you can access.');
+    const denied = Object.assign(new Error('You do not have access to this person.'), { name: 'AccessDeniedError' });
+    expect(userMessage(denied, fallback)).toBe('You do not have access to this person.');
+  });
+  it('never shows database, file-system or library details', () => {
+    const database = Object.assign(new Error('UNIQUE constraint failed: emails.unsubscribe_token_hash'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+    const file = Object.assign(new Error("ENOENT: no such file or directory, open 'C:\\srv\\uploads\\w1\\voice\\a.webm'"), { code: 'ENOENT', syscall: 'open', errno: -2 });
+    expect(userMessage(database, fallback)).toBe(fallback);
+    expect(userMessage(file, fallback)).toBe(fallback);
+    expect(userMessage(new TypeError("Cannot read properties of undefined (reading 'id')"), fallback)).toBe(fallback);
+    expect(userMessage(new RangeError('Invalid time value'), fallback)).toBe(fallback);
+    expect(userMessage('plain string', fallback)).toBe(fallback);
+    expect(userMessage(new Error('   '), fallback)).toBe(fallback);
   });
 });

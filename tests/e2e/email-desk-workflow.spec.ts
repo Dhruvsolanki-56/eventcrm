@@ -10,7 +10,8 @@ test('Email Desk approval is explicit and stays in outbox when sending is unavai
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
   const headers = { 'X-CSRF-Token': csrf.csrfToken, 'X-Workspace-Id': 'demo-northstar' };
   const response = await page.request.post('/api/contacts/demo-ns-contact-1/email-draft', { headers });
-  expect(response.status(), await response.text()).toBe(201);
+  // Tessa already has an open sample draft, so asking again returns it instead of piling up a second one.
+  expect([200, 201], await response.text()).toContain(response.status());
   const draft = await response.json() as { id: string };
   await page.goto('/email');
   await page.locator(`.email-desk-row[data-draft-id="${draft.id}"]`).click();

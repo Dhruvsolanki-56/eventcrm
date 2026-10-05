@@ -13,6 +13,7 @@ import { createTransport } from 'nodemailer';
 import { leadMailTransportReady, sendResendEmail } from './resend-email.js';
 import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetConfirmSchema, PasswordResetRequestSchema, SaveLeadSchema, SignupSchema, SessionSchema, WebsiteSchema } from '../shared/contracts.js';
 import {
+  AccessDeniedError,
   createSession,
   consumePasswordReset,
   consumeEmailVerification,
@@ -118,6 +119,7 @@ import {
   getCompanyAboutTarget,
   updateCompanyAbout,
   type WorkspaceInfo,
+  saveWorkspaceEventDetailed,
 } from './db.js';
 import { draftEmail, isAIProviderEnabled, isCardAIEnabled, isEmailDraftAIEnabled, readCard, suggestFollowUp } from './ai.js';
 import { isGeminiCardEnabled } from './gemini-card.js';
@@ -128,6 +130,7 @@ import { fetchPublicPageText } from './safe-web.js';
 import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
+import { userMessage } from './safe-failure.js';
 
 type RequestContext = { actor: ActorInfo; workspace: WorkspaceInfo };
 const SESSION_COOKIE = 'gather_session';
@@ -157,7 +160,30 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-site' },
   contentSecurityPolicy: isProduction ? { directives: { scriptSrc: ["'self'", "'wasm-unsafe-eval'"], workerSrc: ["'self'"], connectSrc: ["'self'", 'https://huggingface.co', 'https://*.hf.co', 'https://*.huggingface.co', 'https://*.xethub.hf.co'] } } : false,
 }));
+// Every request gets an id that comes back in the X-Request-Id header, in error responses and in the server log,
+// so one failed request can be found again.
+app.use((_req, res, next) => {
+  const requestId = randomUUID().slice(0, 8);
+  res.locals.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+});
 app.use(express.json({ limit: '2mb', strict: true }));
+
+// A NUL character cannot be stored in text columns on every database and has no place in names, notes or search words.
+function containsNul(value: unknown, depth = 0): boolean {
+  if (typeof value === 'string') return value.includes('\u0000');
+  if (depth > 8 || value === null || typeof value !== 'object') return false;
+  return Object.values(value as Record<string, unknown>).some((item) => containsNul(item, depth + 1));
+}
+app.use((req, res, next) => {
+  let path = req.path;
+  try { path = decodeURIComponent(req.path); } catch { return res.status(400).json({ code: 'invalid_address', message: 'That address is not valid.', requestId: res.locals.requestId }); }
+  if (path.includes('\u0000') || containsNul(req.body) || containsNul(req.query)) {
+    return res.status(400).json({ code: 'invalid_characters', message: 'Remove the unusual control characters and try again.', requestId: res.locals.requestId });
+  }
+  next();
+});
 await startWorker();
 
 function cookieValue(req: Request, name: string) {
@@ -576,7 +602,7 @@ app.post('/api/onboarding/test-email', emailTestLimiter, requireContext, async (
 app.get('/api/team', requireContext, async (_req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   try { res.json(await (listTeamSettings(actor.id, workspace.id))); }
-  catch (error) { res.status(403).json({ code: 'team_access', message: error instanceof Error ? error.message : 'Only a company admin can manage the team.' }); }
+  catch (error) { res.status(403).json({ code: 'team_access', message: userMessage(error, 'Only a company admin can manage the team.') }); }
 });
 
 app.post('/api/team/invites', requireContext, async (req, res) => {
@@ -584,7 +610,7 @@ app.post('/api/team/invites', requireContext, async (req, res) => {
   const parsed = z.object({ role: z.enum(['manager','representative']), eventIds: z.array(z.string().min(1).max(80)).max(100) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_invite', message: 'Choose a role and the events this person can access.' });
   try { res.status(201).json(await (createWorkspaceInvite(actor.id, workspace.id, parsed.data.role, parsed.data.eventIds))); }
-  catch (error) { res.status(403).json({ code: 'invite_not_created', message: error instanceof Error ? error.message : 'The invite could not be created.' }); }
+  catch (error) { res.status(403).json({ code: 'invite_not_created', message: userMessage(error, 'The invite could not be created.') }); }
 });
 
 const EventInputSchema = z.object({
@@ -601,10 +627,11 @@ app.post('/api/events', requireContext, async (req, res) => {
   const parsed = EventInputSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_event', message: 'Check the event name, dates, time zone, and spend.' });
   try {
-    const id = await (saveWorkspaceEvent(actor.id, workspace.id, null, parsed.data));
-    res.status(201).json({ id });
+    const saved = await (saveWorkspaceEventDetailed(actor.id, workspace.id, null, parsed.data));
+    if (!saved) return res.status(404).json({ code: 'event_missing', message: 'This event is no longer available.' });
+    res.status(saved.created ? 201 : 200).json({ id: saved.id, duplicate: !saved.created });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'The event could not be saved.';
+    const message = userMessage(error, 'The event could not be saved.');
     res.status(message.startsWith('Only a company admin') ? 403 : 400).json({ code: 'event_not_saved', message });
   }
 });
@@ -619,7 +646,7 @@ app.put('/api/events/:eventId', requireContext, async (req, res) => {
     if (!saved) return res.status(404).json({ code: 'event_missing', message: 'This event is no longer available.' });
     res.json({ id: saved });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'The event could not be saved.';
+    const message = userMessage(error, 'The event could not be saved.');
     res.status(message.startsWith('Only a company admin') ? 403 : 400).json({ code: 'event_not_saved', message });
   }
 });
@@ -631,7 +658,7 @@ app.delete('/api/team/invites/:inviteId', requireContext, async (req, res) => {
   try {
     if (!await (revokeWorkspaceInvite(actor.id, workspace.id, id.data))) return res.status(404).json({ code: 'invite_missing', message: 'This invite is no longer available.' });
     res.json({ revoked: true });
-  } catch (error) { res.status(403).json({ code: 'invite_not_revoked', message: error instanceof Error ? error.message : 'The invite could not be cancelled.' }); }
+  } catch (error) { res.status(403).json({ code: 'invite_not_revoked', message: userMessage(error, 'The invite could not be cancelled.') }); }
 });
 
 app.delete('/api/team/members/:userId', requireContext, async (req, res) => {
@@ -641,7 +668,7 @@ app.delete('/api/team/members/:userId', requireContext, async (req, res) => {
   try {
     if (!await (removeWorkspaceMember(actor.id, workspace.id, id.data))) return res.status(404).json({ code: 'member_missing', message: 'This person is no longer on the team.' });
     res.json({ removed: true });
-  } catch (error) { res.status(409).json({ code: 'member_not_removed', message: error instanceof Error ? error.message : 'This person could not be removed.' }); }
+  } catch (error) { res.status(409).json({ code: 'member_not_removed', message: userMessage(error, 'This person could not be removed.') }); }
 });
 
 app.put('/api/team/members/:userId/access', requireContext, async (req, res) => {
@@ -655,7 +682,7 @@ app.put('/api/team/members/:userId/access', requireContext, async (req, res) => 
     }
     res.json({ updated: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'This person’s access could not be updated.';
+    const message = userMessage(error, 'This person’s access could not be updated.');
     res.status(message.startsWith('Only a company admin') ? 403 : 409).json({ code: 'member_access_not_updated', message });
   }
 });
@@ -665,7 +692,7 @@ app.post('/api/invites/accept', requireContext, async (req, res) => {
   const parsed = z.object({ token: z.string().min(40).max(100) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_invite', message: 'This invite link is not valid.' });
   try { res.json({ workspaceId: await (acceptInviteForUser(actor.id, parsed.data.token)) }); }
-  catch (error) { res.status(409).json({ code: 'invite_not_accepted', message: error instanceof Error ? error.message : 'This invite could not be accepted.' }); }
+  catch (error) { res.status(409).json({ code: 'invite_not_accepted', message: userMessage(error, 'This invite could not be accepted.') }); }
 });
 
 app.get('/api/dashboard', requireContext, async (_req, res) => {
@@ -703,10 +730,10 @@ app.post('/api/contacts/:contactId/tasks', requireContext, taskLimiter, async (r
   try {
     const result = await (createTask(actor.id, workspace.id, contactId.data, parsed.data));
     if (!result.created) return res.status(409).json({ code: 'meeting_overlap', message: `This overlaps with a confirmed meeting for ${result.conflict.contact_name}. Choose another time or save it anyway.`, conflict: result.conflict });
-    res.status(201).json(result);
+    res.status(result.duplicate ? 200 : 201).json(result);
   } catch (error) {
     if (error instanceof TaskStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
-    const message = error instanceof Error ? error.message : 'This follow-up could not be saved.';
+    const message = userMessage(error, 'This follow-up could not be saved.');
     res.status(message.startsWith('You do not have access') ? 403 : 404).json({ code: 'task_not_saved', message });
   }
 });
@@ -777,7 +804,7 @@ app.put('/api/companies/:companyId/deal', requireContext, async (req, res) => {
   try {
     if (!await (updateCompanyDeal(actor.id, workspace.id, id.data, parsed.data.valueMinor, parsed.data.status))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
     res.json({ updated: true });
-  } catch (error) { res.status(403).json({ code: 'deal_permission', message: error instanceof Error ? error.message : 'You cannot change this deal value.' }); }
+  } catch (error) { res.status(403).json({ code: 'deal_permission', message: userMessage(error, 'You cannot change this deal value.') }); }
 });
 
 app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -792,7 +819,7 @@ app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requ
     const about = await suggestCompanyAbout(target.name, page.text);
     if (!about) return res.status(422).json({ code: 'about_unclear', message: 'The website does not say clearly what this company does. You can type a short description instead.' });
     res.json({ about, source: new URL(page.finalUrl).hostname.replace(/^www\./, '') });
-  } catch (error) { res.status(422).json({ code: 'about_unavailable', message: error instanceof Error ? error.message : 'The company could not be read.' }); }
+  } catch (error) { res.status(422).json({ code: 'about_unavailable', message: userMessage(error, 'The company could not be read.') }); }
 });
 
 app.put('/api/companies/:companyId/about', requireContext, async (req, res) => {
@@ -803,7 +830,7 @@ app.put('/api/companies/:companyId/about', requireContext, async (req, res) => {
   try {
     if (!await (updateCompanyAbout(actor.id, workspace.id, id.data, parsed.data.about))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
     res.json({ updated: true });
-  } catch (error) { res.status(403).json({ code: 'about_permission', message: error instanceof Error ? error.message : 'You cannot change this company.' }); }
+  } catch (error) { res.status(403).json({ code: 'about_permission', message: userMessage(error, 'You cannot change this company.') }); }
 });
 
 app.get('/api/analytics', requireContext, async (req, res) => {
@@ -814,7 +841,7 @@ app.get('/api/analytics', requireContext, async (req, res) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
     res.json(await (getAnalytics(actor.id, workspace.id, Number(query.data.days), query.data.eventId)));
-  } catch (error) { res.status(400).json({ code: 'analytics_event', message: error instanceof Error ? error.message : 'Analytics could not be loaded.' }); }
+  } catch (error) { res.status(400).json({ code: 'analytics_event', message: userMessage(error, 'Analytics could not be loaded.') }); }
 });
 
 app.get('/api/reports', requireContext, async (_req, res) => {
@@ -844,7 +871,7 @@ app.get('/api/export/data.json', exportLimiter, requireContext, async (_req, res
   let dataExport: Awaited<ReturnType<typeof getWorkspaceExport>>;
   try { dataExport = await (getWorkspaceExport(actor.id, workspace.id)); }
   catch (error) {
-    const message = error instanceof Error ? error.message : 'This workspace cannot be exported.';
+    const message = userMessage(error, 'This workspace cannot be exported.');
     return res.status(message.startsWith('Only the company admin') ? 403 : 500).json({ code: 'export_permission', message });
   }
   const uploadsRoot = resolve(process.env.UPLOADS_PATH ?? 'uploads');
@@ -895,7 +922,7 @@ app.patch('/api/contacts/:contactId/archive', requireContext, async (req, res) =
     res.setHeader('Cache-Control', 'no-store');
     res.json({ archived: parsed.data.archived });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'This person could not be updated.';
+    const message = userMessage(error, 'This person could not be updated.');
     const denied = message.startsWith('Workspace access changed') || message.startsWith('You do not have access') || message.startsWith('Only a company') || message.startsWith('Only the owner');
     res.status(denied ? 403 : 404).json({ code: denied ? 'archive_permission' : 'person_missing', message });
   }
@@ -916,7 +943,7 @@ app.delete('/api/contacts/:contactId', requireContext, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ deleted: true, counts: deleted.counts, mediaCleanupPending });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'This person could not be deleted.';
+    const message = userMessage(error, 'This person could not be deleted.');
     const denied = message.startsWith('Workspace access changed') || message.startsWith('You do not have access') || message.startsWith('Only a company admin');
     const busy = message.startsWith('A background task');
     const missing = message.startsWith('This person is no longer available');
@@ -929,10 +956,10 @@ app.post('/api/contacts/:contactId/notes', requireContext, noteLimiter, async (r
   const id = z.string().min(1).max(80).safeParse(req.params.contactId);
   const parsed = z.object({ body: z.string().trim().min(1).max(4000) }).strict().safeParse(req.body);
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_note', message: 'Write a short note before saving.' });
-  try { await (addPersonNote(actor.id, workspace.id, id.data, parsed.data.body)); res.status(201).json({ saved: true }); }
+  try { const result = await (addPersonNote(actor.id, workspace.id, id.data, parsed.data.body)); res.status(result.duplicate ? 200 : 201).json({ saved: true, duplicate: result.duplicate }); }
   catch (error) {
     if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
-    res.status(404).json({ code: 'person_missing', message: error instanceof Error ? error.message : 'This person is no longer available.' });
+    res.status(404).json({ code: 'person_missing', message: userMessage(error, 'This person is no longer available.') });
   }
 });
 
@@ -960,7 +987,7 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
     res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate, autoDraft });
   } catch (error) {
     if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
-    const message = error instanceof Error ? error.message : 'The conversation could not be saved.';
+    const message = userMessage(error, 'The conversation could not be saved.');
     res.status(message.startsWith('You do not have access') || message.startsWith('Choose an event') ? 403 : 409)
       .json({ code: 'conversation_not_saved', message });
   }
@@ -973,7 +1000,7 @@ app.post('/api/contacts/:contactId/conversation-summary-suggestion', aiSuggestio
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add what you discussed first.' });
   if (!await getPersonDetail(actor.id, workspace.id, id.data)) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
   try { res.json({ summary: await summarizeCheckedTranscript(parsed.data.text) }); }
-  catch (error) { res.status(503).json({ code: 'summary_unavailable', message: error instanceof Error ? error.message : 'A summary could not be prepared.' }); }
+  catch (error) { res.status(503).json({ code: 'summary_unavailable', message: userMessage(error, 'A summary could not be prepared.') }); }
 });
 
 app.post('/api/contacts/:contactId/conversation-context-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -989,7 +1016,7 @@ app.post('/api/contacts/:contactId/conversation-context-suggestion', aiSuggestio
     res.json(await suggestConversationContext({ note: parsed.data.text, personName: String(detail.person.name ?? ''),
       ourRole: String(settings?.ourRole ?? settings?.role ?? ''), whatWeSell: String(settings?.whatYouSell ?? settings?.lookingFor ?? ''),
       previousSummary: previous[0]?.summary ?? '' }));
-  } catch (error) { res.status(503).json({ code: 'context_suggestion_unavailable', message: error instanceof Error ? error.message : 'AI note help is unavailable.' }); }
+  } catch (error) { res.status(503).json({ code: 'context_suggestion_unavailable', message: userMessage(error, 'AI note help is unavailable.') }); }
 });
 
 app.put('/api/contacts/:contactId/conversations/:encounterId/context', requireContext, async (req, res) => {
@@ -1001,7 +1028,7 @@ app.put('/api/contacts/:contactId/conversations/:encounterId/context', requireCo
   try {
     if (!await updateConversationMemory(actor.id, workspace.id, contactId.data, encounterId.data, parsed.data)) return res.status(404).json({ code: 'conversation_missing', message: 'This conversation is no longer available.' });
     res.json({ saved: true });
-  } catch (error) { res.status(403).json({ code: 'context_not_saved', message: error instanceof Error ? error.message : 'This context could not be saved.' }); }
+  } catch (error) { res.status(403).json({ code: 'context_not_saved', message: userMessage(error, 'This context could not be saved.') }); }
 });
 
 app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1010,6 +1037,7 @@ app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireCon
   if (!id.success) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
   try {
     const created = await createEmailDraft(actor.id, workspace.id, id.data);
+    if (created.reused) return res.status(200).json(created);
     if (isEmailDraftAIEnabled()) {
       try {
         await queueEmailDraftImprovement(workspace.id, created.id, created.subject, created.body);
@@ -1018,7 +1046,7 @@ app.post('/api/contacts/:contactId/email-draft', aiSuggestionLimiter, requireCon
     }
     res.status(201).json(created);
   }
-  catch (error) { res.status(409).json({ code: 'email_draft_not_created', message: error instanceof Error ? error.message : 'An email draft could not be created.' }); }
+  catch (error) { res.status(409).json({ code: 'email_draft_not_created', message: userMessage(error, 'An email draft could not be created.') }); }
 });
 
 app.post('/api/contacts/:contactId/follow-up-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1059,7 +1087,7 @@ app.post('/api/emails/:emailId/alternate', requireContext, async (req, res) => {
     if (!draft) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to change.' });
     res.json(draft);
   } catch (error) {
-    res.status(409).json({ code: 'email_alternate_not_created', message: error instanceof Error ? error.message : 'Another draft could not be prepared.' });
+    res.status(409).json({ code: 'email_alternate_not_created', message: userMessage(error, 'Another draft could not be prepared.') });
   }
 });
 
@@ -1088,7 +1116,7 @@ app.post('/api/emails/:emailId/send', requireContext, async (req, res) => {
       res.setHeader('Retry-After', String(error.retryAfterSeconds));
       return res.status(429).json({ code: 'email_send_rate_limit', message: error.message });
     }
-    res.status(409).json({ code: 'email_not_approved', message: error instanceof Error ? error.message : 'This email could not be approved.' });
+    res.status(409).json({ code: 'email_not_approved', message: userMessage(error, 'This email could not be approved.') });
   }
 });
 
@@ -1155,7 +1183,7 @@ app.patch('/api/contacts/:contactId', requireContext, async (req, res) => {
     }
     res.json({ updated: true, version: parsed.data.version + 1 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'These details could not be saved.';
+    const message = userMessage(error, 'These details could not be saved.');
     const status = message.startsWith('You do not have access') ? 403 : message.startsWith('Another person') ? 409 : 400;
     res.status(status).json({ code: 'person_not_updated', message });
   }
@@ -1170,7 +1198,7 @@ app.post('/api/contacts/:contactId/reply', requireContext, async (req, res) => {
     const detail = await (getPersonDetail(actor.id, workspace.id, id.data));
     res.json({ updated: true, version: Number(detail?.person.version ?? 1) });
   } catch (error) {
-    res.status(403).json({ code: 'reply_not_logged', message: error instanceof Error ? error.message : 'You cannot update this person.' });
+    res.status(403).json({ code: 'reply_not_logged', message: userMessage(error, 'You cannot update this person.') });
   }
 });
 
@@ -1241,7 +1269,7 @@ app.post('/api/notes/:noteId/summary-suggestion', aiSuggestionLimiter, requireCo
   if (!note) return res.status(404).json({ code: 'audio_missing', message: 'This recording is no longer available.' });
   if (!note.transcript.trim()) return res.status(409).json({ code: 'transcript_needed', message: 'Check and save the words first.' });
   try { return res.json({ summary: await summarizeCheckedTranscript(note.transcript) }); }
-  catch (error) { return res.status(503).json({ code: 'summary_unavailable', message: error instanceof Error ? error.message : 'AI note help is unavailable.' }); }
+  catch (error) { return res.status(503).json({ code: 'summary_unavailable', message: userMessage(error, 'AI note help is unavailable.') }); }
 });
 
 app.put('/api/notes/:noteId/summary', requireContext, async (req, res) => {
@@ -1281,7 +1309,7 @@ app.post('/api/setup/profile-suggestion', aiSuggestionLimiter, requireContext, a
   const parsed = z.object({ sourceText: z.string().trim().min(30).max(8000) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_profile_source', message: 'Paste at least a short paragraph from your website or brochure.' });
   try { res.json(await suggestBusinessProfile(parsed.data.sourceText)); }
-  catch (error) { res.status(503).json({ code: 'profile_suggestion_unavailable', message: error instanceof Error ? error.message : 'AI setup help is unavailable.' }); }
+  catch (error) { res.status(503).json({ code: 'profile_suggestion_unavailable', message: userMessage(error, 'AI setup help is unavailable.') }); }
 });
 
 app.post('/api/setup/profile-from-website', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1293,7 +1321,7 @@ app.post('/api/setup/profile-from-website', aiSuggestionLimiter, requireContext,
   try {
     const page = await fetchPublicPageText(parsed.data.website);
     res.json({ ...(await suggestProfileFromWebsite(page.text)), website: page.finalUrl.replace(/\/$/, '') });
-  } catch (error) { res.status(422).json({ code: 'profile_from_website_unavailable', message: error instanceof Error ? error.message : 'The website could not be read.' }); }
+  } catch (error) { res.status(422).json({ code: 'profile_from_website_unavailable', message: userMessage(error, 'The website could not be read.') }); }
 });
 
 app.get('/api/preferences/capture', requireContext, async (_req, res) => {
@@ -1377,7 +1405,7 @@ app.post('/api/settings/delete-my-data', requireContext, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ deleted: true, counts: deleted.counts, mediaCleanupPending });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Your private data could not be deleted.';
+    const message = userMessage(error, 'Your private data could not be deleted.');
     const denied = message.startsWith('Only the owner');
     res.status(denied ? 403 : 409).json({ code: denied ? 'delete_permission' : 'data_not_deleted', message });
   }
@@ -1396,7 +1424,7 @@ if (!isProduction) {
       res.setHeader('Cache-Control', 'no-store');
       res.json({ cleared: true, counts: cleared.counts, mediaCleanupPending });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Sample data could not be cleared.';
+      const message = userMessage(error, 'Sample data could not be cleared.');
       const denied = message.startsWith('Only a sample') || message.startsWith('Only the owner');
       res.status(denied ? 403 : 409).json({ code: denied ? 'clear_permission' : 'sample_data_not_cleared', message });
     }
@@ -1459,7 +1487,7 @@ app.post('/api/scans/qr', scanLimiter, requireContext, async (req, res) => {
     res.status(result.duplicate ? 200 : 201).json({ scan: publicScan(result.scan), duplicate: result.duplicate, duplicateQr: result.duplicate && result.scan.client_scan_id !== parsed.data.clientScanId });
   } catch (error) {
     if (error instanceof QrScanStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
-    res.status(403).json({ code: 'qr_not_added', message: error instanceof Error ? error.message : 'This QR code could not be added.' });
+    res.status(403).json({ code: 'qr_not_added', message: userMessage(error, 'This QR code could not be added.') });
   }
 });
 
@@ -1555,7 +1583,7 @@ app.post('/api/scans/:scanId/qr', scanLimiter, requireContext, async (req, res) 
       return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     }
     res.json({ applied: true });
-  } catch (error) { res.status(403).json({ code: 'qr_not_added', message: error instanceof Error ? error.message : 'This QR code could not be added.' }); }
+  } catch (error) { res.status(403).json({ code: 'qr_not_added', message: userMessage(error, 'This QR code could not be added.') }); }
 });
 
 app.post('/api/scans/:scanId/ocr', scanLimiter, requireContext, async (req, res) => {
@@ -1571,7 +1599,7 @@ app.post('/api/scans/:scanId/ocr', scanLimiter, requireContext, async (req, res)
       return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     }
     res.json({ applied: true });
-  } catch (error) { res.status(403).json({ code: 'ocr_not_added', message: error instanceof Error ? error.message : 'Those details could not be added.' }); }
+  } catch (error) { res.status(403).json({ code: 'ocr_not_added', message: userMessage(error, 'Those details could not be added.') }); }
 });
 
 app.post('/api/scans/:scanId/ai-read', aiSuggestionLimiter, requireContext, async (req, res) => {
@@ -1603,7 +1631,7 @@ app.post('/api/scans/:scanId/ocr-failure', scanLimiter, requireContext, async (r
       return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
     }
     res.json({ failed: true });
-  } catch (error) { res.status(403).json({ code: 'ocr_failure_not_saved', message: error instanceof Error ? error.message : 'This photo could not be updated.' }); }
+  } catch (error) { res.status(403).json({ code: 'ocr_failure_not_saved', message: userMessage(error, 'This photo could not be updated.') }); }
 });
 
 app.post('/api/scans/:scanId/save', requireContext, async (req, res) => {
@@ -1616,7 +1644,7 @@ app.post('/api/scans/:scanId/save', requireContext, async (req, res) => {
     const result = await (saveScannedLead(actor.id, workspace.id, { scanId: scanId.data, ...parsed.data }));
     await (updateOnboardingStep(actor.id, workspace.id, 'capture', true));
     res.json(result);
-  } catch (error) { res.status(409).json({ code: 'lead_not_saved', message: error instanceof Error ? error.message : 'The lead could not be saved. Check the details and try again.' }); }
+  } catch (error) { res.status(409).json({ code: 'lead_not_saved', message: userMessage(error, 'The lead could not be saved. Check the details and try again.') }); }
 });
 
 app.post('/api/scans/:scanId/material', requireContext, async (req, res) => {
@@ -1626,7 +1654,7 @@ app.post('/api/scans/:scanId/material', requireContext, async (req, res) => {
   if (!scanId.success || !parsed.success) return res.status(400).json({ code: 'invalid_material', message: 'Add the brochure’s company name and check the website.' });
   try {
     res.json(await (saveScannedMaterial(actor.id, workspace.id, { scanId: scanId.data, ...parsed.data })));
-  } catch (error) { res.status(409).json({ code: 'material_not_saved', message: error instanceof Error ? error.message : 'The company material could not be saved.' }); }
+  } catch (error) { res.status(409).json({ code: 'material_not_saved', message: userMessage(error, 'The company material could not be saved.') }); }
 });
 
 app.delete('/api/scans/:scanId/material', requireContext, async (req, res) => {
@@ -1636,7 +1664,7 @@ app.delete('/api/scans/:scanId/material', requireContext, async (req, res) => {
   try {
     if (!await (removeScannedMaterial(actor.id, workspace.id, scanId.data))) return res.status(404).json({ code: 'material_missing', message: 'This company material is no longer available.' });
     res.json({ removed: true });
-  } catch (error) { res.status(403).json({ code: 'material_not_removed', message: error instanceof Error ? error.message : 'This company material could not be removed.' }); }
+  } catch (error) { res.status(403).json({ code: 'material_not_removed', message: userMessage(error, 'This company material could not be removed.') }); }
 });
 
 app.post('/api/scans/:scanId/discard', requireContext, async (req, res) => {
@@ -1673,12 +1701,23 @@ if (existsSync(clientBuild)) {
   });
 }
 
-app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (error instanceof z.ZodError) return res.status(400).json({ code: 'invalid_input', message: 'Check the highlighted information and try again.', fields: error.issues.map((item) => ({ path: item.path.join('.'), message: item.message })) });
+// Unknown API addresses answer in JSON like every other API response, not with the framework's HTML page.
+app.use('/api', (_req, res) => res.status(404).json({ code: 'not_found', message: 'That address does not exist.', requestId: res.locals.requestId }));
+
+app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const requestId = res.locals.requestId as string | undefined;
+  const reply = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) => res.status(status).json({ code, message, ...extra, requestId });
+  if (error instanceof z.ZodError) return reply(400, 'invalid_input', 'Check the highlighted information and try again.', { fields: error.issues.map((item) => ({ path: item.path.join('.'), message: item.message })) });
+  if (error instanceof AccessDeniedError) return reply(403, 'forbidden', error.message);
+  const details = error as { type?: string; status?: number; statusCode?: number };
+  if (details.type === 'entity.parse.failed') return reply(400, 'invalid_json', 'The request could not be read. Check it and try again.');
+  if (details.type === 'entity.too.large') return reply(413, 'request_too_large', 'That is too large to send. Try something smaller.');
+  const clientStatus = details.status ?? details.statusCode;
+  if (typeof clientStatus === 'number' && clientStatus >= 400 && clientStatus < 500) return reply(clientStatus, 'bad_request', 'That request could not be processed.');
   const message = error instanceof Error ? error.message : 'Unexpected error';
-  if (!isProduction) console.error(error);
-  else console.error(JSON.stringify({ event: 'request_error', message, at: new Date().toISOString() }));
-  res.status(500).json({ code: 'server_error', message: 'That did not work. Try again. If it keeps happening, contact your admin.' });
+  if (!isProduction) console.error(requestId, error);
+  else console.error(JSON.stringify({ event: 'request_error', requestId, method: req.method, path: req.path, message, at: new Date().toISOString() }));
+  reply(500, 'server_error', 'That did not work. Try again. If it keeps happening, contact your admin.');
 });
 
 const port = Number(process.env.PORT ?? 3001);
