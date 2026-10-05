@@ -13,8 +13,8 @@
   --line-strong: #d5d3cc;
   --ink: #1f2328;
   --ink-2: #464b53;
-  --muted: #6a6f77;
-  --faint: #959aa1;
+  --muted: #5a5f67;
+  --faint: #62676f;
   --accent: #2f5d50;
   --accent-hover: #264c41;
   --accent-soft: #edf3f0;
@@ -254,7 +254,7 @@ label { color: var(--ink); }
 .topbar-mode { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); font-size: 13px; }
 .topbar-mode strong { color: var(--ink); font-weight: 500; }
 .topbar-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.topbar-separator { color: var(--line-strong); }
+.topbar-separator { color: var(--faint); }
 .mode-dot { display: none; }
 .sample-badge { border-color: var(--warn-line); background: var(--warn-soft); color: var(--warn); font-size: 11px; }
 .topbar-event { max-width: 32vw; margin-left: auto; overflow: hidden; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1582,3 +1582,7 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .app-frame .chart-switch button { min-height: 40px; margin-block: 0; padding-block: 0; }
   .app-frame .brand-lockup { padding-block: 9px; }
 }
+
+.pipeline-more { width: 100%; min-height: 40px; margin-top: 4px; border: 1px dashed var(--line-strong); border-radius: 8px; background: transparent; color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer; }
+.pipeline-more:hover:not(:disabled) { background: var(--surface); }
+.pipeline-more:disabled { cursor: wait; opacity: .7; }

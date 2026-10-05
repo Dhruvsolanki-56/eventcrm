@@ -431,7 +431,7 @@ function WorkspaceShell() {
       <header className="topbar">
         <button className="mobile-menu-button" aria-label={mobileMenu ? 'Close navigation' : 'Open navigation'} onClick={() => setMobileMenu((open) => !open)}>{mobileMenu ? <X size={20} /> : <Menu size={20} />}</button>
         <div className="mobile-brand"><BrandMark size={24} />Encore</div>
-        <div className="topbar-mode"><span className="mode-dot"></span><span className="topbar-workspace-name">{workspace.name}</span><span className="topbar-separator">/</span><strong>{links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace')}</strong></div>
+        <div className="topbar-mode"><span className="mode-dot"></span><span className="topbar-workspace-name">{workspace.name}</span><span className="topbar-separator" aria-hidden="true">/</span><strong>{links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace')}</strong></div>
         {workspaceData?.sampleData && <span className="sample-badge">Sample data</span>}
         {location.pathname !== '/scan' && <span className={`topbar-event${workspaceData?.event ? ' is-live' : ''}`} title="Active event: new captures go here"><span className="live-dot" aria-hidden="true" />{workspaceData?.event?.name ?? 'No active event'}</span>}
         <OfflineChip />
@@ -881,17 +881,43 @@ function PipelinePage() {
   const [movingId, setMovingId] = useState('');
   const [lostDraft, setLostDraft] = useState<{ person: PersonRow; reason: string } | null>(null);
   const [phoneStage, setPhoneStage] = useState('new');
-  const [everyone, setEveryone] = useState(0);
-  const load = useCallback(() => request<{ people: PersonRow[]; allTotal: number }>('/api/contacts?pageSize=200', {}, { workspaceId: session.workspace.id }).then((result) => { setPeople(result.people); setEveryone(result.allTotal); }), [session.workspace.id]);
+  // Each column loads its own most recent people and can show more, so no stage is cut off by another stage's size.
+  const [totals, setTotals] = useState<Record<string, number>>({});
+  const [limits, setLimits] = useState<Record<string, number>>({});
+  const [loadingMore, setLoadingMore] = useState('');
+  const boardStep = 40, boardMax = 200;
+  const fetchStage = useCallback((stage: string, limit: number) => request<{ people: PersonRow[]; stageCounts: Record<string, number> }>(`/api/contacts?stage=${stage}&pageSize=${limit}`, {}, { workspaceId: session.workspace.id }), [session.workspace.id]);
+  const load = useCallback(async () => {
+    const results = await Promise.all(pipelineStages.map((stage) => fetchStage(stage, limitsRef.current[stage] ?? boardStep)));
+    setPeople(results.flatMap((result) => result.people));
+    setTotals(results[0]?.stageCounts ?? {});
+  }, [fetchStage]);
+  const limitsRef = useRef<Record<string, number>>({});
+  useEffect(() => { limitsRef.current = limits; }, [limits]);
   useEffect(() => { void load().catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [load, notify]);
+  async function showMore(stage: string) {
+    const next = Math.min(boardMax, (limits[stage] ?? boardStep) + boardStep);
+    setLoadingMore(stage);
+    try {
+      const result = await fetchStage(stage, next);
+      limitsRef.current = { ...limitsRef.current, [stage]: next };
+      setLimits((current) => ({ ...current, [stage]: next }));
+      setPeople((current) => [...(current ?? []).filter((person) => person.stage !== stage), ...result.people]);
+      setTotals(result.stageCounts);
+    } catch (issue) { notify((issue as Error).message); }
+    finally { setLoadingMore(''); }
+  }
   const needle = filter.trim().toLowerCase();
   const rows = (people ?? []).filter((person) => !needle || `${person.name} ${person.company_name}`.toLowerCase().includes(needle));
-  const active = rows.filter((person) => person.stage !== 'won' && person.stage !== 'lost').length;
+  // With no filter typed, counts are the true totals; with a filter they count the matches among the people loaded.
+  const countFor = (stage: string) => needle ? rows.filter((person) => person.stage === stage).length : totals[stage] ?? rows.filter((person) => person.stage === stage).length;
+  const active = pipelineStages.filter((stage) => stage !== 'won' && stage !== 'lost').reduce((sum, stage) => sum + countFor(stage), 0);
   // Same request the person page sends; the version check stops two people overwriting each other.
   async function move(person: PersonRow, stage: string, reason = '') {
     if (person.stage === stage) return;
     setMovingId(person.id);
     setPeople((current) => current?.map((item) => item.id === person.id ? { ...item, stage } : item) ?? current);
+    setTotals((current) => ({ ...current, [person.stage]: Math.max(0, (current[person.stage] ?? 1) - 1), [stage]: (current[stage] ?? 0) + 1 }));
     try {
       const result = await request<{ version: number }>(`/api/contacts/${person.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage, version: Number(person.version), ...(stage === 'lost' ? { lostReason: reason } : {}) }) }, { csrfToken, workspaceId: session.workspace.id });
       setPeople((current) => current?.map((item) => item.id === person.id ? { ...item, stage, version: result.version } : item) ?? current);
@@ -914,17 +940,16 @@ function PipelinePage() {
     else void move(person, stage);
   }
   return <section className="records-view pipeline-view">
-    <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${rows.filter((person) => person.stage === 'won').length} won · ${rows.filter((person) => person.stage === 'lost').length} lost` : 'Loading…'}</p></div>
+    <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${countFor('won')} won · ${countFor('lost')} lost` : 'Loading…'}</p></div>
       <label className="search-box pipeline-search"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name or company" aria-label="Filter by name or company" /></label></div>
-    {people && everyone > people.length && <p className="page-lede" role="note">Showing the {people.length} most recently updated of {everyone} people. Use People to search for the rest.</p>}
-    {people && <div className="pipeline-stage-switch" role="group" aria-label="Show one stage">{pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={phoneStage === stage} onClick={() => setPhoneStage(stage)}>{stageLabel(stage)}<span>{rows.filter((person) => person.stage === stage).length}</span></button>)}</div>}
+    {people && <div className="pipeline-stage-switch" role="group" aria-label="Show one stage">{pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={phoneStage === stage} onClick={() => setPhoneStage(stage)}>{stageLabel(stage)}<span>{countFor(stage)}</span></button>)}</div>}
     {!people ? <Skeleton variant="board" label="Loading pipeline" /> : <div className={`pipeline-grid${dragId ? ' is-dragging' : ''}`}>{pipelineStages.map((stage) => {
       const column = rows.filter((person) => person.stage === stage);
-      return <section className={`pipeline-column${overStage === stage ? ' is-over' : ''}${phoneStage === stage ? ' is-shown' : ''}`} key={stage} aria-label={`${stageLabel(stage)}, ${column.length}`}
+      return <section className={`pipeline-column${overStage === stage ? ' is-over' : ''}${phoneStage === stage ? ' is-shown' : ''}`} key={stage} aria-label={`${stageLabel(stage)}, ${countFor(stage)}`}
         onDragOver={(event) => { if (!dragId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; if (overStage !== stage) setOverStage(stage); }}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOverStage(''); }}
         onDrop={(event) => { event.preventDefault(); drop(stage); }}>
-        <div className="pipeline-column-head"><h2>{stageLabel(stage)}</h2><span className="pipeline-count">{column.length}</span></div>
+        <div className="pipeline-column-head"><h2>{stageLabel(stage)}</h2><span className="pipeline-count">{countFor(stage)}</span></div>
         <div className="pipeline-cards">{column.map((person) => <div className="pipeline-item" key={person.id}><Link className={`pipeline-person${dragId === person.id ? ' is-dragged' : ''}${movingId === person.id ? ' is-moving' : ''}`} to={`/people/${person.id}`} draggable
           onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', person.id); setDragId(person.id); }}
           onDragEnd={() => { setDragId(''); setOverStage(''); }}>
@@ -933,7 +958,10 @@ function PipelinePage() {
           <span className="pipeline-person-meta">{person.quality ? <Temperature quality={person.quality} /> : <span />}<span>{relativeDay(String(person.updated_at))}</span></span>
         </Link>
         <label className="pipeline-move"><span>Move to</span><select value={person.stage} disabled={movingId === person.id} aria-label={`Move ${person.name} to`} onChange={(event) => moveFromList(person, event.target.value)}>{pipelineStages.map((option) => <option key={option} value={option}>{stageLabel(option)}</option>)}</select></label></div>)}
-        {!column.length && <p className="pipeline-empty">{dragId ? 'Drop here' : needle ? 'No match' : 'Nobody yet'}</p>}</div>
+        {!column.length && <p className="pipeline-empty">{dragId ? 'Drop here' : needle ? 'No match' : 'Nobody yet'}</p>}
+        {!needle && column.length < (totals[stage] ?? 0) && ((limits[stage] ?? boardStep) < boardMax
+          ? <button type="button" className="pipeline-more" disabled={loadingMore === stage} onClick={() => void showMore(stage)}>{loadingMore === stage ? 'Loading…' : `Show more (${(totals[stage] ?? 0) - column.length} more)`}</button>
+          : <p className="pipeline-empty" role="note">Showing the {column.length} most recent of {totals[stage]}. Use People to find the rest.</p>)}</div>
       </section>;
     })}</div>}
     <p className="pipeline-footnote"><span className="on-wide">Drag a card to change its stage, or open a person to change it there.</span><span className="on-phone">Pick a stage above to see who is in it. Use Move to on a card to change its stage.</span> Deal value is tracked per company.</p>

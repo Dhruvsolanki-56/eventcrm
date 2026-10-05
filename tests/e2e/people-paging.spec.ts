@@ -53,20 +53,29 @@ test('the People screen pages through the server and keeps the stage counts', as
   await expect(page.getByText(/^11–20 of /)).toBeVisible();
 });
 
-test('the Pipeline board says so when it shows only the most recent 200 people', async ({ page }) => {
+test('each Pipeline column shows its true total and loads more on request', async ({ page }) => {
   const db = new Database(resolve(process.env.DATABASE_PATH!));
   db.pragma('foreign_keys = OFF');
   const cols = (db.prepare('PRAGMA table_info(contacts)').all() as Array<{ name: string }>).map((column) => column.name);
   const base = db.prepare("SELECT * FROM contacts WHERE id='demo-rb-contact-1'").get() as Record<string, unknown>;
   const insert = db.prepare(`INSERT INTO contacts (${cols.join(',')}) VALUES (${cols.map((column) => '@' + column).join(',')})`);
   const stamp = Date.now();
-  db.transaction(() => { for (let i = 0; i < 205; i++) insert.run({ ...base, id: `board-${stamp}-${i}`, name: `Board ${i}`, email: `b${i}-${stamp}@board.example`, email_normalized: `b${i}-${stamp}@board.example`, phone: '', phone_normalized: '' }); })();
+  db.transaction(() => { for (let i = 0; i < 205; i++) insert.run({ ...base, id: `board-${stamp}-${i}`, name: `Board ${i}`, email: `b${i}-${stamp}@board.example`, email_normalized: `b${i}-${stamp}@board.example`, phone: '', phone_normalized: '', stage: 'replied' }); })();
   db.close();
   await page.goto('/');
   await page.getByRole('button', { name: /Alex Rivera/ }).click();
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.goto('/pipeline');
-  await expect(page.getByRole('note').filter({ hasText: /Showing the 200 most recently updated of \d+ people/ })).toBeVisible();
+  const column = page.locator('.pipeline-column').filter({ has: page.getByRole('heading', { name: 'Replied', exact: true }) });
+  await expect(column.locator('.pipeline-count')).toHaveText(/^\d{3,}$/);
+  const total = Number(await column.locator('.pipeline-count').textContent());
+  expect(total).toBeGreaterThanOrEqual(205);
+  await expect(column.locator('.pipeline-item')).toHaveCount(40);
+  await column.getByRole('button', { name: /^Show more/ }).click();
+  await expect(column.locator('.pipeline-item')).toHaveCount(80);
+  for (let step = 0; step < 3; step++) await column.getByRole('button', { name: /^Show more/ }).click({ timeout: 8000 }).catch(() => undefined);
+  await expect(column.locator('.pipeline-item')).toHaveCount(200);
+  await expect(column.getByRole('note')).toContainText(`Showing the 200 most recent of ${total}`);
 });
 
 test('a slow answer to an earlier search never replaces the answer to the latest one', async ({ page }) => {

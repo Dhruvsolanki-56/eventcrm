@@ -1939,8 +1939,17 @@ export async function recordEmailSent(emailId: string, workspaceId: string, mess
   })());
 }
 
-export async function recordEmailFailed(emailId: string, workspaceId: string) {
-  await (db.prepare(`UPDATE emails SET status='failed',error_message='The mail server did not accept this message.' WHERE workspace_id=? AND id=? AND status='queued'`).run(workspaceId, emailId));
+export async function recordEmailFailed(emailId: string, workspaceId: string, message = 'The mail server did not accept this message.') {
+  await (db.prepare(`UPDATE emails SET status='failed',error_message=? WHERE workspace_id=? AND id=? AND status='queued'`).run(message, workspaceId, emailId));
+}
+
+/** Notes a fact on a job (for example "sending began at ...") so a later attempt, after a crash, can see it. Null removes it. */
+export async function setJobPayloadField(jobId: string, field: string, value: unknown) {
+  const row = await (db.prepare(`SELECT payload_json FROM jobs WHERE id=?`).get(jobId)) as { payload_json: string } | undefined;
+  if (!row) return;
+  const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+  if (value === null) delete payload[field]; else payload[field] = value;
+  await (db.prepare(`UPDATE jobs SET payload_json=? WHERE id=?`).run(JSON.stringify(payload), jobId));
 }
 
 export async function getEmailStatus(actorId: string, workspaceId: string, emailId: string) {
