@@ -1408,3 +1408,99 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .read-failure { flex-direction: column; gap: 10px; padding: 14px; }
   .read-failure-actions .button { flex: 1 1 auto; }
 }
+
+/* ==========================================================================
+   Phone and tablet pass. Kept last on purpose: earlier blocks set desktop
+   layouts after the phone rules, so the small-screen decisions live here.
+   ========================================================================== */
+.pipeline-stage-switch, .pipeline-move, .on-phone, .analytics-row-company { display: none; }
+/* The base field rule (four :not() parts) outweighs any normal selector, so the icon gap is forced. */
+.analytics-filters label:has(svg) select { padding-left: 34px !important; }
+
+/* Touch screens cannot drag cards, so every card offers a Move to list. */
+@media (hover: none) {
+  .pipeline-move { display: flex; }
+}
+.pipeline-item { display: grid; min-width: 0; }
+.pipeline-move { align-items: center; gap: 8px; margin: -4px 0 0; padding: 10px 12px 10px; border-radius: 0 0 var(--radius) var(--radius); background: var(--surface); box-shadow: 0 1px 2px rgb(24 28 33 / 8%), 0 0 0 1px rgb(24 28 33 / 4%); color: var(--muted); font-size: 12.5px; }
+.pipeline-move span { flex: none; }
+.pipeline-move select { flex: 1; min-width: 0; min-height: 36px; font-size: 13.5px; }
+@media (hover: none) {
+  .pipeline-item .pipeline-person { border-bottom-right-radius: 0; border-bottom-left-radius: 0; cursor: pointer; }
+}
+
+@media (max-width: 1000px) and (min-width: 781px) {
+  .scan-layout { grid-template-columns: minmax(0, 1fr); }
+  .company-side { position: static; }
+}
+
+@media (max-width: 780px) {
+  /* Headings: the title gets its own line, actions sit under it. */
+  .page-heading-row > div:first-child { flex: 1 1 100%; }
+  .page-heading-row { margin-bottom: 14px; }
+  .records-view > .page-heading-row:first-child, .page-content > section > .page-heading-row:first-child { padding-top: 2px; }
+
+  /* Scan: one column, capture first, then what is waiting, then recent saves. */
+  .scan-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .scan-side { gap: 14px; }
+  .capture-event-bar { gap: 8px; }
+  .capture-event-bar select { flex: 1 1 100%; min-width: 0; }
+  .capture-event-bar .quick-event-open { flex: 1 1 auto; }
+
+  /* Section heads with a button: the text keeps a readable width, the button drops below when it must. */
+  .section-head { flex-wrap: wrap; }
+  .section-head > div { flex: 1 1 200px; }
+  .section-head > a:not(.button) { white-space: nowrap; }
+  .company-materials .section-head > .button { width: 100%; }
+
+  /* Tabs that do not fit fade at the edge so it is clear they scroll. */
+  .person-action-row .button { padding: 0 10px; font-size: 13.5px; }
+  .person-action-row, .email-desk-tabs { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .person-action-row:has(.button:last-child[aria-current]), .email-desk-tabs:has(button:last-child[aria-pressed=true]) { mask-image: none; }
+  .email-desk-tabs button { padding: 0 9px; }
+
+  /* Settings: every section visible at once, two per row. */
+  .settings-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 0 0 16px; padding: 0; border-bottom: 0; overflow: visible; }
+  .settings-tabs button { min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink-2); font-size: 13.5px; white-space: normal; text-align: center; line-height: 1.25; }
+  .settings-tabs button[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+  .settings-tabs button[aria-pressed=true]::after { display: none; }
+  .settings-tabs button:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+  /* Analytics: the event list gets a full row; period and refresh share the next. */
+  .analytics-filters { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .analytics-filters label:first-child { grid-column: 1 / -1; }
+  .analytics-filters label { min-width: 0; }
+  .analytics-filters label:has(svg) svg { left: 12px; }
+  .recent-panel .analytics-table { min-width: 0; white-space: normal; }
+  .recent-panel .analytics-table :is(th, td):is(:nth-child(2), :nth-child(4)) { display: none; }
+  .recent-panel .analytics-table :is(th, td) { padding-inline: 14px; }
+  .recent-panel .analytics-table td:last-child { text-align: right; }
+  .analytics-row-company { display: block; margin: 2px 0 0 33px; color: var(--muted); font-size: 12px; }
+
+  /* Pipeline: pick one stage, see its people as a full-width list. */
+  .pipeline-stage-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 0 0 14px; }
+  .pipeline-stage-switch button { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 500; }
+  .pipeline-stage-switch button span { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .pipeline-stage-switch button[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
+  .pipeline-stage-switch button[aria-pressed=true] span { color: var(--accent-ink); }
+  .pipeline-grid { display: block; height: auto; min-height: 0; overflow: visible; margin: 0; padding: 0; }
+  .pipeline-column { display: none; max-height: none; background: transparent; }
+  .pipeline-column.is-shown { display: flex; }
+  .pipeline-column-head { display: none; }
+  .pipeline-cards { overflow: visible; padding: 0; mask-image: none; }
+  .pipeline-move { display: flex; justify-content: flex-end; padding: 6px 10px 8px; }
+  .app-frame .pipeline-item .pipeline-move select { flex: 0 1 auto; width: auto !important; max-width: 62%; min-height: 36px; padding: 0 30px 0 10px !important; border-color: var(--line); background-color: var(--surface-2); font-size: 16px; }
+  .pipeline-item .pipeline-person { border-bottom-right-radius: 0; border-bottom-left-radius: 0; cursor: pointer; }
+  .pipeline-empty { padding: 28px 12px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); text-align: center; }
+  .on-wide { display: none; }
+  .on-phone { display: inline; }
+
+  /* Person: the tabs and history read as one column. */
+  .person-title { align-items: flex-start; }
+  .person-pulse { gap: 4px 14px; }
+}
+
+@media (max-width: 380px) {
+  .pipeline-stage-switch { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric-grid, .analytics-kpis, .report-metrics { gap: 8px; }
+}

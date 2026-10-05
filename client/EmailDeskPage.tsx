@@ -41,7 +41,7 @@ export default function EmailDeskPage() {
   useEffect(() => { void load(); }, [session.workspace.id]);
   const selected = desk.drafts.find((draft) => draft.id === selectedId) ?? null;
   useEffect(() => {
-    if (selectedId || filter === 'people' || !window.matchMedia('(min-width: 781px)').matches) return;
+    if (selectedId || filter === 'people' || !window.matchMedia('(min-width: 1001px)').matches) return;
     const first = desk.drafts.find((draft) => filter === 'draft' ? draft.status === 'draft' : draft.status !== 'draft');
     if (first) setSelectedId(first.id);
   }, [desk.drafts, filter, selectedId]);

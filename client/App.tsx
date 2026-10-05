@@ -876,6 +876,7 @@ function PipelinePage() {
   const [overStage, setOverStage] = useState('');
   const [movingId, setMovingId] = useState('');
   const [lostDraft, setLostDraft] = useState<{ person: PersonRow; reason: string } | null>(null);
+  const [phoneStage, setPhoneStage] = useState('new');
   const load = useCallback(() => request<{ people: PersonRow[] }>('/api/contacts', {}, { workspaceId: session.workspace.id }).then((result) => setPeople(result.people)), [session.workspace.id]);
   useEffect(() => { void load().catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [load, notify]);
   const needle = filter.trim().toLowerCase();
@@ -902,27 +903,34 @@ function PipelinePage() {
     if (stage === 'lost') setLostDraft({ person, reason: '' });
     else void move(person, stage);
   }
+  // Phones have no drag and drop: each card gets a Move to list that sends the same request.
+  function moveFromList(person: PersonRow, stage: string) {
+    if (stage === 'lost') setLostDraft({ person, reason: '' });
+    else void move(person, stage);
+  }
   return <section className="records-view pipeline-view">
     <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${rows.filter((person) => person.stage === 'won').length} won · ${rows.filter((person) => person.stage === 'lost').length} lost` : 'Loading…'}</p></div>
       <label className="search-box pipeline-search"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name or company" aria-label="Filter by name or company" /></label></div>
+    {people && <div className="pipeline-stage-switch" role="group" aria-label="Show one stage">{pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={phoneStage === stage} onClick={() => setPhoneStage(stage)}>{stageLabel(stage)}<span>{rows.filter((person) => person.stage === stage).length}</span></button>)}</div>}
     {!people ? <Skeleton variant="board" label="Loading pipeline" /> : <div className={`pipeline-grid${dragId ? ' is-dragging' : ''}`}>{pipelineStages.map((stage) => {
       const column = rows.filter((person) => person.stage === stage);
-      return <section className={`pipeline-column${overStage === stage ? ' is-over' : ''}`} key={stage} aria-label={`${stageLabel(stage)}, ${column.length}`}
+      return <section className={`pipeline-column${overStage === stage ? ' is-over' : ''}${phoneStage === stage ? ' is-shown' : ''}`} key={stage} aria-label={`${stageLabel(stage)}, ${column.length}`}
         onDragOver={(event) => { if (!dragId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; if (overStage !== stage) setOverStage(stage); }}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOverStage(''); }}
         onDrop={(event) => { event.preventDefault(); drop(stage); }}>
         <div className="pipeline-column-head"><h2>{stageLabel(stage)}</h2><span className="pipeline-count">{column.length}</span></div>
-        <div className="pipeline-cards">{column.map((person) => <Link className={`pipeline-person${dragId === person.id ? ' is-dragged' : ''}${movingId === person.id ? ' is-moving' : ''}`} to={`/people/${person.id}`} key={person.id} draggable
+        <div className="pipeline-cards">{column.map((person) => <div className="pipeline-item" key={person.id}><Link className={`pipeline-person${dragId === person.id ? ' is-dragged' : ''}${movingId === person.id ? ' is-moving' : ''}`} to={`/people/${person.id}`} draggable
           onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', person.id); setDragId(person.id); }}
           onDragEnd={() => { setDragId(''); setOverStage(''); }}>
           <strong>{person.name}</strong>
           <small>{person.company_name}</small>
           <span className="pipeline-person-meta">{person.quality ? <Temperature quality={person.quality} /> : <span />}<span>{relativeDay(String(person.updated_at))}</span></span>
-        </Link>)}
+        </Link>
+        <label className="pipeline-move"><span>Move to</span><select value={person.stage} disabled={movingId === person.id} aria-label={`Move ${person.name} to`} onChange={(event) => moveFromList(person, event.target.value)}>{pipelineStages.map((option) => <option key={option} value={option}>{stageLabel(option)}</option>)}</select></label></div>)}
         {!column.length && <p className="pipeline-empty">{dragId ? 'Drop here' : needle ? 'No match' : 'Nobody yet'}</p>}</div>
       </section>;
     })}</div>}
-    <p className="pipeline-footnote">Drag a card to change its stage, or open a person to change it there. Deal value is tracked per company.</p>
+    <p className="pipeline-footnote"><span className="on-wide">Drag a card to change its stage, or open a person to change it there.</span><span className="on-phone">Pick a stage above to see who is in it. Use Move to on a card to change its stage.</span> Deal value is tracked per company.</p>
     {lostDraft && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setLostDraft(null); }}>
       <form className="lost-dialog" role="dialog" aria-modal="true" aria-labelledby="lost-dialog-title" onSubmit={(event) => { event.preventDefault(); const draft = lostDraft; setLostDraft(null); void move(draft.person, 'lost', draft.reason.trim()); }}>
         <h2 id="lost-dialog-title">Mark {lostDraft.person.name} as lost</h2>

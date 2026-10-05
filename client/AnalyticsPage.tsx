@@ -43,7 +43,7 @@ function ActivityChart({ data, metric = 'people' }: { data: AnalyticsData; metri
 
 function RecentPeople({ data }: { data: AnalyticsData }) {
   return <div className="analytics-table-wrap"><table className="analytics-table"><thead><tr><th>Person</th><th>Company</th><th>Stage</th><th>Last conversation</th></tr></thead><tbody>
-    {data.recent.map((person) => <tr key={person.id}><td><Link to={`/people/${person.id}`}><span className="record-monogram">{person.name.split(' ').map((part) => part[0]).slice(0,2).join('')}</span>{person.name}<ArrowUpRight size={13} /></Link></td><td>{person.company}</td><td><span className={`analytics-stage stage-${person.stage}`}><i />{label(person.stage)}</span></td><td>{new Date(person.lastEncounter).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: data.period.timeZone })}</td></tr>)}
+    {data.recent.map((person) => <tr key={person.id}><td><Link to={`/people/${person.id}`}><span className="record-monogram">{person.name.split(' ').map((part) => part[0]).slice(0,2).join('')}</span>{person.name}<ArrowUpRight size={13} /></Link><small className="analytics-row-company">{person.company}</small></td><td>{person.company}</td><td><span className={`analytics-stage stage-${person.stage}`}><i />{label(person.stage)}</span></td><td>{new Date(person.lastEncounter).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: data.period.timeZone })}</td></tr>)}
     {!data.recent.length && <tr><td colSpan={4} className="analytics-empty">No conversations in this period. Try another date range or scan your next card.</td></tr>}
   </tbody></table></div>;
 }
