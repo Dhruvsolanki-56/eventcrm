@@ -393,6 +393,8 @@ test('voice storage quota rejects a bounded upload before it is kept', async ({ 
   try {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
+  // Sign-in must finish first: an unsigned request is refused before its body is read, which the dev proxy reports as a 502.
+  await expect(page.getByRole('heading', { name: /^Scan cards$/ })).toBeVisible();
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
   const audio = Buffer.alloc(12 * 1024 * 1024);
   audio.set([0x1a, 0x45, 0xdf, 0xa3]);

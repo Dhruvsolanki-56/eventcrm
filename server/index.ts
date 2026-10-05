@@ -268,7 +268,7 @@ function accountMailReady() {
 async function workspaceMailSender(workspaceId: string) {
   const configured = await (getWorkspaceEmailSettingsForWorker(workspaceId));
   const fromAddress = configured?.fromAddress ?? process.env.SMTP_FROM_ADDRESS?.trim();
-  const fromName = configured?.fromName ?? process.env.SMTP_FROM_NAME?.trim() ?? 'Gather';
+  const fromName = configured?.fromName ?? process.env.SMTP_FROM_NAME?.trim() ?? 'Encore';
   if (!leadMailTransportReady() || !fromAddress || !z.email().safeParse(fromAddress).success || !fromName || /[\r\n]/.test(fromName)) return null;
   return { fromAddress, fromName: fromName.slice(0, 100) };
 }
@@ -514,7 +514,7 @@ app.get('/api/onboarding', requireContext, async (_req, res) => {
     canTestEmail: workspace.kind === 'personal' || workspace.role === 'admin',
     mailReady,
     senderAddress: sender?.fromAddress ?? null,
-    senderName: sender?.fromName ?? process.env.SMTP_FROM_NAME?.trim() ?? 'Gather',
+    senderName: sender?.fromName ?? process.env.SMTP_FROM_NAME?.trim() ?? 'Encore',
     accountEmail: actor.email,
     demoEmailAddress: isProduction ? null : process.env.DEMO_EMAIL_ADDRESS?.trim() || 'dhruvtube11@gmail.com',
   });
@@ -542,8 +542,8 @@ app.post('/api/onboarding/test-email', emailTestLimiter, requireContext, async (
   if (process.env.EMAIL_TRANSPORT === 'resend') {
     try {
       await sendResendEmail({ id: randomUUID(), fromAddress: sender.fromAddress, fromName: sender.fromName,
-        to: recipient, subject: 'Gather test email',
-        text: `This test message was requested from the Gather setup screen for ${workspace.name}. The provider accepted it; that does not confirm inbox delivery.` });
+        to: recipient, subject: 'Encore test email',
+        text: `This test message was requested from the Encore setup screen for ${workspace.name}. The provider accepted it; that does not confirm inbox delivery.` });
       return res.json({ status: 'sent_to_server', message: `The email provider accepted a test message for ${recipient}. Inbox delivery is not confirmed.` });
     } catch {
       return res.status(502).json({ code: 'email_test_failed', message: 'The email provider did not accept the test message. Check its key and verified sender.' });
@@ -562,8 +562,8 @@ app.post('/api/onboarding/test-email', emailTestLimiter, requireContext, async (
     const result = await transport.sendMail({
       from: { name: sender.fromName, address: sender.fromAddress },
       to: recipient,
-      subject: 'Gather test email',
-      text: `This test message was requested from the Gather setup screen for ${workspace.name}. The mail server accepted it; that does not confirm inbox delivery.`,
+      subject: 'Encore test email',
+      text: `This test message was requested from the Encore setup screen for ${workspace.name}. The mail server accepted it; that does not confirm inbox delivery.`,
     });
     if (!result.accepted?.some((address) => address.toLowerCase() === recipient.toLowerCase())) throw new Error('recipient_not_accepted');
     res.json({ status: 'sent_to_server', message: `The mail server accepted a test message for ${recipient}. Inbox delivery is not confirmed.` });
@@ -1121,14 +1121,14 @@ app.get('/unsubscribe/:token', (req, res) => {
   const token = z.string().regex(/^[A-Za-z0-9_-]{40,60}$/).safeParse(req.params.token);
   if (!token.success) return res.status(404).type('text').send('This unsubscribe link is not available.');
   res.setHeader('Cache-Control', 'no-store');
-  res.type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Email preferences</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:1.5rem;color:#1b1a17"><h1>Stop follow-up emails?</h1><p>Confirm to stop Gather follow-up email for this address. This does not delete your saved event notes.</p><form method="post" action="/unsubscribe/${token.data}"><button style="padding:.8rem 1.2rem;background:#2447d6;color:#fff;border:0;border-radius:.5rem;font:inherit;cursor:pointer">Unsubscribe</button></form></body></html>`);
+  res.type('html').send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Email preferences</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:1.5rem;color:#1b1a17"><h1>Stop follow-up emails?</h1><p>Confirm to stop Encore follow-up email for this address. This does not delete your saved event notes.</p><form method="post" action="/unsubscribe/${token.data}"><button style="padding:.8rem 1.2rem;background:#2447d6;color:#fff;border:0;border-radius:.5rem;font:inherit;cursor:pointer">Unsubscribe</button></form></body></html>`);
 });
 
 app.post(['/unsubscribe/:token', '/api/unsubscribe/:token'], async (req, res) => {
   const token = z.string().regex(/^[A-Za-z0-9_-]{40,60}$/).safeParse(req.params.token);
   if (!token.success || !await (unsubscribeByToken(token.data))) return res.status(404).type('text').send('This email preference link has expired.');
   res.setHeader('Cache-Control', 'no-store');
-  res.type('html').send('<!doctype html><html lang="en"><meta charset="utf-8"><title>Preference saved</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:1.5rem;color:#1b1a17"><h1>You are unsubscribed.</h1><p>Gather will not send further follow-up email to this address.</p></body></html>');
+  res.type('html').send('<!doctype html><html lang="en"><meta charset="utf-8"><title>Preference saved</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:1.5rem;color:#1b1a17"><h1>You are unsubscribed.</h1><p>Encore will not send further follow-up email to this address.</p></body></html>');
 });
 
 app.patch('/api/contacts/:contactId/stage', requireContext, async (req, res) => {
@@ -1514,7 +1514,7 @@ app.post('/api/scans', scanLimiter, requireContext, express.raw({ type: ['image/
       await unlink(imagePath).catch(() => undefined);
       const raced = await (findScanByClientId(actor.id, workspace.id, clientScanParsed.data));
       if (raced) return res.status(200).json({ scan: publicScan(raced), duplicate: true });
-      if (error instanceof Error && error.message === 'scan_storage_limit') return res.status(413).json({ code: 'scan_storage_limit', message: 'This workspace or Gather server has reached its photo storage limit. Remove old scans or ask your admin for help.' });
+      if (error instanceof Error && error.message === 'scan_storage_limit') return res.status(413).json({ code: 'scan_storage_limit', message: 'This workspace or Encore server has reached its photo storage limit. Remove old scans or ask your admin for help.' });
       throw error;
     }
   } catch (error) { next(error); }

@@ -14,6 +14,11 @@ async function distinctCard(page: Page, marker: number) {
     context.fillRect(0, 0, canvas.width, 80);
     context.fillStyle = '#fff'; context.font = 'bold 30px sans-serif';
     context.fillText(`Lifecycle fixture ${marker}`, 20, 50);
+    // Duplicate detection compares the whole picture, so each marker gets its own large pattern, not just a small band.
+    for (let row = 0; row < 6; row++) {
+      context.fillStyle = `rgb(${(marker * 47 + row * 61) % 255},${(marker * 29 + row * 97) % 255},${(marker * 113 + row * 41) % 255})`;
+      context.fillRect(((marker * 37 + row * 83) % (canvas.width - 160)), 110 + row * 40, 160, 28);
+    }
     const blob = await new Promise<Blob>((resolve) => canvas.toBlob((value) => resolve(value!), 'image/png'));
     return btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())));
   }, { image, marker });
@@ -70,7 +75,7 @@ test('a scanned demo card can be reviewed, saved, and emailed after explicit app
   await page.getByRole('button', { name: 'Save & prepare email' }).click();
 
   const composer = page.locator('.email-compose');
-  await expect(composer.getByLabel('Subject')).toHaveValue(/Following up/);
+  await expect(composer.getByLabel('Subject')).toHaveValue(/Great to meet you at|Following up/);
   await expect(composer.getByRole('textbox', { name: 'Message' })).toHaveValue(/Hi Demo,[\s\S]*What would be most useful for me to send you next\?/);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -161,6 +166,15 @@ test('the edited email draft is what the configured mail server accepts', async 
   const normalizedMessage = acceptedMessage.replace(/=\r\n/g, '').replace(/\r\n/g, '\n');
   expect(normalizedMessage).toContain(body);
   expect(acceptedMessage).toContain('List-Unsubscribe:');
+  // Once an email is sent, its unsubscribe token is no longer kept in the job record; the link itself still works.
+  const sentToken = normalizedMessage.match(/List-Unsubscribe:\s*<[^>]*\/unsubscribe\/([A-Za-z0-9_-]+)>/i)?.[1];
+  expect(sentToken).toBeTruthy();
+  const jobsDatabase = new Database(resolve(process.env.DATABASE_PATH!), { readonly: true });
+  try {
+    await expect.poll(() => (jobsDatabase.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE type='email_send' AND status='succeeded' AND instr(payload_json, '"unsubscribeToken":""') > 0`).get() as { n: number }).n).toBeGreaterThan(0);
+    expect((jobsDatabase.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE instr(payload_json, ?) > 0`).get(sentToken) as { n: number }).n).toBe(0);
+  } finally { jobsDatabase.close(); }
+  expect((await page.request.get(`/unsubscribe/${sentToken}`)).status()).toBe(200);
   expect(await page.locator('.email-state').innerText()).toContain('does not confirm inbox delivery');
 });
 
@@ -209,7 +223,7 @@ test('setup test email goes only to the signed-in user and reports mail-server a
   await page.getByRole('button', { name: 'Send me a test email' }).click();
   expect((await response).status()).toBe(200);
   await expect(page.getByRole('status').filter({ hasText: 'The mail server accepted a test message for maya@gather.test' })).toBeVisible();
-  await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain('Gather test email');
+  await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain('Encore test email');
   const captured = readFileSync(capturePath!, 'utf8').replace(/=\r?\n/g, '').replace(/=3D/gi, '=');
   expect(captured.toLowerCase()).toContain('to: maya@gather.test');
   expect(captured).toContain('The mail server accepted it; that does not confirm inbox delivery.');
@@ -277,7 +291,7 @@ test('Email now from Save & scan next sends only after approval and returns to c
   await expect(page.getByRole('button', { name: 'Email now' })).toBeVisible();
   await page.getByRole('button', { name: 'Email now' }).click();
   const dialog = page.getByRole('dialog', { name: 'Email this person' });
-  await expect(dialog.getByLabel('Subject')).toHaveValue(/Following up/);
+  await expect(dialog.getByLabel('Subject')).toHaveValue(/Great to meet you at|Following up/);
   const subject = `Approved toast follow-up ${unique}`;
   await dialog.getByLabel('Subject').fill(subject);
   await dialog.getByRole('textbox', { name: 'Message' }).fill('This was approved from the optional Email now toast.');
@@ -303,7 +317,7 @@ test('password reset uses a one-time link, changes the credential, and revokes o
     await recoveryPage.getByLabel('Email').fill('maya@gather.test');
     await recoveryPage.getByRole('button', { name: 'Request a reset link' }).click();
     await expect(recoveryPage.getByRole('status')).toContainText('Mail-server acceptance does not confirm inbox delivery');
-    await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain('Reset your Gather password');
+    await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain('Reset your Encore password');
     const message = readFileSync(capturePath!, 'utf8').replace(/=\r?\n/g, '').replace(/=3D/gi, '=');
     const resetUrl = message.match(/http:\/\/127\.0\.0\.1:\d+\/reset-password#reset=[A-Za-z0-9_-]{40,100}/)?.[0];
     expect(resetUrl, 'reset mail includes a fragment token without putting it in a request URL').toBeTruthy();
@@ -466,7 +480,7 @@ test('new accounts cannot sign in before email verification and receive a one-ti
     await page.getByRole('button', { name: 'Resend verification email' }).click();
     await expect(page.getByRole('status')).toContainText('If the account still needs verification');
 
-    await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain('Verify your Gather email');
+    await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain('Verify your Encore email');
     const message = readFileSync(capturePath!, 'utf8').replace(/=\r?\n/g, '').replace(/=3D/gi, '=');
     const verifyUrl = message.match(/http:\/\/127\.0\.0\.1:\d+\/verify-email#verify=[A-Za-z0-9_-]{40,100}/)?.[0];
     expect(verifyUrl, 'verification email contains a one-time fragment link').toBeTruthy();
@@ -533,12 +547,12 @@ test('daily digest includes due follow-ups and reports mail-server acceptance on
     return run ? `${run.status}:${Boolean(run.sent_to_server_at)}` : '';
   }, { timeout: 15_000 }).toBe('sent_to_server:true');
 
-  const subject = `Your Gather follow-ups for ${today}`;
+  const subject = `Your Encore follow-ups for ${today}`;
   await expect.poll(() => existsSync(capturePath!) ? readFileSync(capturePath!, 'utf8') : '', { timeout: 10_000 }).toContain(subject);
   const message = readFileSync(capturePath!, 'utf8').replace(/=\r?\n/g, '').replace(/=3D/gi, '=');
   expect(message).toContain('June Kim at Bluebird Labs');
   expect(message).toContain('Follow up');
-  expect(message).toContain('Open Gather to review or update each next step.');
+  expect(message).toContain('Open Encore to review or update each next step.');
   expect(message).not.toContain('inbox delivery is confirmed');
 
   await page.reload();

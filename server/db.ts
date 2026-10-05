@@ -1154,8 +1154,8 @@ export async function getDailyDigestForWorker(workspaceId: string, userId: strin
   return {
     recipient: user.email,
     senderName: user.name,
-    subject: `Your Gather follow-ups for ${localDate}`,
-    body: rows.length ? [`Here are your open follow-ups in ${workspace.name}:`, '', ...rows.map((task) => `• ${task.contact_name} at ${task.company_name} — ${task.title || 'Follow up'}`), '', 'Open Gather to review or update each next step.'].join('\n') : '',
+    subject: `Your Encore follow-ups for ${localDate}`,
+    body: rows.length ? [`Here are your open follow-ups in ${workspace.name}:`, '', ...rows.map((task) => `• ${task.contact_name} at ${task.company_name} — ${task.title || 'Follow up'}`), '', 'Open Encore to review or update each next step.'].join('\n') : '',
     hasTasks: rows.length > 0,
   };
 }
@@ -1718,7 +1718,7 @@ export async function createEmailDraft(actorId: string, workspaceId: string, con
 // the contact's conversation in its payload.
 export async function queueEmailDraftImprovement(workspaceId: string, emailId: string, subject: string, body: string) {
   const originalHash = createHash('sha256').update(`${subject}\u0000${body}`).digest('hex');
-  await db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at,max_attempts) VALUES (?,?, 'email_draft', ?, ?, 1)`)
+  await db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at,max_attempts) VALUES (?,?, 'email_draft', ?, ?, 2)`)
     .run(randomUUID(), workspaceId, JSON.stringify({ emailId, originalHash }), new Date().toISOString());
 }
 
@@ -2228,6 +2228,29 @@ export async function completeJob(jobId: string) {
   await (db.prepare(`UPDATE jobs SET status='succeeded',payload_json=CASE WHEN type IN ('password_reset_email','email_verification') THEN json_set(payload_json,'$.token','') ELSE payload_json END,
     lease_until=NULL,last_error=NULL,finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=? AND status='running'`)
     .run(jobId));
+  await clearSentEmailToken(jobId);
+}
+
+// The unsubscribe link token is only needed while an email is being sent. Afterwards only its hash (on the email) is kept.
+// Plain JSON handling rather than SQL json functions, so it behaves the same on SQLite and Postgres.
+async function clearSentEmailToken(jobId: string) {
+  const row = await (db.prepare(`SELECT payload_json FROM jobs WHERE id=? AND type='email_send' AND status='succeeded'`).get(jobId)) as { payload_json: string } | undefined;
+  if (row) await scrubUnsubscribeToken(jobId, row.payload_json);
+}
+async function scrubUnsubscribeToken(jobId: string, payloadJson: string) {
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    if (!payload.unsubscribeToken) return;
+    await (db.prepare(`UPDATE jobs SET payload_json=? WHERE id=?`).run(JSON.stringify({ ...payload, unsubscribeToken: '' }), jobId));
+  } catch { /* an unreadable payload has nothing to clear */ }
+}
+// Emails sent before this change still hold their token; clear them once, in small batches.
+export async function clearOldSentEmailTokens() {
+  for (let round = 0; round < 200; round++) {
+    const rows = await (db.prepare(`SELECT id,payload_json FROM jobs WHERE type='email_send' AND status='succeeded' AND payload_json LIKE '%"unsubscribeToken":"_%' LIMIT 200`).all()) as Array<{ id: string; payload_json: string }>;
+    if (!rows.length) return;
+    for (const row of rows) await scrubUnsubscribeToken(row.id, row.payload_json);
+  }
 }
 
 export async function failJobAttempt(job: JobRow, message: string) {
