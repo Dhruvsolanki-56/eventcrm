@@ -19,7 +19,7 @@ test('first-time setup saves resumable progress and offers honest no-mail fallba
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.goto('/setup');
-  await expect(page.getByRole('heading', { name: 'Make Gather yours.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible();
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 

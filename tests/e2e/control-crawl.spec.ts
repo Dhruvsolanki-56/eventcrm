@@ -180,7 +180,7 @@ test('click visible buttons and in-app links across company and private routes a
 
   const companyRoutes: CrawlRoute[] = [
     { path: '/home', heading: /Good morning, Maya/ },
-    { path: '/setup', heading: /Make Gather yours/ },
+    { path: '/setup', heading: /Make Encore yours/ },
     { path: '/scan', heading: /^Scan cards$/ },
     { path: '/email', heading: /^Email Desk$/ },
     { path: '/people', heading: /^People$/ },
@@ -197,7 +197,7 @@ test('click visible buttons and in-app links across company and private routes a
   ];
   const attendeeRoutes: CrawlRoute[] = [
     { path: '/home', heading: /Good morning, Sam/ },
-    { path: '/setup', heading: /Make Gather yours/ },
+    { path: '/setup', heading: /Make Encore yours/ },
     { path: '/scan', heading: /^Scan cards$/ },
     { path: '/email', heading: /^Email Desk$/ },
     { path: '/people', heading: /^People$/ },

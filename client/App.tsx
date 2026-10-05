@@ -11,6 +11,7 @@ import { DictateButton, NoteChips } from './quick-capture-ui.js';
 import { CompanyAbout } from './company-about.js';
 import { QuickEvent } from './quick-event.js';
 import { WhenVisible } from './when-visible.js';
+import { BrandMark } from './brand.js';
 import { InstallPrompt } from './install-app.js';
 import { cacheSession, clearCachedSession, readCachedSession } from './offline-session.js';
 import { isOfflineError, listQueuedPhotos, removeQueuedPhoto, saveQueuedPhoto } from './offline-queue.js';
@@ -28,7 +29,7 @@ const OverviewActivity = lazy(() => import('./AnalyticsPage.js').then((module) =
 const TOUR_STEPS = [
   { title: 'Capture one card at a time.', body: 'Take a picture or choose a card photo. Upload starts reading right away, while you can keep adding the next card.' },
   { title: 'Check every detail.', body: 'Open one ready card, correct the name and contact details, and confirm the company before saving.' },
-  { title: 'Keep the useful context.', body: 'Add a short note, products of interest, or a voice recording. Gather never invents a transcript.' },
+  { title: 'Keep the useful context.', body: 'Add a short note, products of interest, or a voice recording. Encore never invents a transcript.' },
   { title: 'Choose what happens next.', body: 'Save the person, optionally review a suggested email, and press Send only when you approve it.' },
   { title: 'Make a clear next step.', body: 'Choose a follow-up date or meeting. You can change, snooze, complete, or cancel it later.' },
   { title: 'Keep each space separate.', body: 'Company leads stay with the company team. Your private attendee space is visible only to you.' },
@@ -283,10 +284,10 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
 
   return <main className="auth-page">
     <section className="auth-panel">
-      <div className="brand-lockup"><span className="brand-mark">G</span><span>Gather</span></div>
+      <div className="brand-lockup"><BrandMark /><span>Encore</span></div>
       <div className="auth-intro">
         
-        <h1>{recoveryMode === 'reset' ? 'Choose a new password.' : recoveryMode === 'verify' ? 'Verify your email.' : recoveryMode === 'request' ? 'Get back into Gather.' : mode === 'signin' ? 'Good to see you.' : 'Start with one good conversation.'}</h1>
+        <h1>{recoveryMode === 'reset' ? 'Choose a new password.' : recoveryMode === 'verify' ? 'Verify your email.' : recoveryMode === 'request' ? 'Get back into Encore.' : mode === 'signin' ? 'Good to see you.' : 'Start with one good conversation.'}</h1>
         <p>{recoveryMode ? 'Use a one-time link sent to your account email.' : 'Capture the conversation, review the details, and prepare a personal email.'}</p>
       </div>
       {recoveryMode === 'request' ? <form className="stack-form" onSubmit={requestPasswordReset}>
@@ -301,7 +302,7 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
         {resetToken && <button className="button primary full" disabled={busy}>{busy ? 'Updating…' : 'Update password'}</button>}
         <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode('request'); setError(''); }}>Request another link</button></p>
       </form> : recoveryMode === 'verify' ? <div className="stack-form">
-        {verificationToken ? <p>Verify your email to finish setting up your Gather space.</p> : <p className="form-error" role="alert">This verification link is missing or expired. Ask for another one.</p>}
+        {verificationToken ? <p>Verify your email to finish setting up your Encore space.</p> : <p className="form-error" role="alert">This verification link is missing or expired. Ask for another one.</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
         {verificationToken && <button className="button primary full" type="button" disabled={busy} onClick={() => void verifyEmail()}>{busy ? 'Verifying…' : 'Verify email'}</button>}
         <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode(null); setMode('signin'); }}>Back to sign in</button></p>
@@ -312,7 +313,7 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="button primary full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
         <p className="switch-copy"><button className="text-button" type="button" onClick={() => { setRecoveryMode('request'); setError(''); setRecoveryMessage(''); }}>Forgot password?</button></p>
-        <p className="switch-copy">New to Gather? <button className="text-button" type="button" onClick={() => { setMode('signup'); setError(''); }}>Create an account</button></p>
+        <p className="switch-copy">New to Encore? <button className="text-button" type="button" onClick={() => { setMode('signup'); setError(''); }}>Create an account</button></p>
       </form> : <form key="sign-up" className="stack-form" onSubmit={signUp}>
         <label>Your name<input name="name" autoComplete="name" required maxLength={100} /></label>
         <label>Email<input name="email" type="email" autoComplete="email" required /></label>
@@ -344,7 +345,7 @@ function AuthScreen({ onSignedIn, onCsrf, onPasswordReset }: { onSignedIn: (pref
         <p>Keep the card and conversation together, then review a draft before anything goes out.</p>
         <div className="aside-flow"><span>Capture</span><i></i><span>Review</span><i></i><span>Draft email</span></div>
       </div>
-      <span className="aside-wordmark">Gather CRM</span>
+      <span className="aside-wordmark">Encore · event CRM</span>
     </aside>
   </main>;
 }
@@ -392,7 +393,7 @@ function WorkspaceShell() {
 
   return <div className={`app-frame${location.pathname.startsWith('/review/') ? ' review-mode' : ''}`}>
     <aside className={`sidebar ${mobileMenu ? 'mobile-open' : ''}`}>
-      <Link to="/home" className="brand-lockup"><span className="brand-mark">G</span><span>Gather</span></Link>
+      <Link to="/home" className="brand-lockup"><BrandMark /><span>Encore</span></Link>
       <Link to="/scan" className="button primary scan-sidebar"><ScanLine size={18} /> Scan a card</Link>
       <div className="mode-strip"><span className="mode-indicator"><Building2 size={15} /></span><div><small>{company ? `Company: ${workspace.name}` : 'Private space'}</small><strong>{company ? (workspaceData?.event?.name ?? 'Choose an event') : 'Only you can see this'}</strong></div></div>
       <nav className="main-nav" aria-label="Main navigation">
@@ -421,7 +422,7 @@ function WorkspaceShell() {
     <div className="app-main">
       <header className="topbar">
         <button className="mobile-menu-button" aria-label={mobileMenu ? 'Close navigation' : 'Open navigation'} onClick={() => setMobileMenu((open) => !open)}>{mobileMenu ? <X size={20} /> : <Menu size={20} />}</button>
-        <div className="mobile-brand"><span className="brand-mark mini">G</span>Gather</div>
+        <div className="mobile-brand"><BrandMark size={24} />Encore</div>
         <div className="topbar-mode"><span className="mode-dot"></span><span className="topbar-workspace-name">{workspace.name}</span><span className="topbar-separator">/</span><strong>{links.find((link) => location.pathname === link.to || (link.to !== '/home' && location.pathname.startsWith(`${link.to}/`)))?.label ?? (location.pathname.startsWith('/review/') ? 'Review' : 'Workspace')}</strong></div>
         {workspaceData?.sampleData && <span className="sample-badge">Sample data</span>}
         <span className="topbar-event">{workspaceData?.event?.name ?? 'No active event'}</span>
@@ -450,7 +451,7 @@ function WorkspaceShell() {
       </main>
     </div>
     <nav className="phone-tabs" aria-label="Phone navigation">{['/home','/email','/scan','/people','/follow-ups'].map((path) => links.find((link) => link.to === path)!).map(({ to, label, icon: Icon }) => <NavLink key={to} to={to} className={({ isActive }) => `phone-tab${to === '/scan' ? ' phone-capture' : ''}${isActive ? ' active' : ''}`}><Icon size={19} /><span>{to === '/email' ? 'Email' : label}</span></NavLink>)}</nav>
-    {helpOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHelpOpen(false); }}><section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close help" onClick={() => setHelpOpen(false)}><X size={19} /></button><h2 id="help-dialog-title">Help</h2><p>Short answers to the words you see in Gather.</p><dl className="help-terms"><div><dt>Scan</dt><dd>Choose a photo or take one; reading starts when it uploads.</dd></div><div><dt>Company and person</dt><dd>One company can have many people. Each person keeps their own conversations.</dd></div><div><dt>Follow-up</dt><dd>A reminder date you choose. Gather does not contact anyone by itself.</dd></div><div><dt>Saved, not sent</dt><dd>Your email is stored as a draft. Copy it or open it in your email app.</dd></div><div><dt>Private space</dt><dd>Only you can see the people and notes saved in your attendee space.</dd></div></dl><div className="help-actions"><button className="button secondary" onClick={() => setHelpOpen(false)}>Close</button><Link className="button primary" to="/scan" onClick={() => setHelpOpen(false)}>Open Capture <ScanLine size={16} /></Link></div></section></div>}
+    {helpOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setHelpOpen(false); }}><section className="help-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close help" onClick={() => setHelpOpen(false)}><X size={19} /></button><h2 id="help-dialog-title">Help</h2><p>Short answers to the words you see in Encore.</p><dl className="help-terms"><div><dt>Scan</dt><dd>Choose a photo or take one; reading starts when it uploads.</dd></div><div><dt>Company and person</dt><dd>One company can have many people. Each person keeps their own conversations.</dd></div><div><dt>Follow-up</dt><dd>A reminder date you choose. Encore does not contact anyone by itself.</dd></div><div><dt>Saved, not sent</dt><dd>Your email is stored as a draft. Copy it or open it in your email app.</dd></div><div><dt>Private space</dt><dd>Only you can see the people and notes saved in your attendee space.</dd></div></dl><div className="help-actions"><button className="button secondary" onClick={() => setHelpOpen(false)}>Close</button><Link className="button primary" to="/scan" onClick={() => setHelpOpen(false)}>Open Capture <ScanLine size={16} /></Link></div></section></div>}
     {tourOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTourOpen(false); }}><section className="help-dialog tour-dialog" role="dialog" aria-modal="true" aria-labelledby="help-dialog-title"><button className="icon-button dialog-close" aria-label="Close tour" onClick={() => setTourOpen(false)}><X size={19} /></button><p className="eyebrow">Step {tourStep + 1} of {TOUR_STEPS.length}</p><h2 id="help-dialog-title">{TOUR_STEPS[tourStep].title}</h2><p>{TOUR_STEPS[tourStep].body}</p><div className="tour-progress" aria-label={`Step ${tourStep + 1} of ${TOUR_STEPS.length}`}>{TOUR_STEPS.map((step, index) => <span key={step.title} className={index <= tourStep ? 'active' : ''} />)}</div><div className="help-actions">{tourStep > 0 && <button className="button secondary" onClick={() => setTourStep((step) => Math.max(0, step - 1))}>Previous</button>}{tourStep < TOUR_STEPS.length - 1 ? <button className="button primary" onClick={() => setTourStep((step) => Math.min(TOUR_STEPS.length - 1, step + 1))}>Next step <ArrowRight size={16} /></button> : <><button className="button secondary" onClick={() => setTourOpen(false)}>Done</button><Link className="button primary" to="/scan" onClick={() => setTourOpen(false)}>Open Scan <ScanLine size={16} /></Link></>}</div></section></div>}
   </div>;
 }

@@ -1,4 +1,4 @@
-/* Gather design system.
+/* Encore design system.
    One file for the shell, shared components and every page. Feature files (email desk,
    onboarding, quick capture, AI motion) only add what is unique to them and use these tokens. */
 
@@ -162,8 +162,8 @@ label { color: var(--ink); }
 .loading-screen { display: grid; min-height: 100vh; place-content: center; justify-items: center; gap: 12px; color: var(--muted); }
 .loading-screen p { margin: 0; }
 .brand-lockup { display: inline-flex; align-items: center; gap: 9px; color: var(--ink); font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
-.brand-mark { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; }
-.brand-mark.mini { width: 24px; height: 24px; font-size: 13px; }
+.brand-mark { display: block; flex: none; border-radius: 7px; box-shadow: 0 1px 2px rgb(22 35 31 / 25%); }
+
 .auth-page { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 100vh; background: var(--surface); }
 .auth-panel { display: flex; flex-direction: column; width: min(100%, 460px); min-height: 100vh; margin: 0 auto; padding: 40px 28px; }
 .auth-intro { margin: 56px 0 24px; }
@@ -497,7 +497,7 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 .pipeline-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-2); }
 .pipeline-column-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .pipeline-column-head h2 { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; font-weight: 600; }
-.pipeline-cards { display: grid; align-content: start; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; padding: 8px; scrollbar-width: thin; }
+.pipeline-cards { display: grid; align-content: start; gap: 6px; flex: 1; min-height: 0; overflow-y: auto; padding: 8px 6px 20px 8px; }
 .pipeline-person { display: grid; gap: 2px; min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); transition: border-color .12s ease, box-shadow .12s ease; }
 .pipeline-person:hover { border-color: var(--line-strong); box-shadow: 0 1px 2px rgb(24 28 33 / 6%); }
 .pipeline-person strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
@@ -578,7 +578,7 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 .person-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; align-items: start; gap: 20px; }
 .person-main { display: grid; gap: 16px; min-width: 0; }
 .person-main > .person-action-row { margin-bottom: 0; }
-.person-aside { position: sticky; top: calc(var(--topbar) + 16px); max-height: calc(100vh - var(--topbar) - 32px); overflow-y: auto; border-radius: var(--radius-lg); scrollbar-width: thin; }
+.person-aside { position: sticky; top: calc(var(--topbar) + 16px); max-height: calc(100vh - var(--topbar) - 32px); overflow-y: auto; border-radius: var(--radius-lg); }
 .person-card { display: grid; gap: 14px; padding: 18px; }
 .person-card > * { margin: 0; }
 .person-card .section-head { align-items: flex-start; }
@@ -1225,3 +1225,26 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .pagination-count { width: 100%; text-align: center; }
   .pagination-pages button { min-width: 40px; height: 40px; }
 }
+
+/* ---------- Scrollbars: a slim rounded pill that stays out of the way ---------- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: rgb(31 35 40 / 16%) padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: rgb(31 35 40 / 32%); }
+::-webkit-scrollbar-button { display: none; }
+@supports not selector(::-webkit-scrollbar) { * { scrollbar-width: thin; scrollbar-color: rgb(31 35 40 / 20%) transparent; } }
+/* Pipeline columns: no bar until you point at a column, then a thin stage-coloured pill; the list fades out at the edge so you can tell there is more. */
+.pipeline-cards { --stage-tint: rgb(31 35 40 / 28%); mask-image: linear-gradient(to bottom, transparent 0, #000 8px, #000 calc(100% - 28px), transparent 100%); }
+.pipeline-cards::-webkit-scrollbar { width: 8px; }
+.pipeline-cards::-webkit-scrollbar-thumb { border-width: 2px; background-color: transparent; transition: background-color .2s; }
+.pipeline-column:hover .pipeline-cards::-webkit-scrollbar-thumb, .pipeline-cards:focus-within::-webkit-scrollbar-thumb { background-color: var(--stage-tint); }
+.pipeline-column.replied .pipeline-cards { --stage-tint: rgb(47 93 80 / 45%); }
+.pipeline-column.meeting .pipeline-cards { --stage-tint: rgb(197 138 28 / 50%); }
+.pipeline-column.won .pipeline-cards { --stage-tint: rgb(47 138 92 / 50%); }
+.pipeline-column.lost .pipeline-cards { --stage-tint: rgb(200 70 50 / 45%); }
+.pipeline-column { border-top: 3px solid var(--line-strong); }
+.pipeline-column.replied { border-top-color: var(--accent); }
+.pipeline-column.meeting { border-top-color: #c58a1c; }
+.pipeline-column.won { border-top-color: #2f8a5c; }
+.pipeline-column.lost { border-top-color: var(--danger); }
+.pipeline-column.contacted { border-top-color: #8a94a3; }

@@ -1,5 +1,5 @@
 /* Gather service worker.
-   It only keeps the app itself (page shell, scripts, styles, icons, OCR files) so Gather can open without a signal.
+   It only keeps the app itself (page shell, scripts, styles, icons, OCR files) so Encore can open without a signal.
    It never stores or answers any /api request, so people always see their real data when online. */
 const SHELL = 'gather-shell-v1';
 const ASSETS = 'gather-assets';
@@ -42,7 +42,7 @@ self.addEventListener('fetch', (event) => {
       } catch {
         const cached = await caches.match('/', { cacheName: SHELL });
         if (cached) return cached;
-        throw new Error('Gather is offline and the app is not saved on this device yet.');
+        throw new Error('Encore is offline and the app is not saved on this device yet.');
       }
     })());
     return;

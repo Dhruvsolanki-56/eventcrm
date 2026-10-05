@@ -123,7 +123,7 @@ function DraftAutomationSettings() {
     } catch (error) { notify((error as Error).message); }
     finally { setSaving(false); }
   }
-  return <Section className="draft-automation-settings" titleId="draft-automation-title" title="Drafts after a conversation" description="Gather can prepare an editable email as soon as you save a conversation. Nothing is sent on its own.">
+  return <Section className="draft-automation-settings" titleId="draft-automation-title" title="Drafts after a conversation" description="Encore can prepare an editable email as soon as you save a conversation. Nothing is sent on its own.">
     {loading ? <p className="task-group-empty">Loading…</p> : <>
       <label className="draft-automation-choice"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft per conversation. People without an email address, or who opted out, get none.</small></span></label>
       <details className="settings-fine-print"><summary>What is sent to AI</summary><p>With AI enabled, relevant contact, company, event and conversation details are sent to the AI provider (Google Gemini, and Groq if it is set up); free-tier content may be used to improve their products. If AI is unavailable, you get a clearly labelled template.</p></details>
@@ -134,7 +134,7 @@ function DraftAutomationSettings() {
 
 function EmailSettingsPanel() {
   const { session, csrfToken } = useWorkspace();
-  const [sender, setSender] = useState({ fromName: 'Gather', fromAddress: session.user.email, testRecipient: session.user.email });
+  const [sender, setSender] = useState({ fromName: 'Encore', fromAddress: session.user.email, testRecipient: session.user.email });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [mailReady, setMailReady] = useState(false);
@@ -282,7 +282,7 @@ function ReminderSettings() {
     finally { setSaving(false); }
   }
   const digestStatus = !latest ? 'No daily digest has run yet.' : latest.status === 'sent_to_server' ? `${statusWords.email.sent} (${latest.local_date} digest)` : latest.status === 'queued' ? `The ${latest.local_date} digest is being prepared.` : latest.status === 'failed' ? `The ${latest.local_date} digest failed. Retry it under Data & activity.` : latest.last_error || 'No email was sent.';
-  return <Section className="reminder-settings" title="Reminders" description="How Gather nudges you when a follow-up is due and nobody has replied.">
+  return <Section className="reminder-settings" title="Reminders" description="How Encore nudges you when a follow-up is due and nobody has replied.">
     {loading ? <p className="task-group-empty">Loading reminder settings…</p> : <form onSubmit={(event) => void submit(event)}>
       <label className="reminder-choice"><input type="checkbox" checked={settings.inAppEnabled} onChange={(event) => { setSettings({ ...settings, inAppEnabled: event.target.checked }); setSaved(false); }} /><span><strong>Show an in-app reminder</strong><small>When an open follow-up is due and no reply is logged.</small></span></label>
       <label className="reminder-choice"><input type="checkbox" checked={settings.dailyDigestEnabled} onChange={(event) => { setSettings({ ...settings, dailyDigestEnabled: event.target.checked }); setSaved(false); }} /><span><strong>Email me a daily digest</strong><small>{emailSending ? 'Sent only after you turn this on.' : 'Mail is not set up, so the digest is marked “not sent” and no email goes out.'}</small></span></label>

@@ -1,6 +1,6 @@
 {
-  "name": "Gather CRM",
-  "short_name": "Gather",
+  "name": "Encore — event CRM",
+  "short_name": "Encore",
   "description": "Capture event leads and follow up with care.",
   "id": "/",
   "start_url": "/scan",

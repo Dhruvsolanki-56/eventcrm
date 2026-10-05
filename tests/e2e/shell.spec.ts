@@ -499,7 +499,7 @@ test('company invite links create scoped team access and removal takes effect im
   await page.getByLabel('Email', { exact: true }).fill(email);
   await page.getByLabel('Password').fill('Gather-Invite-Test-2026!');
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Make Gather yours.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible();
   await page.getByRole('button', { name: 'Skip setup and go to Scan' }).click();
   await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Reports' })).toHaveCount(0);
   await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Settings' })).toHaveCount(0);
@@ -616,7 +616,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.getByLabel('Password').fill('Gather-Capture-Test-2026!');
   await page.getByLabel('Company name').fill(`Capture Workspace ${suffix}`);
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Make Gather yours.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible();
   await page.getByRole('button', { name: 'Skip setup and go to Scan' }).click();
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 

@@ -82,7 +82,7 @@ export default function EmailDeskPage() {
   }
   async function approveDraft() {
     if (!selected || !edit.subject.trim() || !edit.body.trim()) return;
-    if (!await askConfirm({ title: `Approve this email to ${selected.recipient}?`, body: 'If sending is set up, it is queued for the mail server. Otherwise it stays in the outbox. Gather cannot confirm that it reached an inbox.', confirmLabel: 'Approve email' })) return;
+    if (!await askConfirm({ title: `Approve this email to ${selected.recipient}?`, body: 'If sending is set up, it is queued for the mail server. Otherwise it stays in the outbox. Encore cannot confirm that it reached an inbox.', confirmLabel: 'Approve email' })) return;
     setBusy(true); setError('');
     try {
       const result = await request<{ status: 'queued' | 'outbox'; message: string }>(`/api/emails/${selected.id}/send`, { method: 'POST', body: JSON.stringify(edit) }, { csrfToken, workspaceId: session.workspace.id });

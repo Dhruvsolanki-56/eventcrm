@@ -474,7 +474,7 @@ test('new accounts cannot sign in before email verification and receive a one-ti
     await page.goto(verifyUrl!);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.getByRole('button', { name: 'Verify email' }).click();
-    await expect(page.getByRole('heading', { name: 'Make Gather yours.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible();
     await page.setViewportSize({ width: 1440, height: 1000 });
     expect(await (await page.request.get('/api/auth/me')).json()).toMatchObject({ user: { email } });
 

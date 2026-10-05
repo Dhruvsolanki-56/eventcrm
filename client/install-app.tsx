@@ -13,7 +13,7 @@ function dismissedRecently() {
   try { const at = Number(window.localStorage.getItem(DISMISS_KEY)); return at > 0 && Date.now() - at < DISMISS_DAYS * 86_400_000; } catch { return false; }
 }
 
-/** Offers to add Gather to the home screen. Android and desktop Chrome get a real install button; iPhones get the steps. */
+/** Offers to add Encore to the home screen. Android and desktop Chrome get a real install button; iPhones get the steps. */
 export function InstallPrompt() {
   const [event, setEvent] = useState<InstallEvent | null>(null);
   const [hidden, setHidden] = useState(() => installed() || dismissedRecently());
@@ -39,10 +39,10 @@ export function InstallPrompt() {
     if (choice.outcome === 'accepted') setHidden(true); else dismiss();
     setEvent(null);
   }
-  return <aside className="install-prompt" aria-label="Install Gather">
+  return <aside className="install-prompt" aria-label="Install Encore">
     <Download size={19} aria-hidden="true" />
     <div>
-      <strong>Add Gather to your home screen</strong>
+      <strong>Add Encore to your home screen</strong>
       <span>{event ? 'Opens in one tap and keeps photos safe if the signal drops at an event.' : <>Tap <Share size={13} aria-hidden="true" /> Share, then “Add to Home Screen”. It opens in one tap and keeps photos safe if the signal drops.</>}</span>
     </div>
     {event && <button type="button" className="button primary" onClick={() => void install()}>Install</button>}

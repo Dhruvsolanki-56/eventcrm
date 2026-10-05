@@ -8,7 +8,7 @@ import { useWorkspace } from './workspace-context.js';
 import './onboarding.css';
 
 const steps = [
-  { id: 'knowledge', title: 'What you sell', short: 'Tell Gather what matters' },
+  { id: 'knowledge', title: 'What you sell', short: 'Tell Encore what matters' },
   { id: 'email', title: 'Sending email', short: 'Try a message to yourself' },
   { id: 'capture', title: 'Scan your first card', short: 'Capture, review, and save' },
 ] as const;
@@ -34,7 +34,7 @@ export default function OnboardingPage() {
   const [sourceText, setSourceText] = useState('');
   const [suggestingProfile, setSuggestingProfile] = useState(false);
   const [readingSite, setReadingSite] = useState(false);
-  const [emailSettings, setEmailSettings] = useState({ fromName: 'Gather', fromAddress: '' });
+  const [emailSettings, setEmailSettings] = useState({ fromName: 'Encore', fromAddress: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -127,7 +127,7 @@ export default function OnboardingPage() {
     setBusy(true); setError(''); setStatus('');
     try {
       await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'email', value: emailSettings }) }, { csrfToken, workspaceId: session.workspace.id });
-      setStatus('Sender details saved. Gather uses them for this workspace’s lead and reminder email.');
+      setStatus('Sender details saved. Encore uses them for this workspace’s lead and reminder email.');
     } catch (issue) { setError((issue as Error).message); }
     finally { setBusy(false); }
   }
@@ -149,7 +149,7 @@ export default function OnboardingPage() {
   if (!data) return <section className="onboarding-view"><div className="surface-card skeleton-block">Opening your setup…</div></section>;
 
   return <section className="onboarding-view">
-    <div className="onboarding-heading"><h1>Make Gather yours.</h1><p className="page-lede">Three small steps. Skip any of them and come back when you’re ready.</p></div>
+    <div className="onboarding-heading"><h1>Make Encore yours.</h1><p className="page-lede">Three small steps. Skip any of them and come back when you’re ready.</p></div>
     <div className="onboarding-layout">
       <nav className="onboarding-steps" aria-label="Setup steps">
         {steps.map((step, index) => {
@@ -174,7 +174,7 @@ export default function OnboardingPage() {
               <label>What are you looking for?<input value={knowledge.lookingFor ?? ''} onChange={(event) => setKnowledge({ ...knowledge, lookingFor: event.target.value })} maxLength={200} placeholder="One short line" /></label>
               <label>Email signature<textarea rows={2} value={knowledge.signature ?? ''} onChange={(event) => setKnowledge({ ...knowledge, signature: event.target.value })} maxLength={600} placeholder={`Leave blank to sign with ${session.user.name}`} /></label>
             </> : <>
-              <p>Set this up once. Gather uses these checked details to shape editable email drafts.</p>
+              <p>Set this up once. Encore uses these checked details to shape editable email drafts.</p>
               <div className="website-assist"><label>Your company website <span className="optional-label">we read it to fill in the rest</span><input value={knowledge.website ?? ''} onChange={(event) => setKnowledge({ ...knowledge, website: event.target.value })} maxLength={200} inputMode="url" autoCapitalize="none" placeholder="yourcompany.com" /></label><button className="button secondary" type="button" disabled={readingSite || (knowledge.website ?? '').trim().length < 3} onClick={() => void readWebsite()}>{readingSite ? 'Reading your website…' : 'Read my website'}</button></div>
               <details className="setup-assist"><summary>Use website or brochure copy to suggest details</summary><p className="subtle">Paste public business copy. This text is sent to the configured AI provider for suggestions and is not saved. Check its output before saving.</p><label>Business copy<textarea rows={4} maxLength={8000} value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="Paste your About page or brochure text" /></label><button type="button" className="button secondary" disabled={suggestingProfile || sourceText.trim().length < 30} onClick={() => void suggestProfile()}>{suggestingProfile ? 'Suggesting…' : 'Suggest my business details'}</button></details>
               <label>What does your team sell?<textarea rows={4} value={knowledge.whatYouSell ?? ''} onChange={(event) => setKnowledge({ ...knowledge, whatYouSell: event.target.value })} maxLength={500} placeholder="Products, services, or the kind of work you do" /></label>
@@ -184,7 +184,7 @@ export default function OnboardingPage() {
             </>}
             <div className="onboarding-actions"><button className="button primary" type="button" disabled={busy} onClick={() => void saveKnowledge()}>{busy ? 'Saving…' : 'Save and continue'} <ArrowRight size={16} /></button><button className="text-button" type="button" disabled={busy} onClick={() => void skipStep('knowledge')}><SkipForward size={15} /> Skip for now</button></div>
           </div> : <div className="onboarding-form"><p>Your company admin looks after shared product details, so your drafts stay consistent.</p><div className="onboarding-actions"><button className="button secondary" type="button" disabled={busy} onClick={() => void skipStep('knowledge')}>Continue <ArrowRight size={16} /></button></div></div>)}
-          {selected === 'email' && <div className="onboarding-form"><p>Gather can send a one-time test message to <strong>{data.accountEmail}</strong>. It uses your server’s mail settings and does not contact a lead.</p><label>From name<input value={emailSettings.fromName} maxLength={100} onChange={(event) => setEmailSettings({ ...emailSettings, fromName: event.target.value })} /></label><label>From email<input type="email" value={emailSettings.fromAddress} maxLength={254} onChange={(event) => setEmailSettings({ ...emailSettings, fromAddress: event.target.value })} /></label><div className={`onboarding-mail-status${data.mailReady ? ' ready' : ''}`} role="status">{data.mailReady ? 'Mail service is configured. A successful test means the mail server accepted it; it does not confirm inbox delivery.' : 'Mail service is not configured on this server. Your sender details can be saved, but no email will be sent. Drafts can still be copied.'}</div>{status && <p className="form-status" role="status">{status}</p>}{error && <p className="form-error" role="alert">{error}</p>}<div className="onboarding-actions">{data.canTestEmail ? <><button className="button primary" type="button" disabled={busy} onClick={() => void sendTestEmail()}>{busy ? 'Sending…' : 'Send me a test email'} <Mail size={16} /></button><button className="button secondary" type="button" disabled={busy} onClick={() => void saveEmailSettings()}>Save sender details</button></> : <p className="subtle">Your company admin can set and test the shared sending setup.</p>}<button className="text-button" type="button" disabled={busy} onClick={() => void skipStep('email')}><SkipForward size={15} /> Skip for now</button></div></div>}
+          {selected === 'email' && <div className="onboarding-form"><p>Encore can send a one-time test message to <strong>{data.accountEmail}</strong>. It uses your server’s mail settings and does not contact a lead.</p><label>From name<input value={emailSettings.fromName} maxLength={100} onChange={(event) => setEmailSettings({ ...emailSettings, fromName: event.target.value })} /></label><label>From email<input type="email" value={emailSettings.fromAddress} maxLength={254} onChange={(event) => setEmailSettings({ ...emailSettings, fromAddress: event.target.value })} /></label><div className={`onboarding-mail-status${data.mailReady ? ' ready' : ''}`} role="status">{data.mailReady ? 'Mail service is configured. A successful test means the mail server accepted it; it does not confirm inbox delivery.' : 'Mail service is not configured on this server. Your sender details can be saved, but no email will be sent. Drafts can still be copied.'}</div>{status && <p className="form-status" role="status">{status}</p>}{error && <p className="form-error" role="alert">{error}</p>}<div className="onboarding-actions">{data.canTestEmail ? <><button className="button primary" type="button" disabled={busy} onClick={() => void sendTestEmail()}>{busy ? 'Sending…' : 'Send me a test email'} <Mail size={16} /></button><button className="button secondary" type="button" disabled={busy} onClick={() => void saveEmailSettings()}>Save sender details</button></> : <p className="subtle">Your company admin can set and test the shared sending setup.</p>}<button className="text-button" type="button" disabled={busy} onClick={() => void skipStep('email')}><SkipForward size={15} /> Skip for now</button></div></div>}
           {selected === 'capture' && <div className="onboarding-form"><p>Choose a card photo or take one. Reading starts as soon as the upload begins. Review the details before saving the person.</p><div className="onboarding-actions"><Link className="button primary" to="/scan"><ScanLine size={17} /> Scan your first card</Link><button className="text-button" type="button" disabled={busy} onClick={() => void skipStep('capture')}><SkipForward size={15} /> Skip for now</button></div></div>}
         </> : <div className="onboarding-complete"><span className="onboarding-complete-icon"><Check size={23} /></span><h2>You can come back any time.</h2><p>{data.state.skipped.length ? 'Skipped steps are still here if you want to finish them later.' : 'You’re ready to capture the next conversation.'}</p><div className="onboarding-actions"><Link className="button primary" to="/scan"><ScanLine size={17} /> Go to Scan</Link>{data.state.skipped.length > 0 && <button type="button" className="button secondary" onClick={() => setSelected(data.state.skipped[0])}>Review skipped step</button>}</div></div>}
         {error && selected !== 'email' && <p className="form-error" role="alert">{error}</p>}
