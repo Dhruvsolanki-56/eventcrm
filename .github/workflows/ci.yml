@@ -130,8 +130,7 @@ jobs:
           code=$?
           cat e2e.log
           if [ $code -ne 0 ]; then
-            echo "::error title=Postgres run failed::$(grep -v '^{"event"' e2e.log | tail -n 40 | tr '
-' '|' | cut -c1-3500)"
+            echo "::error title=Postgres run failed::$(grep -v '^{"event"' e2e.log | tail -n 40 | tr '\n' '|' | cut -c1-3500)"
           fi
           exit $code
       - uses: actions/upload-artifact@v4
