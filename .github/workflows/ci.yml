@@ -117,6 +117,8 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://postgres:encore@localhost:5432/encore
+      # The throwaway database in this job does not offer TLS; the app requires it unless told otherwise.
+      DATABASE_SSL: disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

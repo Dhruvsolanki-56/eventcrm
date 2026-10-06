@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('conversation and follow-up can be filled with taps instead of typing', async ({ page }) => {
+  test.skip(process.env.E2E_BROWSER === 'webkit', 'Not verified in Safari: the voice button only appears when the browser can record, and the Playwright WebKit build may not. Check it on a real iPhone.');
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.goto('/people/demo-ns-contact-1?newConversation=1');

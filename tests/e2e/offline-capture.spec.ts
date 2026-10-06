@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('a photo taken offline is kept on the phone and uploads once when the connection returns', async ({ page, context }) => {
+  test.skip(process.env.E2E_BROWSER === 'webkit', 'Not verified in Safari: offline emulation behaves differently in the Playwright WebKit build. Check it on a real iPhone.');
   test.setTimeout(90_000);
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();

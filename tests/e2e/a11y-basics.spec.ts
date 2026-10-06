@@ -20,7 +20,7 @@ test('main screens keep unique ids, labelled fields and full-size selects on a p
         unlabeled,
         noAlt: [...document.querySelectorAll('img:not([alt])')].length,
         smallSelects: [...document.querySelectorAll('select')].filter((el) => shown(el) && el.getBoundingClientRect().height < 43).map((el) => el.getAttribute('aria-label') ?? el.outerHTML.slice(0, 60)),
-        sideways: document.documentElement.scrollWidth - window.innerWidth,
+        sideways: Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
         language: document.documentElement.lang,
       };
     });

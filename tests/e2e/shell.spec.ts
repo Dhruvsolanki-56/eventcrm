@@ -304,6 +304,7 @@ test('event-scoped managers cannot change the deal for an inaccessible company',
 });
 
 test('keyboard users can open the camera, take a photo, and reach the review tray', async ({ page }) => {
+  test.skip(process.env.E2E_BROWSER === 'webkit', 'Not verified in Safari: the Playwright WebKit build has no fake camera. Check it on a real iPhone.');
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
@@ -621,7 +622,8 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.getByLabel('Password').fill('Gather-Capture-Test-2026!');
   await page.getByLabel('Company name').fill(`Capture Workspace ${suffix}`);
   await page.getByRole('button', { name: 'Create account' }).click();
-  await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible();
+  try { await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible(); }
+  catch (error) { throw new Error(`${(error as Error).message}\nThe page said: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 500)} (${page.url()})`); }
   await page.getByRole('button', { name: 'Skip setup and go to Scan' }).click();
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
