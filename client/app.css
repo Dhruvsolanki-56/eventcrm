@@ -1364,6 +1364,8 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 
 /* ---------- Scan: the event is part of the capture card; the side column sizes to what it holds ---------- */
 .scan-layout { grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); }
+.scan-layout { align-items: stretch; }
+.scan-layout > .surface-card:first-child { display: flex; flex-direction: column; }
 .scan-side { display: grid; align-content: start; gap: 16px; min-width: 0; }
 .scan-side .tray-card { min-height: 0; }
 .scan-side .tray-empty { min-height: 0; padding: 22px 12px 12px; }
