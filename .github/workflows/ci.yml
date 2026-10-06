@@ -132,6 +132,8 @@ jobs:
           code=$?
           cat e2e.log
           if [ $code -ne 0 ]; then
+            # The server logs the real reason behind every 500; show the distinct ones.
+            echo "::error title=Postgres server errors::$(grep -aE '^[0-9a-f]{8} ' e2e.log | sed -E 's/^[0-9a-f]{8} //' | sort | uniq -c | sort -rn | head -25 | tr '\n' '|' | cut -c1-3800)"
             echo "::error title=Postgres run failed::$(grep -v '^{"event"' e2e.log | tail -n 40 | tr '\n' '|' | cut -c1-3500)"
           fi
           exit $code

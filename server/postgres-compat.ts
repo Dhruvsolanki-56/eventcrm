@@ -137,6 +137,8 @@ export function normalizeSql(sql: string) {
   normalized = normalized.replace(/\bON\s+CONFLICT\s*\(\s*email\s*\)/gi, 'ON CONFLICT (lower(email))');
   normalized = replaceLikeOperator(normalized);
   normalized = normalized.replace(/\bMAX\(\s*(?:voice_note_usage\.)?created_count\s*,\s*excluded\.created_count\s*\)/gi, 'GREATEST(voice_note_usage.created_count, excluded.created_count)');
+  // SQLite's GROUP_CONCAT(x) is string_agg(x, ',') in Postgres.
+  normalized = normalized.replace(/\bGROUP_CONCAT\(\s*(DISTINCT\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s*\)/gi, (_match, distinct: string | undefined, column: string) => `string_agg(${distinct ? 'DISTINCT ' : ''}${column}::text, ',')`);
   if (/\bINSERT\s+OR\s+IGNORE\s+INTO\b/i.test(sql) && !/\bON\s+CONFLICT\b/i.test(normalized)) {
     normalized = normalized.replace(/;?\s*$/, ' ON CONFLICT DO NOTHING');
   }

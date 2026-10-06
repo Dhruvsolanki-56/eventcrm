@@ -625,7 +625,7 @@ export async function listCompanies(actorId: string, workspaceId: string, search
     LEFT JOIN scans material ON material.workspace_id=co.workspace_id AND material.material_company_id=co.id AND material.status='saved'
       AND ((material.event_id IS NULL AND material.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=material.workspace_id AND ea.event_id=material.event_id AND ea.user_id=?))
     WHERE co.workspace_id=? AND co.archived_at IS NULL AND (?='' OR co.name LIKE ? ESCAPE '\\')
-    GROUP BY co.id HAVING people>0 OR materials>0 OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=co.workspace_id AND m.user_id=? AND m.role='admin') ORDER BY people DESC,co.name LIMIT 200`).all(actorId, actorId, actorId, actorId, actorId, actorId, workspaceId, search.trim(), term, actorId)) as Array<Record<string, unknown>>;
+    GROUP BY co.id HAVING COUNT(DISTINCT c.id)>0 OR COUNT(DISTINCT material.id)>0 OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=co.workspace_id AND m.user_id=? AND m.role='admin') ORDER BY people DESC,co.name LIMIT 200`).all(actorId, actorId, actorId, actorId, actorId, actorId, workspaceId, search.trim(), term, actorId)) as Array<Record<string, unknown>>;
 }
 
 export async function suggestCompanies(actorId: string, workspaceId: string, name: string, website: string, email: string) {

@@ -86,6 +86,8 @@ describe('PostgreSQL baseline schema', () => {
       .toBe('INSERT INTO users(email) VALUES ($1) ON CONFLICT (lower(email)) DO UPDATE SET email=excluded.email');
     expect(bindParameters("SELECT name FROM companies WHERE name LIKE ? AND note='LIKE'", ['%acme%']).text)
       .toBe("SELECT name FROM companies WHERE name ILIKE $1 AND note='LIKE'");
+    expect(bindParameters('SELECT GROUP_CONCAT(DISTINCT e.name) AS a, GROUP_CONCAT(p.name) AS b FROM x', []).text)
+      .toBe("SELECT string_agg(DISTINCT e.name::text, ',') AS a, string_agg(p.name::text, ',') AS b FROM x");
     // Postgres rejects an unqualified column on the right of ON CONFLICT DO UPDATE, so the rewrite names the table.
     expect(bindParameters('UPDATE voice_note_usage SET created_count=MAX(created_count,excluded.created_count)', []).text)
       .toBe('UPDATE voice_note_usage SET created_count=GREATEST(voice_note_usage.created_count, excluded.created_count)');
