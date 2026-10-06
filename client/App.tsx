@@ -1599,7 +1599,7 @@ function RecentSaves({ refreshKey }: { refreshKey: number }) {
   useEffect(() => {
     let active = true;
     void request<{ people: PersonRow[] }>('/api/contacts?pageSize=5', {}, { workspaceId: session.workspace.id })
-      .then((result) => { if (active) setPeople(result.people); })
+      .then((result) => { if (active) setPeople(result.people.slice(0, 5)); })
       .catch(() => { if (active) setPeople([]); });
     return () => { active = false; };
   }, [session.workspace.id, refreshKey]);
