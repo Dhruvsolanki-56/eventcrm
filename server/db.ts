@@ -1529,7 +1529,7 @@ export async function addVoiceNote(actorId: string, workspaceId: string, contact
     if (workspaceCreated >= workspaceCountLimit || serviceCreated >= serviceCountLimit) throw new VoiceStorageLimitError(workspaceCreated >= workspaceCountLimit ? 'workspace' : 'service');
     await (db.prepare(`INSERT INTO notes(id,workspace_id,contact_id,encounter_id,created_by,kind,transcript_status,audio_path,audio_mime,duration_seconds,audio_bytes) VALUES (?,?,?,?,?,'audio','manual',?,?,?,?)`)
       .run(id, workspaceId, contactId, encounterId ?? await (noteEncounter(actorId, workspaceId, contactId)), actorId, audioPath, audioMime, durationSeconds, audioBytes));
-    await (db.prepare(`INSERT INTO voice_note_usage(scope_id,created_count) VALUES (?,1) ON CONFLICT(scope_id) DO UPDATE SET created_count=created_count+1`).run(workspaceId));
+    await (db.prepare(`INSERT INTO voice_note_usage(scope_id,created_count) VALUES (?,1) ON CONFLICT(scope_id) DO UPDATE SET created_count=voice_note_usage.created_count+1`).run(workspaceId));
     await (db.prepare(`UPDATE voice_note_usage SET created_count=created_count+1 WHERE scope_id='__service__'`).run());
     await (db.prepare(`UPDATE contacts SET version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=?`).run(workspaceId, contactId));
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id) VALUES (?,?,?,'voice_note_added','contact',?)`).run(randomUUID(), workspaceId, actorId, contactId));
@@ -2893,7 +2893,7 @@ export async function seedDemoData(passwordHash: string) {
       ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,contact_id=excluded.contact_id,encounter_id=excluded.encounter_id,kind='audio',body='',transcript=excluded.transcript,transcript_status='manual',audio_path=excluded.audio_path,audio_mime=excluded.audio_mime,duration_seconds=excluded.duration_seconds`);
     for (const fixture of privateVoiceFixtures) await (saveDemoVoiceNote.run(fixture.id, fixture.workspaceId, fixture.contactId, fixture.encounterId, fixture.transcript, fixture.audioPath, fixture.mimeType, fixture.durationSeconds));
     const seededVoiceCounts = await (db.prepare(`SELECT workspace_id,COUNT(*) AS total FROM notes WHERE kind='audio' GROUP BY workspace_id`).all()) as Array<{ workspace_id: string; total: number }>;
-    const updateVoiceUsage = db.prepare(`INSERT INTO voice_note_usage(scope_id,created_count) VALUES (?,?) ON CONFLICT(scope_id) DO UPDATE SET created_count=MAX(created_count,excluded.created_count)`);
+    const updateVoiceUsage = db.prepare(`INSERT INTO voice_note_usage(scope_id,created_count) VALUES (?,?) ON CONFLICT(scope_id) DO UPDATE SET created_count=MAX(voice_note_usage.created_count,excluded.created_count)`);
     for (const row of seededVoiceCounts) await (updateVoiceUsage.run(row.workspace_id, row.total));
     const serviceVoiceCount = (await (db.prepare(`SELECT COALESCE(SUM(created_count),0) AS total FROM voice_note_usage WHERE scope_id<>'__service__'`).get()) as { total: number }).total;
     await (updateVoiceUsage.run('__service__', serviceVoiceCount));

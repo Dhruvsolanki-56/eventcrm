@@ -136,7 +136,7 @@ export function normalizeSql(sql: string) {
   normalized = normalized.replace(/\s+COLLATE\s+NOCASE\b/gi, '');
   normalized = normalized.replace(/\bON\s+CONFLICT\s*\(\s*email\s*\)/gi, 'ON CONFLICT (lower(email))');
   normalized = replaceLikeOperator(normalized);
-  normalized = normalized.replace(/\bMAX\(\s*created_count\s*,\s*excluded\.created_count\s*\)/gi, 'GREATEST(created_count, excluded.created_count)');
+  normalized = normalized.replace(/\bMAX\(\s*(?:voice_note_usage\.)?created_count\s*,\s*excluded\.created_count\s*\)/gi, 'GREATEST(voice_note_usage.created_count, excluded.created_count)');
   if (/\bINSERT\s+OR\s+IGNORE\s+INTO\b/i.test(sql) && !/\bON\s+CONFLICT\b/i.test(normalized)) {
     normalized = normalized.replace(/;?\s*$/, ' ON CONFLICT DO NOTHING');
   }

@@ -7,7 +7,8 @@ test('several drafts can be prepared at once and reviewed with the keyboard', as
   await page.goto('/email');
   const draftsTab = page.getByRole('button', { name: /^Drafts/ });
   await expect(draftsTab).toBeVisible();
-  const draftCount = async () => Number(((await draftsTab.innerText()).match(/\d+/) ?? ['0'])[0]);
+  // Count from the server: the tab shows its number only after the page has loaded, and a slow machine can read it too early.
+  const draftCount = async () => ((await (await page.request.get('/api/email-desk', { headers: { 'X-Workspace-Id': 'demo-northstar' } })).json()) as { drafts: Array<{ status: string }> }).drafts.filter((draft) => draft.status === 'draft').length;
   const before = await draftCount();
 
   await page.getByRole('button', { name: /^Prepare next/ }).click();
@@ -22,6 +23,7 @@ test('several drafts can be prepared at once and reviewed with the keyboard', as
   await bar.getByRole('button', { name: 'Prepare 2 selected' }).click();
 
   await expect(page.getByText('2 drafts ready to review. Nothing has been sent.')).toBeVisible({ timeout: 30_000 });
+  expect(await draftCount()).toBe(before + 2);
   await expect(page.getByRole('button', { name: /^Drafts/ })).toContainText(String(before + 2));
   await expect(page.locator('.email-desk-row.is-selected')).toHaveCount(1);
 

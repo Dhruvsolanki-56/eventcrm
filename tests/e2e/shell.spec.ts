@@ -616,6 +616,10 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   test.setTimeout(90_000);
   await page.goto('/');
   await page.getByRole('button', { name: /Create an account/ }).click();
+  const failedRequests: string[] = [];
+  const consoleErrors: string[] = [];
+  page.on('requestfailed', (request) => failedRequests.push(`${request.method()} ${request.url().replace(/^https?:\/\/[^/]+/, '')} ${request.failure()?.errorText ?? ''}`));
+  page.on('console', (message) => { if (message.type() === 'error' || message.type() === 'warning') consoleErrors.push(message.text().slice(0, 160)); });
   const suffix = `${Date.now()}`;
   await page.getByLabel('Your name').fill('Capture Tester');
   await page.getByLabel('Email', { exact: true }).fill(`capture-${suffix}@example.test`);
@@ -623,7 +627,7 @@ test('photo upload starts reading immediately, reviews one lead, links repeat pe
   await page.getByLabel('Company name').fill(`Capture Workspace ${suffix}`);
   await page.getByRole('button', { name: 'Create account' }).click();
   try { await expect(page.getByRole('heading', { name: 'Make Encore yours.' })).toBeVisible(); }
-  catch (error) { throw new Error(`${(error as Error).message}\nThe page said: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 500)} (${page.url()})`); }
+  catch (error) { throw new Error(`${(error as Error).message}\nThe page said: ${(await page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 300)} (${page.url()})\nFailed requests: ${JSON.stringify(failedRequests)}\nConsole errors: ${JSON.stringify(consoleErrors.slice(0, 6))}`); }
   await page.getByRole('button', { name: 'Skip setup and go to Scan' }).click();
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
 
