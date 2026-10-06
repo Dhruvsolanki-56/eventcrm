@@ -46,4 +46,4 @@ Frontend target: https://gather-crm-preview.netlify.app
 
 Repository: https://github.com/Dhruvsolanki-56/eventcrm
 
-Publish by pushing the scoped release commits to `codex/gather-crm-demo`, then verify the Netlify published commit and the live interface. Do not redeploy Render for this frontend-only change.
+Publish by pushing the scoped release commits to the deployment branch, then verify the Netlify published commit and the live interface. Do not redeploy Render for this frontend-only change.
