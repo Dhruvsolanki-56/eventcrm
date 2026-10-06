@@ -133,6 +133,7 @@ import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
 import { userMessage } from './safe-failure.js';
+import { checkProductionConfig } from './production-config.js';
 
 type RequestContext = { actor: ActorInfo; workspace: WorkspaceInfo };
 const SESSION_COOKIE = 'gather_session';
@@ -154,6 +155,11 @@ const taskCreationLimit = (() => {
 })();
 const secureCookie = isProduction ? '; Secure' : '';
 const cookieOptions = `Path=/; SameSite=Lax${secureCookie}`;
+
+// A real production server refuses to start with settings that would lose or expose customer data.
+const configReport = checkProductionConfig(process.env);
+for (const warning of configReport.warnings) console.warn(JSON.stringify({ event: 'config_warning', message: warning }));
+if (configReport.errors.length) throw new Error(`This server is not safe to run in production yet:\n - ${configReport.errors.join('\n - ')}`);
 
 await (migrate());
 if (publicDemoMode) {

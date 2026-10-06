@@ -1,0 +1,61 @@
+# Production blueprint for Encore on Render with a managed Postgres database.
+# render.yaml (the demo) is a different service: it has demo mode on and stores data in /tmp. Do not use it for real customers.
+#
+# Before the first deploy, in the Render dashboard set the values marked `sync: false`. They are never stored in git.
+# The server refuses to start if the settings below are unsafe (see server/production-config.ts), and says why in its log.
+#
+# NOT VERIFIED: the Postgres mode has not been run against this blueprint yet. Run the CI job "API checks on Postgres"
+# green first, then deploy to a staging service before pointing real customers at it.
+databases:
+  - name: encore-db
+    plan: basic-256mb
+    region: oregon
+    postgresMajorVersion: '16'
+
+services:
+  - type: web
+    name: encore
+    runtime: node
+    plan: starter            # a disk needs a paid plan
+    region: oregon
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: encore-media
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: encore-db
+          property: connectionString
+      - key: UPLOADS_PATH
+        value: /var/data/uploads
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      - key: ONNXRUNTIME_NODE_INSTALL
+        value: skip
+      # Left unset on purpose: GATHER_DEMO_MODE (it would give everyone a sample-account login) and DEMO_PASSWORD.
+      - key: PUBLIC_BASE_URL    # https://your-domain, no trailing slash
+        sync: false
+      - key: EMAIL_TRANSPORT
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: SMTP_FROM_ADDRESS  # an address on a domain verified with the email provider
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: Encore
+      - key: AI_MODE
+        value: provider
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
