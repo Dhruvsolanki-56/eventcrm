@@ -2010,7 +2010,7 @@ export async function unsubscribeByToken(token: string) {
 
 export async function getDemoAccounts() {
   return await (db.prepare(`
-    SELECT u.id,u.name,u.email,m.role,w.id AS workspaceId,w.name AS workspaceName,w.kind AS workspaceKind
+    SELECT u.id,u.name,u.email,m.role,w.id AS "workspaceId",w.name AS "workspaceName",w.kind AS "workspaceKind"
     FROM users u JOIN memberships m ON m.user_id=u.id JOIN workspaces w ON w.id=m.workspace_id
     WHERE u.email LIKE '%@gather.test' AND m.status='active'
     ORDER BY w.kind,w.name,u.name
