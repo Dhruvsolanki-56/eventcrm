@@ -2214,7 +2214,7 @@ export async function listScans(actorId: string, workspaceId: string, limit = 40
   return await (db.prepare(`SELECT id,client_scan_id,source,image_mime,status,extracted_json,uncertain_json,error_message,contact_id,queued_at,ready_at,saved_at,material_company_id
     FROM scans s WHERE workspace_id=? AND status<>'discarded' AND ((event_id IS NULL AND created_by=?) OR EXISTS (
       SELECT 1 FROM event_access ea WHERE ea.workspace_id=s.workspace_id AND ea.event_id=s.event_id AND ea.user_id=?))
-    ORDER BY COALESCE(client_order,CAST(julianday(queued_at)*864000000 AS INTEGER)) DESC,queued_at DESC LIMIT ?`).all(workspaceId, actorId, actorId, Math.min(Math.max(limit, 1), 100))) as ScanRow[];
+    ORDER BY COALESCE(client_order,0) DESC,queued_at DESC LIMIT ?`).all(workspaceId, actorId, actorId, Math.min(Math.max(limit, 1), 100))) as ScanRow[];
 }
 
 export async function getScan(actorId: string, workspaceId: string, scanId: string) {
