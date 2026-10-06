@@ -17,7 +17,8 @@ export default defineConfig({
   ],
   fullyParallel: false,
   workers: 1,
-  reporter: [['list']],
+  // On GitHub, failures are also reported as annotations on the run, so they can be read without opening the log.
+  reporter: process.env.GITHUB_ACTIONS ? [['list'], ['github']] : [['list']],
   outputDir: process.env.PLAYWRIGHT_OUTPUT_DIR ?? 'test-results',
   timeout: 30_000,
   expect: { timeout: 6_000 },

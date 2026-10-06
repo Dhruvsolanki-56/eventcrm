@@ -124,10 +124,16 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Specs that only use the API and the screens
-        run: >-
-          npm run test:e2e --
-          api-hardening role-refusals security-checks upload-validation
-          double-click-ui response-lost pipeline-drag quick-event setup
+        run: |
+          set +e
+          npm run test:e2e -- api-hardening role-refusals security-checks upload-validation double-click-ui response-lost pipeline-drag quick-event setup > e2e.log 2>&1
+          code=$?
+          cat e2e.log
+          if [ $code -ne 0 ]; then
+            echo "::error title=Postgres run failed::$(grep -v '^{"event"' e2e.log | tail -n 40 | tr '
+' '|' | cut -c1-3500)"
+          fi
+          exit $code
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
