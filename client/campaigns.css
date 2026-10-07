@@ -1,0 +1,24 @@
+.campaigns-page { display: grid; gap: 1rem; }
+.campaign-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.campaign-card { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem 1.5rem; padding: .9rem 1rem; border: 1px solid var(--line, #d9d5c9); border-radius: .6rem; color: inherit; text-decoration: none; background: var(--surface, #fff); }
+.campaign-card:hover { border-color: var(--accent, #2447d6); }
+.campaign-card strong { display: block; }
+.campaign-card small { color: var(--muted, #5d5a52); }
+.campaign-card dl, .campaign-stats { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: 0; }
+.campaign-card dl div, .campaign-stats div { display: grid; }
+.campaign-card dt, .campaign-stats dt { font-size: .75rem; color: var(--muted, #5d5a52); }
+.campaign-card dd, .campaign-stats dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.campaign-form { display: grid; gap: .8rem; padding: 1.1rem; }
+.campaign-form h2 { margin: .25rem 0 0; font-size: 1.05rem; }
+.campaign-form label { display: grid; gap: .25rem; }
+.campaign-form .inline-check { display: inline-flex; align-items: center; gap: .4rem; margin-right: .9rem; }
+.campaign-audience { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: start; }
+.campaign-audience fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .35rem 0; min-width: 12rem; }
+.campaign-audience legend { font-weight: 600; margin-bottom: .3rem; padding: 0; }
+.campaign-preview { display: grid; gap: .2rem; padding: .75rem .9rem; border-radius: .5rem; background: var(--surface-muted, #f4f1e8); }
+.campaign-actions { display: flex; justify-content: flex-end; gap: .6rem; flex-wrap: wrap; }
+.campaign-recipients { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+.campaign-recipients li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; padding: .65rem .8rem; border: 1px solid var(--line, #d9d5c9); border-radius: .5rem; }
+.campaign-recipients li > div { display: grid; min-width: 0; }
+.campaign-recipients small, .campaign-recipients em { color: var(--muted, #5d5a52); overflow-wrap: anywhere; }
+@media (max-width: 640px) { .campaign-audience { display: grid; } }

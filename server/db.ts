@@ -1973,7 +1973,7 @@ export async function listEmailDesk(actorId: string, workspaceId: string) {
     JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
     LEFT JOIN encounters linked ON linked.id=m.encounter_id AND linked.workspace_id=m.workspace_id
     LEFT JOIN events e ON e.id=linked.event_id AND e.workspace_id=linked.workspace_id
-    WHERE m.workspace_id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${emailAccessSql()}
+    WHERE m.workspace_id=? AND m.campaign_id IS NULL AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${emailAccessSql()}
     ORDER BY m.created_at DESC LIMIT 150`).all(actorId, workspaceId, actorId, actorId, actorId) as Array<Record<string, unknown>>;
   const blocked = new Set((await db.prepare(`SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=1`).all(workspaceId) as Array<{ id: string }>).map((row) => row.id));
   const noteAccess = await noteScope(actorId, workspaceId);
@@ -1994,7 +1994,7 @@ export async function listEmailDesk(actorId: string, workspaceId: string) {
   return { drafts, people };
 }
 
-export async function approveEmailDraft(actorId: string, workspaceId: string, emailId: string, smtpReady: boolean, publicBaseUrl: string, sendAt?: Date) {
+export async function approveEmailDraft(actorId: string, workspaceId: string, emailId: string, smtpReady: boolean, publicBaseUrl: string, sendAt?: Date, options: { bulk?: boolean } = {}) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const email = await (db.prepare(`SELECT m.id,m.contact_id,m.subject,m.body,c.email,c.do_not_contact FROM emails m
     JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
@@ -2012,7 +2012,8 @@ export async function approveEmailDraft(actorId: string, workspaceId: string, em
   const runAt = (sendAt ?? new Date()).toISOString();
   const later = Boolean(sendAt) && sendAt!.getTime() > Date.now() + 30_000;
   await (db.transaction(async () => {
-    await (recordEmailSendAllowance(actorId, workspaceId));
+    // A group send is paced by its own daily limit and staggered times instead of the hourly limit for single emails.
+    if (!options.bulk) await (recordEmailSendAllowance(actorId, workspaceId));
     const changed = await (db.prepare(`UPDATE emails SET status='queued',approved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),unsubscribe_token_hash=?,send_at=? WHERE workspace_id=? AND id=? AND status='draft'`)
       .run(hash(token), later ? runAt : null, workspaceId, emailId));
     if (!changed.changes) throw new Error('This draft was already approved or changed.');

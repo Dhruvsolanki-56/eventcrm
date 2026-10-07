@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { createTransport } from 'nodemailer';
 import { leadMailTransportReady, sendResendEmail } from './resend-email.js';
 import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetConfirmSchema, PasswordResetRequestSchema, SaveLeadSchema, SignupSchema, SessionSchema, WebsiteSchema } from '../shared/contracts.js';
+import { approveCampaign, cancelCampaign, CampaignLimitError, createCampaign, getCampaign, listCampaigns, previewAudience, removeCampaignRecipient, updateCampaignTemplate } from './campaigns.js';
 import { parseSendSchedule, resolveSendAt } from '../shared/send-schedule.js';
 import {
   AccessDeniedError,
@@ -305,6 +306,14 @@ const dealWriteLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (_req, res) => (res.locals.context as RequestContext | undefined)?.actor.id ?? 'unauthenticated',
   message: { code: 'deal_rate_limit', message: 'Too many deal changes. Wait a few minutes and try again.' },
+});
+const campaignLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  limit: isProduction ? 120 : 5000,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: (_req, res) => (res.locals.context as RequestContext | undefined)?.actor.id ?? 'unauthenticated',
+  message: { code: 'campaign_rate_limit', message: 'Too many group email actions. Wait a few minutes and try again.' },
 });
 
 function makeToken() { return randomBytes(32).toString('base64url'); }
@@ -1190,6 +1199,92 @@ app.post('/api/emails/:emailId/cancel-schedule', requireContext, async (req, res
   const id = z.string().uuid().safeParse(req.params.emailId);
   if (!id.success || !await (cancelScheduledEmail(actor.id, workspace.id, id.data))) return res.status(409).json({ code: 'email_not_scheduled', message: 'This email is not waiting for a scheduled time, or it has already gone out.' });
   res.json({ status: 'draft', message: 'Scheduling cancelled. The email is back in drafts.' });
+});
+
+const audienceSchema = z.object({
+  eventId: z.string().min(1).max(80).optional(),
+  stages: z.array(z.enum(['new', 'contacted', 'replied', 'meeting', 'won', 'lost'])).max(6).optional(),
+  quality: z.array(z.enum(['hot', 'warm', 'cold'])).max(3).optional(),
+  companyId: z.string().min(1).max(80).optional(),
+  contactIds: z.array(z.string().min(1).max(80)).max(500).optional(),
+}).strict();
+
+function campaignFailure(res: express.Response, error: unknown, fallback: string) {
+  if (error instanceof CampaignLimitError) { res.setHeader('Retry-After', String(error.retryAfterSeconds)); return res.status(429).json({ code: 'campaign_limit', message: error.message }); }
+  if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
+  return res.status(409).json({ code: 'campaign_not_saved', message: userMessage(error, fallback) });
+}
+
+app.get('/api/campaigns', requireContext, async (_req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  try { res.json({ campaigns: await listCampaigns(actor.id, workspace.id) }); } catch (error) { campaignFailure(res, error, 'Campaigns could not be loaded.'); }
+});
+
+app.post('/api/campaigns/preview', requireContext, campaignLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const parsed = audienceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ code: 'invalid_audience', message: 'Check the group you chose and try again.' });
+  try { res.json(await previewAudience(actor.id, workspace.id, parsed.data)); } catch (error) { campaignFailure(res, error, 'The group could not be previewed.'); }
+});
+
+app.post('/api/campaigns', requireContext, campaignLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const parsed = z.object({ clientCampaignId: z.string().uuid(), name: z.string().trim().min(1).max(120), subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(8000), audience: audienceSchema }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ code: 'invalid_campaign', message: 'Add a name, subject and message, and choose who it is for.' });
+  try { const made = await createCampaign(actor.id, workspace.id, parsed.data); res.status(made.duplicate ? 200 : 201).json(made); } catch (error) { campaignFailure(res, error, 'The campaign could not be created.'); }
+});
+
+app.get('/api/campaigns/:campaignId', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.campaignId);
+  if (!id.success) return res.status(404).json({ code: 'campaign_missing', message: 'This campaign is not available.' });
+  try {
+    const found = await getCampaign(actor.id, workspace.id, id.data);
+    if (!found) return res.status(404).json({ code: 'campaign_missing', message: 'This campaign is not available.' });
+    res.setHeader('Cache-Control', 'no-store'); res.json(found);
+  } catch (error) { campaignFailure(res, error, 'The campaign could not be loaded.'); }
+});
+
+app.put('/api/campaigns/:campaignId', requireContext, campaignLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.campaignId);
+  const parsed = z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(8000) }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_campaign', message: 'Add a subject and message.' });
+  try { res.json({ updated: await updateCampaignTemplate(actor.id, workspace.id, id.data, parsed.data.subject, parsed.data.body) }); } catch (error) { campaignFailure(res, error, 'The campaign could not be updated.'); }
+});
+
+app.delete('/api/campaigns/:campaignId/recipients/:emailId', requireContext, campaignLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.campaignId), emailId = z.string().uuid().safeParse(req.params.emailId);
+  if (!id.success || !emailId.success) return res.status(404).json({ code: 'campaign_missing', message: 'This recipient is not available.' });
+  try {
+    if (!await removeCampaignRecipient(actor.id, workspace.id, id.data, emailId.data)) return res.status(409).json({ code: 'recipient_locked', message: 'This recipient has already been approved.' });
+    res.json({ removed: true });
+  } catch (error) { campaignFailure(res, error, 'The recipient could not be removed.'); }
+});
+
+app.post('/api/campaigns/:campaignId/approve', requireContext, campaignLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.campaignId);
+  const parsed = z.object({ sendAt: z.string().datetime().optional(), staggerSeconds: z.number().int().min(10).max(3600).default(30) }).strict().safeParse(req.body ?? {});
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_campaign', message: 'Check the send time and try again.' });
+  const publicUrl = process.env.PUBLIC_BASE_URL ?? '';
+  if (isProduction && publicUrl && !publicUrl.startsWith('https://')) return res.status(503).json({ code: 'https_required', message: 'The public email link must use HTTPS before sending.' });
+  try {
+    const result = await approveCampaign(actor.id, workspace.id, id.data, { sendAt: parsed.data.sendAt ? resolveSendAt({ mode: 'at', at: parsed.data.sendAt }) : undefined, staggerSeconds: parsed.data.staggerSeconds, smtpReady: Boolean(leadMailTransportReady() && await workspaceMailSender(workspace.id)), publicBaseUrl: publicUrl });
+    res.json(result);
+  } catch (error) { campaignFailure(res, error, 'The campaign could not be approved.'); }
+});
+
+app.post('/api/campaigns/:campaignId/cancel', requireContext, campaignLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.campaignId);
+  if (!id.success) return res.status(404).json({ code: 'campaign_missing', message: 'This campaign is not available.' });
+  try {
+    const result = await cancelCampaign(actor.id, workspace.id, id.data);
+    if (!result) return res.status(409).json({ code: 'campaign_closed', message: 'This campaign was already cancelled.' });
+    res.json(result);
+  } catch (error) { campaignFailure(res, error, 'The campaign could not be cancelled.'); }
 });
 
 app.get('/api/emails/:emailId', requireContext, async (req, res) => {

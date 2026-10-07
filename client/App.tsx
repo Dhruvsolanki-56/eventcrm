@@ -1,6 +1,6 @@
 import { Fragment, forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Archive, ArrowLeft, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, LoaderCircle, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
+import { AlertCircle, Archive, ArrowLeft, ArrowRight, BarChart3, Bell, Building2, CalendarDays, Send, Check, ChevronDown, ChevronLeft, ChevronRight, CircleCheck, CircleDot, CircleHelp, CircleX, Clock3, FileChartColumn, Home, ImagePlus, LogOut, Mail, Menu, MessageCircle, Mic, RotateCw, ScanLine, Search, Settings as SettingsIcon, LoaderCircle, Trash2, UserRound, Users, WifiOff, X } from 'lucide-react';
 import { statusWords, type DemoAccount, type SessionData } from '../shared/contracts.js';
 import { safeWebsiteHref } from '../shared/website.js';
 import { assertOnline, offlineMessage, getCsrfToken, getSession, request, requestDownload, saveDownload } from './api.js';
@@ -30,6 +30,8 @@ const OnboardingRoute = lazy(() => import('./OnboardingPage.js'));
 const AnalyticsRoute = lazy(() => import('./AnalyticsPage.js'));
 const EmailDeskRoute = lazy(() => import('./EmailDeskPage.js'));
 const EventsRoute = lazy(() => import('./EventsPage.js').then((module) => ({ default: module.EventsPage })));
+const CampaignsRoute = lazy(() => import('./CampaignsPage.js').then((module) => ({ default: module.CampaignsPage })));
+const CampaignDetailRoute = lazy(() => import('./CampaignsPage.js').then((module) => ({ default: module.CampaignDetailPage })));
 const EventDetailRoute = lazy(() => import('./EventsPage.js').then((module) => ({ default: module.EventDetailPage })));
 const OverviewActivity = lazy(() => import('./AnalyticsPage.js').then((module) => ({ default: module.OverviewActivity })));
 const TOUR_STEPS = [
@@ -382,6 +384,7 @@ function WorkspaceShell() {
     { to: '/people', label: 'People', icon: Users },
     { to: '/companies', label: 'Companies', icon: Building2 },
     { to: '/events', label: 'Events', icon: CalendarDays },
+    ...(manager ? [{ to: '/campaigns', label: 'Group emails', icon: Send }] : []),
     ...(manager ? [{ to: '/pipeline', label: 'Pipeline', icon: ArrowRight }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }, { to: '/reports', label: 'Reports', icon: FileChartColumn }] : []),
     ...(admin ? [{ to: '/settings', label: 'Settings', icon: SettingsIcon }] : []),
   ];
@@ -391,6 +394,7 @@ function WorkspaceShell() {
     { to: '/email', label: 'Email Desk', icon: Mail },
     { to: '/people', label: 'People', icon: Users },
     { to: '/events', label: 'Events', icon: CalendarDays },
+    { to: '/campaigns', label: 'Group emails', icon: Send },
     { to: '/follow-ups', label: 'Follow-ups', icon: Clock3 },
     { to: '/analytics', label: 'Analytics', icon: BarChart3 },
     { to: '/settings', label: 'Settings', icon: SettingsIcon },
@@ -456,6 +460,8 @@ function WorkspaceShell() {
           <Route path="/people" element={<PeoplePage />} />
           <Route path="/people/:contactId" element={<PersonPage />} />
           <Route path="/events" element={<Suspense fallback={<div className="surface-card records-empty">Opening events…</div>}><EventsRoute /></Suspense>} />
+          <Route path="/campaigns" element={<Suspense fallback={<div className="surface-card records-empty">Opening group emails…</div>}><CampaignsRoute /></Suspense>} />
+          <Route path="/campaigns/:campaignId" element={<Suspense fallback={<div className="surface-card records-empty">Opening group email…</div>}><CampaignDetailRoute /></Suspense>} />
           <Route path="/events/:eventId" element={<Suspense fallback={<div className="surface-card records-empty">Opening event…</div>}><EventDetailRoute /></Suspense>} />
           <Route path="/companies" element={company ? <CompaniesPage /> : <NotFoundPage />} />
           <Route path="/companies/:companyId" element={company ? <CompanyPage /> : <NotFoundPage />} />
