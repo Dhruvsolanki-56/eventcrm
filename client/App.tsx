@@ -12,6 +12,7 @@ import { CompanyAbout } from './company-about.js';
 import { QuickEvent } from './quick-event.js';
 import { WhenVisible } from './when-visible.js';
 import { BrandMark } from './brand.js';
+import { DealsPanel, PipelinePage, pipelineStages, stageLabel, type DealView } from './deals.js';
 import { Skeleton } from './skeletons.js';
 import { formatMoney } from './money.js';
 import { InstallPrompt, markCardSaved } from './install-app.js';
@@ -625,7 +626,7 @@ function NotFoundPage() {
 }
 
 type PersonRow = { id: string; name: string; title: string; email: string; phone: string; quality: string | null; stage: string; version: number; updated_at: string; company_id: string; company_name: string; encounters: number; products: string | null };
-type CompanyRow = { id: string; name: string; website: string | null; deal_value_minor: number | null; deal_status: string | null; people: number; encounters: number };
+type CompanyRow = { id: string; name: string; website: string | null; open_value_minor: number; won_value_minor: number; deal_count: number; people: number; encounters: number };
 
 function StageBadge({ stage }: { stage: string }) {
   const icons: Record<string, typeof CircleDot> = { new: CircleDot, contacted: Mail, replied: MessageCircle, meeting: CalendarDays, won: CircleCheck, lost: CircleX };
@@ -634,8 +635,6 @@ function StageBadge({ stage }: { stage: string }) {
   return <span className={`stage-pill ${stage}`}><Icon size={12} aria-hidden="true" />{label}</span>;
 }
 
-const pipelineStages = ['new', 'contacted', 'replied', 'meeting', 'won', 'lost'] as const;
-const stageLabel = (stage: string) => stage.charAt(0).toUpperCase() + stage.slice(1);
 const initialsOf = (name: string) => name.split(' ').map((part) => part[0]).join('').slice(0, 2);
 const usd = formatMoney;
 const relativeDay = (value: string) => {
@@ -767,16 +766,16 @@ function CompaniesPage() {
   const needle = filter.trim().toLowerCase();
   const visible = needle ? companies.filter((company) => `${company.name} ${company.website ?? ''}`.toLowerCase().includes(needle)) : companies;
   const currentPage = Math.min(page, Math.max(1, Math.ceil(visible.length / pageSize)));
-  const openValue = companies.reduce((sum, company) => sum + (company.deal_status !== 'lost' && company.deal_status !== 'won' && company.deal_value_minor ? company.deal_value_minor : 0), 0);
+  const openValue = companies.reduce((sum, company) => sum + company.open_value_minor, 0);
   return <section className="records-view">
     <div className="page-heading-row"><div><h1>Companies</h1><p className="page-lede">{loading ? 'Loading…' : `${companies.length} ${companies.length === 1 ? 'company' : 'companies'}${openValue ? ` · ${usd(openValue)} in open deals` : ''}`}</p></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
     {companies.length > 6 && <div className="list-toolbar"><label className="search-box"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter companies" aria-label="Filter companies" /></label></div>}
-    {loading ? <Skeleton variant="table" label="Loading companies" /> : <div className="surface-card records-table"><div className="records-header company-row"><span>Company</span><span>People</span><span>Conversations</span><span>Deal</span><span /></div>
+    {loading ? <Skeleton variant="table" label="Loading companies" /> : <div className="surface-card records-table"><div className="records-header company-row"><span>Company</span><span>People</span><span>Conversations</span><span>Deals</span><span /></div>
       {visible.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((company) => <div className="records-row company-row" key={company.id}>
         <span className="person-cell"><span className="company-icon"><Building2 size={16} /></span><span><Link className="row-link" to={`/companies/${company.id}`}><strong>{company.name}</strong></Link><small>{company.website ? <a href={company.website} target="_blank" rel="noreferrer">{company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</a> : 'No website'}</small></span></span>
         <span className="number-cell">{company.people}</span>
         <span className="number-cell">{company.encounters}</span>
-        <span>{company.deal_value_minor !== null ? <span className={`deal-chip ${company.deal_status ?? 'open'}`}>{usd(company.deal_value_minor)} · {company.deal_status ?? 'open'}</span> : <span className="faint-cell">Not set</span>}</span>
+        <span>{company.deal_count > 0 ? <span className="deal-chip open">{company.deal_count} {company.deal_count === 1 ? 'deal' : 'deals'}{company.open_value_minor > 0 ? ` · ${usd(company.open_value_minor)} open` : ''}</span> : <span className="faint-cell">No deals</span>}</span>
         <span><Link className="subtle-link" to={`/companies/${company.id}`} aria-label={`Company details for ${company.name}`}>Details <ArrowRight size={14} /></Link></span>
       </div>)}
       {!visible.length && <p className="records-empty">{companies.length ? 'No company matches that filter.' : 'No companies yet. They appear when you save a person.'}</p>}
@@ -789,13 +788,9 @@ function CompanyPage() {
   const { companyId = '' } = useParams();
   const { session, csrfToken, notify } = useWorkspace();
   const navigate = useNavigate();
-  const [detail, setDetail] = useState<{ company: CompanyRow; people: PersonRow[]; materials: Array<{ scan_id: string; image_mime: string; saved_at: string; event_name: string | null; items: string[] }> } | null>(null);
-  const [value, setValue] = useState('');
-  const [status, setStatus] = useState<'open' | 'won' | 'lost' | ''>('');
-  const [saving, setSaving] = useState(false);
+  const [detail, setDetail] = useState<{ company: CompanyRow; people: PersonRow[]; materials: Array<{ scan_id: string; image_mime: string; saved_at: string; event_name: string | null; items: string[] }>; deals: Array<{ id: string; title: string; value_minor: number | null; stage: string; contact_id: string; contact_name: string }> } | null>(null);
   const [removingMaterialId, setRemovingMaterialId] = useState('');
   const [error, setError] = useState('');
-  const canManage = session.workspace.role === 'admin' || session.workspace.role === 'manager';
   const canMerge = session.workspace.kind === 'personal' || session.workspace.role === 'admin';
   const [mergeTargets, setMergeTargets] = useState<CompanyRow[]>([]);
   const [mergeTargetId, setMergeTargetId] = useState('');
@@ -803,8 +798,8 @@ function CompanyPage() {
   const [mergeError, setMergeError] = useState('');
   const [merging, setMerging] = useState(false);
   useEffect(() => {
-    void request<{ company: CompanyRow; people: PersonRow[]; materials: NonNullable<typeof detail>['materials'] }>(`/api/companies/${companyId}`, {}, { workspaceId: session.workspace.id }).then((result) => {
-      setDetail(result); setValue(result.company.deal_value_minor === null ? '' : String(result.company.deal_value_minor / 100)); setStatus((result.company.deal_status as 'open' | 'won' | 'lost') || '');
+    void request<NonNullable<typeof detail>>(`/api/companies/${companyId}`, {}, { workspaceId: session.workspace.id }).then((result) => {
+      setDetail(result);
     }).catch((issue) => setError((issue as Error).message));
   }, [companyId, session.workspace.id]);
   useEffect(() => {
@@ -824,17 +819,6 @@ function CompanyPage() {
     } catch (issue) { setMergeError((issue as Error).message); }
     finally { setMerging(false); }
   }
-  async function saveDeal(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!detail) return;
-    const parsedAmount = value.trim() ? Number(value) : null;
-    if (parsedAmount !== null && (!Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > 1_000_000_000)) { setError('Enter a positive amount in rupees.'); return; }
-    setSaving(true); setError('');
-    try {
-      await request(`/api/companies/${companyId}/deal`, { method: 'PUT', body: JSON.stringify({ valueMinor: parsedAmount === null ? null : Math.round(parsedAmount * 100), status: status || null }) }, { csrfToken, workspaceId: session.workspace.id });
-      notify('Company deal details saved.');
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setSaving(false); }
-  }
   async function removeMaterial(scanId: string) {
     if (!await askConfirm({ title: 'Remove this brochure from the company?', body: 'Its photo will stay in your capture tray.', confirmLabel: 'Remove brochure', danger: true })) return;
     setRemovingMaterialId(scanId); setError('');
@@ -847,131 +831,29 @@ function CompanyPage() {
   }
   if (!detail) return error ? <section className="surface-card skeleton-block">{error}<p><Link className="subtle-link" to="/companies">Back to Companies</Link></p></section> : <Skeleton variant="detail" label="Loading company" />;
   const company = detail.company;
-  const showDeal = canManage && session.workspace.kind === 'company';
   const showMerge = canMerge && mergeTargets.length > 0;
   const stageCounts = pipelineStages.map((stage) => [stage, detail.people.filter((person) => person.stage === stage).length] as const).filter(([, count]) => count > 0);
   return <section className="records-view company-view"><div className="page-heading-row"><div><Link className="back-link" to="/companies">← Companies</Link><div className="person-title"><span className="company-icon large" aria-hidden="true"><Building2 size={22} /></span><div><h1>{company.name}</h1><p className="page-lede">{company.website ? <a href={company.website} target="_blank" rel="noreferrer">{company.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')}</a> : 'No website added'}</p></div></div></div><Link className="button primary" to="/scan"><ScanLine size={17} /> Add a person</Link></div>
     <div className="company-stats">
       <div><span>People</span><strong>{company.people}</strong></div>
       <div><span>Conversations</span><strong>{company.encounters}</strong></div>
-      <div><span>Deal</span><strong>{company.deal_value_minor !== null ? usd(company.deal_value_minor) : '—'}{company.deal_status && <small className={`deal-chip ${company.deal_status}`}>{company.deal_status}</small>}</strong></div>
+      <div><span>Deals</span><strong>{company.deal_count}{company.open_value_minor > 0 && <small className="deal-chip open">{usd(company.open_value_minor)} open</small>}</strong></div>
       <div><span>Brochures</span><strong>{detail.materials.length}</strong></div>
     </div>
-    <div className={`company-detail-grid${showDeal || showMerge ? '' : ' single'}`}><div className="company-main">
+    <div className={`company-detail-grid${showMerge ? '' : ' single'}`}><div className="company-main">
       <section className="surface-card company-people"><div className="section-head"><div><h2>People</h2>{stageCounts.length > 0 && <p className="company-stage-summary">{stageCounts.map(([stage, count]) => <span key={stage}><span className={`stage-dot ${stage}`} aria-hidden="true" />{count} {stage}</span>)}</p>}</div><Link className="subtle-link" to={`/people?q=${encodeURIComponent(company.name)}`}>Search people</Link></div>
         {detail.people.map((person) => <Link className="company-person-row" key={person.id} to={`/people/${person.id}`}><span className="avatar small">{initialsOf(person.name)}</span><span><strong>{person.name}</strong><small>{person.title || person.email || 'Contact details not added'}</small></span><StageBadge stage={person.stage} /><span className="company-person-talks">{person.encounters} {person.encounters === 1 ? 'conversation' : 'conversations'}</span><ArrowRight size={16} /></Link>)}
         {!detail.people.length && <p className="records-empty">No people are available in this space.</p>}</section>
       <section className="surface-card company-materials"><div className="section-head"><div><h2>Brochures and product sheets</h2><p className="subtle">Brochure photos stay with this company, separate from people and conversations.</p></div><Link className="button secondary" to="/scan">Capture a brochure</Link></div>
         {detail.materials.length ? <div className="material-grid">{detail.materials.map((material) => <article className="material-card" key={material.scan_id}><a href={`/api/scans/${material.scan_id}/image`} target="_blank" rel="noreferrer"><img src={`/api/scans/${material.scan_id}/image`} alt={`Brochure for ${company.name}`} /></a><div><strong>Brochure photo</strong><small>{material.event_name ? `${material.event_name} · ` : ''}{new Date(material.saved_at).toLocaleDateString()}</small>{material.items.length > 0 && <p className="material-items"><strong>Products or topics</strong><br />{material.items.join(' · ')}</p>}<button type="button" className="text-button danger-text" disabled={removingMaterialId === material.scan_id} onClick={() => void removeMaterial(material.scan_id)}>{removingMaterialId === material.scan_id ? 'Removing…' : 'Remove material'}</button></div></article>)}</div> : <p className="company-empty-note">No brochures yet. Capture one and choose Company brochure during review.</p>}
       </section>
+      <section className="surface-card company-deals"><div className="section-head"><div><h2>Deals</h2><p className="subtle">Every deal with people at this company.</p></div></div>
+        {detail.deals.map((deal) => <Link className="company-person-row" key={deal.id} to={`/people/${deal.contact_id}`}><span><strong>{deal.title.trim() || `Deal with ${company.name}`}</strong><small>{deal.contact_name} · {deal.value_minor === null ? 'No value yet' : usd(deal.value_minor)}</small></span><StageBadge stage={deal.stage} /></Link>)}
+        {!detail.deals.length && <p className="records-empty">No deals yet. Add one from a person’s page.</p>}</section>
     </div>
-      {(showDeal || showMerge) && <aside className="company-side">{showDeal && <form className="surface-card deal-form" onSubmit={(event) => void saveDeal(event)}><h2>Deal value</h2><div className="field-grid"><label>Potential value (₹)<input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label></div>{error && <p className="form-error">{error}</p>}<p className="subtle">Counted once for the company in reports, not once per person.</p><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save deal'}</button></form>}
-        {showMerge && <details className="surface-card company-merge-panel"><summary>Combine duplicate companies</summary><p>Move this company’s people and brochures into the company you choose. The old name and website stay as matching clues for later scans. Deal details need review if both records have them.</p><label>Company to keep<select value={mergeTargetId} onChange={(event) => { setMergeTargetId(event.target.value); setMergeConfirmation(''); setMergeError(''); }}><option value="">Choose a company</option>{mergeTargets.map((target) => <option value={target.id} key={target.id}>{target.name} · {target.people} {target.people === 1 ? 'person' : 'people'}</option>)}</select></label>{mergeTargetId && <label>Type MERGE to confirm<input value={mergeConfirmation} onChange={(event) => setMergeConfirmation(event.target.value)} autoComplete="off" /></label>}{mergeError && <p className="form-error" role="alert">{mergeError}</p>}<button type="button" className="button secondary" disabled={merging || !mergeTargetId || mergeConfirmation !== 'MERGE'} onClick={() => void mergeIntoSelected()}>{merging ? 'Combining…' : 'Combine company records'}</button></details>}
+      {showMerge && <aside className="company-side">        {showMerge && <details className="surface-card company-merge-panel"><summary>Combine duplicate companies</summary><p>Move this company’s people and brochures into the company you choose. The old name and website stay as matching clues for later scans. Their deals move with them.</p><label>Company to keep<select value={mergeTargetId} onChange={(event) => { setMergeTargetId(event.target.value); setMergeConfirmation(''); setMergeError(''); }}><option value="">Choose a company</option>{mergeTargets.map((target) => <option value={target.id} key={target.id}>{target.name} · {target.people} {target.people === 1 ? 'person' : 'people'}</option>)}</select></label>{mergeTargetId && <label>Type MERGE to confirm<input value={mergeConfirmation} onChange={(event) => setMergeConfirmation(event.target.value)} autoComplete="off" /></label>}{mergeError && <p className="form-error" role="alert">{mergeError}</p>}<button type="button" className="button secondary" disabled={merging || !mergeTargetId || mergeConfirmation !== 'MERGE'} onClick={() => void mergeIntoSelected()}>{merging ? 'Combining…' : 'Combine company records'}</button></details>}
       </aside>}
     </div>
-  </section>;
-}
-
-function PipelinePage() {
-  const { session, csrfToken, notify } = useWorkspace();
-  const [people, setPeople] = useState<PersonRow[] | null>(null);
-  const [filter, setFilter] = useState('');
-  const [dragId, setDragId] = useState('');
-  const [overStage, setOverStage] = useState('');
-  const [movingId, setMovingId] = useState('');
-  const [lostDraft, setLostDraft] = useState<{ person: PersonRow; reason: string } | null>(null);
-  const [phoneStage, setPhoneStage] = useState('new');
-  // Each column loads its own most recent people and can show more, so no stage is cut off by another stage's size.
-  const [totals, setTotals] = useState<Record<string, number>>({});
-  const [limits, setLimits] = useState<Record<string, number>>({});
-  const [loadingMore, setLoadingMore] = useState('');
-  const boardStep = 40, boardMax = 200;
-  const fetchStage = useCallback((stage: string, limit: number) => request<{ people: PersonRow[]; stageCounts: Record<string, number> }>(`/api/contacts?stage=${stage}&pageSize=${limit}`, {}, { workspaceId: session.workspace.id }), [session.workspace.id]);
-  const load = useCallback(async () => {
-    const results = await Promise.all(pipelineStages.map((stage) => fetchStage(stage, limitsRef.current[stage] ?? boardStep)));
-    setPeople(results.flatMap((result) => result.people));
-    setTotals(results[0]?.stageCounts ?? {});
-  }, [fetchStage]);
-  const limitsRef = useRef<Record<string, number>>({});
-  useEffect(() => { limitsRef.current = limits; }, [limits]);
-  useEffect(() => { void load().catch((issue) => { setPeople([]); notify((issue as Error).message); }); }, [load, notify]);
-  async function showMore(stage: string) {
-    const next = Math.min(boardMax, (limits[stage] ?? boardStep) + boardStep);
-    setLoadingMore(stage);
-    try {
-      const result = await fetchStage(stage, next);
-      limitsRef.current = { ...limitsRef.current, [stage]: next };
-      setLimits((current) => ({ ...current, [stage]: next }));
-      setPeople((current) => [...(current ?? []).filter((person) => person.stage !== stage), ...result.people]);
-      setTotals(result.stageCounts);
-    } catch (issue) { notify((issue as Error).message); }
-    finally { setLoadingMore(''); }
-  }
-  const needle = filter.trim().toLowerCase();
-  const rows = (people ?? []).filter((person) => !needle || `${person.name} ${person.company_name}`.toLowerCase().includes(needle));
-  // With no filter typed, counts are the true totals; with a filter they count the matches among the people loaded.
-  const countFor = (stage: string) => needle ? rows.filter((person) => person.stage === stage).length : totals[stage] ?? rows.filter((person) => person.stage === stage).length;
-  const active = pipelineStages.filter((stage) => stage !== 'won' && stage !== 'lost').reduce((sum, stage) => sum + countFor(stage), 0);
-  // Same request the person page sends; the version check stops two people overwriting each other.
-  async function move(person: PersonRow, stage: string, reason = '') {
-    if (person.stage === stage) return;
-    setMovingId(person.id);
-    setPeople((current) => current?.map((item) => item.id === person.id ? { ...item, stage } : item) ?? current);
-    setTotals((current) => ({ ...current, [person.stage]: Math.max(0, (current[person.stage] ?? 1) - 1), [stage]: (current[stage] ?? 0) + 1 }));
-    try {
-      const result = await request<{ version: number }>(`/api/contacts/${person.id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage, version: Number(person.version), ...(stage === 'lost' ? { lostReason: reason } : {}) }) }, { csrfToken, workspaceId: session.workspace.id });
-      setPeople((current) => current?.map((item) => item.id === person.id ? { ...item, stage, version: result.version } : item) ?? current);
-      notify(`${person.name} moved to ${stageLabel(stage)}.`);
-    } catch (issue) {
-      notify((issue as Error).message);
-      await load().catch(() => undefined);
-    } finally { setMovingId(''); }
-  }
-  function drop(stage: string) {
-    const person = people?.find((item) => item.id === dragId);
-    setDragId(''); setOverStage('');
-    if (!person || person.stage === stage) return;
-    if (stage === 'lost') setLostDraft({ person, reason: '' });
-    else void move(person, stage);
-  }
-  // Phones have no drag and drop: each card gets a Move to list that sends the same request.
-  function moveFromList(person: PersonRow, stage: string) {
-    if (stage === 'lost') setLostDraft({ person, reason: '' });
-    else void move(person, stage);
-  }
-  return <section className="records-view pipeline-view">
-    <div className="page-heading-row"><div><h1>Pipeline</h1><p className="page-lede">{people ? `${active} in progress · ${countFor('won')} won · ${countFor('lost')} lost` : 'Loading…'}</p></div>
-      <label className="search-box pipeline-search"><Search size={18} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter by name or company" aria-label="Filter by name or company" /></label></div>
-    {people && <div className="pipeline-stage-switch" role="group" aria-label="Show one stage">{pipelineStages.map((stage) => <button type="button" key={stage} aria-pressed={phoneStage === stage} onClick={() => setPhoneStage(stage)}>{stageLabel(stage)}<span>{countFor(stage)}</span></button>)}</div>}
-    {!people ? <Skeleton variant="board" label="Loading pipeline" /> : <div className={`pipeline-grid${dragId ? ' is-dragging' : ''}`}>{pipelineStages.map((stage) => {
-      const column = rows.filter((person) => person.stage === stage);
-      return <section className={`pipeline-column${overStage === stage ? ' is-over' : ''}${phoneStage === stage ? ' is-shown' : ''}`} key={stage} aria-label={`${stageLabel(stage)}, ${countFor(stage)}`}
-        onDragOver={(event) => { if (!dragId) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; if (overStage !== stage) setOverStage(stage); }}
-        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOverStage(''); }}
-        onDrop={(event) => { event.preventDefault(); drop(stage); }}>
-        <div className="pipeline-column-head"><h2>{stageLabel(stage)}</h2><span className="pipeline-count">{countFor(stage)}</span></div>
-        <div className="pipeline-cards">{column.map((person) => <div className="pipeline-item" key={person.id}><Link className={`pipeline-person${dragId === person.id ? ' is-dragged' : ''}${movingId === person.id ? ' is-moving' : ''}`} to={`/people/${person.id}`} draggable
-          onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', person.id); setDragId(person.id); }}
-          onDragEnd={() => { setDragId(''); setOverStage(''); }}>
-          <strong>{person.name}</strong>
-          <small>{person.company_name}</small>
-          <span className="pipeline-person-meta">{person.quality ? <Temperature quality={person.quality} /> : <span />}<span>{relativeDay(String(person.updated_at))}</span></span>
-        </Link>
-        <label className="pipeline-move"><span>Move to</span><select value={person.stage} disabled={movingId === person.id} aria-label={`Move ${person.name} to`} onChange={(event) => moveFromList(person, event.target.value)}>{pipelineStages.map((option) => <option key={option} value={option}>{stageLabel(option)}</option>)}</select></label></div>)}
-        {!column.length && <p className="pipeline-empty">{dragId ? 'Drop here' : needle ? 'No match' : 'Nobody yet'}</p>}
-        {!needle && column.length < (totals[stage] ?? 0) && ((limits[stage] ?? boardStep) < boardMax
-          ? <button type="button" className="pipeline-more" disabled={loadingMore === stage} onClick={() => void showMore(stage)}>{loadingMore === stage ? 'Loading…' : `Show more (${(totals[stage] ?? 0) - column.length} more)`}</button>
-          : <p className="pipeline-empty" role="note">Showing the {column.length} most recent of {totals[stage]}. Use People to find the rest.</p>)}</div>
-      </section>;
-    })}</div>}
-    <p className="pipeline-footnote"><span className="on-wide">Drag a card to change its stage, or open a person to change it there.</span><span className="on-phone">Pick a stage above to see who is in it. Use Move to on a card to change its stage.</span> Deal value is tracked per company.</p>
-    {lostDraft && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setLostDraft(null); }}>
-      <form className="lost-dialog" role="dialog" aria-modal="true" aria-labelledby="lost-dialog-title" onSubmit={(event) => { event.preventDefault(); const draft = lostDraft; setLostDraft(null); void move(draft.person, 'lost', draft.reason.trim()); }}>
-        <h2 id="lost-dialog-title">Mark {lostDraft.person.name} as lost</h2>
-        <label>Why was this lost?<textarea rows={3} maxLength={500} autoFocus value={lostDraft.reason} onChange={(event) => setLostDraft({ ...lostDraft, reason: event.target.value })} placeholder="A short reason, for example: budget moved to next year" /></label>
-        <div className="lost-dialog-actions"><button type="button" className="button secondary" onClick={() => setLostDraft(null)}>Cancel</button><button className="button primary" disabled={!lostDraft.reason.trim()}>Save as lost</button></div>
-      </form>
-    </div>}
   </section>;
 }
 
@@ -994,7 +876,7 @@ function ReportsPage() {
     finally { setExporting(false); }
   }
   return <section className="records-view"><div className="page-heading-row"><div><h1>Reports</h1></div><button type="button" className="button secondary" disabled={exporting} onClick={() => void exportPeople()}>{exporting ? 'Preparing…' : 'Export people CSV'}</button></div>
-    {!report ? <Skeleton variant="tiles" label="Loading report" /> : <><div className="report-metrics"><article className="metric-card"><span>People</span><strong className="metric-number">{report.people}</strong></article><article className="metric-card"><span>Companies</span><strong className="metric-number">{report.companies}</strong></article><article className="metric-card"><span>Follow-ups done</span><strong className="metric-number">{report.metrics.followUpsDone}</strong></article><article className="metric-card"><span>Replies</span><strong className="metric-number">{report.metrics.replies}</strong></article><article className="metric-card"><span>Meetings</span><strong className="metric-number">{report.metrics.meetings}</strong></article><article className="metric-card"><span>Won companies</span><strong className="metric-number">{report.metrics.wonCount}</strong></article><article className="metric-card"><span>Open deal value</span><strong className="metric-number">{money(report.valueByStatus.open)}</strong><small>Company level</small></article><article className="metric-card"><span>Won deal value</span><strong className="metric-number">{money(report.valueByStatus.won)}</strong><small>Counted once per company</small></article><article className="metric-card"><span>Won value ÷ event spend</span><strong className="metric-number">{wonValuePerSpend ?? 'Unavailable'}</strong><small>{wonValuePerSpend ? `Visible records: ${money(report.valueByStatus.won)} won ÷ ${money(recordedSpendMinor)} accessible-event spend; not event attribution or net ROI.` : 'Add a non-zero event spend in Settings.'}</small></article></div>
+    {!report ? <Skeleton variant="tiles" label="Loading report" /> : <><div className="report-metrics"><article className="metric-card"><span>People</span><strong className="metric-number">{report.people}</strong></article><article className="metric-card"><span>Companies</span><strong className="metric-number">{report.companies}</strong></article><article className="metric-card"><span>Follow-ups done</span><strong className="metric-number">{report.metrics.followUpsDone}</strong></article><article className="metric-card"><span>Replies</span><strong className="metric-number">{report.metrics.replies}</strong></article><article className="metric-card"><span>Meetings</span><strong className="metric-number">{report.metrics.meetings}</strong></article><article className="metric-card"><span>Won deals</span><strong className="metric-number">{report.metrics.wonCount}</strong></article><article className="metric-card"><span>Open deal value</span><strong className="metric-number">{money(report.valueByStatus.open)}</strong><small>Company level</small></article><article className="metric-card"><span>Won deal value</span><strong className="metric-number">{money(report.valueByStatus.won)}</strong><small>Counted once per company</small></article><article className="metric-card"><span>Won value ÷ event spend</span><strong className="metric-number">{wonValuePerSpend ?? 'Unavailable'}</strong><small>{wonValuePerSpend ? `Visible records: ${money(report.valueByStatus.won)} won ÷ ${money(recordedSpendMinor)} accessible-event spend; not event attribution or net ROI.` : 'Add a non-zero event spend in Settings.'}</small></article></div>
       <div className="report-grid"><article className="surface-card report-chart"><h2>Conversation progress</h2><div className="chart-wrap"><Suspense fallback={<span className="subtle">Loading chart…</span>}><ReportChart data={stageData} /></Suspense></div></article><article className="surface-card report-chart"><h2>{report.activeEvent?.name ?? 'No active event yet'}</h2>{report.activeEvent ? <div className="chart-wrap"><Suspense fallback={<span className="subtle">Loading chart…</span>}><CaptureChart data={report.dailyCaptures} /></Suspense></div> : <p className="records-empty">Choose an active event in Settings to see daily captures.</p>}</article><article className="surface-card report-events"><h2>Conversations by event</h2>{report.events.map((event) => <div className="event-report-row" key={event.id}><strong>{event.name}</strong><span>{event.people} people · {event.encounters} conversations</span><small>{event.spend_minor === null ? 'Spend not set.' : `Event spend: ${money(Number(event.spend_minor))}`}</small></div>)}{!report.events.length && <p className="records-empty">No event activity yet.</p>}</article></div>
     </>}</section>;
 }
@@ -1006,7 +888,7 @@ function PersonPage() {
   const requestedConversation = new URLSearchParams(location.search).get('newConversation') === '1';
   const requestedEventId = new URLSearchParams(location.search).get('event');
   const { session, csrfToken, notify } = useWorkspace();
-  const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>; conversationMemories: Array<{ id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }> } | null>(null);
+  const [detail, setDetail] = useState<{ person: Record<string, unknown>; timeline: Array<Record<string, unknown>>; products: Array<{ id: string; name: string; description: string }>; voiceNotes: Array<{ id: string; transcript: string; summary: string; duration_seconds: number | null; audio_mime: string | null; created_at: string }>; deals: DealView[]; conversationMemories: Array<{ id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }> } | null>(null);
   const [personTasks, setPersonTasks] = useState<Array<{ id: string; kind: string; status: string; due_at: string; snoozed_until: string | null; contact_id: string; title: string }>>([]);
   const timelineSize = detail?.timeline.length ?? 0;
   useEffect(() => { void request<{ tasks: typeof personTasks }>('/api/tasks', {}, { workspaceId: session.workspace.id }).then((result) => setPersonTasks(result.tasks.filter((task) => task.contact_id === contactId))).catch(() => setPersonTasks([])); }, [contactId, session.workspace.id, timelineSize]);
@@ -1028,8 +910,6 @@ function PersonPage() {
   const [conversationDraft, setConversationDraft] = useState<EmailDraftView | null>(null);
   const [emailHasOpenDraft, setEmailHasOpenDraft] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [stageDraft, setStageDraft] = useState('');
-  const [lostReason, setLostReason] = useState('');
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState({ name: '', title: '', email: '', phone: '', website: '' });
@@ -1041,16 +921,10 @@ function PersonPage() {
     setEmailHasOpenDraft(open);
     if (open) setPersonPanel('email');
   }, []);
-  const [dealValue, setDealValue] = useState('');
-  const [dealStatus, setDealStatus] = useState<'open' | 'won' | 'lost' | ''>('');
-  const [savingDeal, setSavingDeal] = useState(false);
-  const [dealError, setDealError] = useState('');
-  const canManageDeal = session.workspace.kind === 'company' && (session.workspace.role === 'admin' || session.workspace.role === 'manager');
+  const canSetDealValue = session.workspace.kind !== 'company' || session.workspace.role === 'admin' || session.workspace.role === 'manager';
   const load = useCallback(async () => {
     const value = await request<NonNullable<typeof detail>>(`/api/contacts/${contactId}`, {}, { workspaceId: session.workspace.id });
     setDetail({ ...value, person: { ...value.person, website: safeWebsiteHref(value.person.website) ?? '' } });
-    setDealValue(value.person.deal_value_minor === null ? '' : String(Number(value.person.deal_value_minor) / 100));
-    setDealStatus(['open', 'won', 'lost'].includes(String(value.person.deal_status)) ? value.person.deal_status as 'open' | 'won' | 'lost' : '');
   }, [contactId, session.workspace.id]);
   useEffect(() => { void load().catch((issue) => setError((issue as Error).message)); }, [load]);
   useEffect(() => {
@@ -1069,15 +943,6 @@ function PersonPage() {
     }, 80);
     return () => window.clearTimeout(timer);
   }, [requestedConversation, detail?.person.id]);
-  async function changeStage(stage: string, reason = '') {
-    if (!detail) return;
-    try {
-      const result = await request<{ version: number }>(`/api/contacts/${contactId}/stage`, { method: 'PATCH', body: JSON.stringify({ stage, version: Number(detail.person.version), ...(stage === 'lost' ? { lostReason: reason } : {}) }) }, { csrfToken, workspaceId: session.workspace.id });
-      setDetail((current) => current ? { ...current, person: { ...current.person, stage, lost_reason: stage === 'lost' ? reason : null, version: result.version } } : current);
-      setStageDraft(''); setLostReason('');
-      notify('Stage updated.');
-    } catch (issue) { notify((issue as Error).message); }
-  }
   function startEditing() {
     if (!detail) return;
     setEditDraft({ name: String(detail.person.name ?? ''), title: String(detail.person.title ?? ''), email: String(detail.person.email ?? ''), phone: String(detail.person.phone ?? ''), website: String(detail.person.website ?? '') });
@@ -1109,19 +974,6 @@ function PersonPage() {
     try { const result = await request<{ autoDraft: EmailDraftView | null }>(`/api/contacts/${contactId}/conversations`, { method: 'POST', body: JSON.stringify({ body: note, eventId: conversationEventId || null, clientConversationId: conversationRequestId.current, ...conversationMemory }) }, { csrfToken, workspaceId: session.workspace.id }); conversationRequestId.current = crypto.randomUUID(); setNote(''); setConversationMemory({ summary: '', openQuestion: '', promisedNextStep: '', changedSinceLast: '' }); await load(); setConversationDraft(result.autoDraft); if (prepareEmail || result.autoDraft) { setEmailAfterConversation(true); setEmailDraftVersion((value) => value + 1); } notify(prepareEmail || result.autoDraft ? 'Conversation saved. Review the new email draft before sending.' : 'Conversation added to this person. Your next email draft can use it.'); }
     catch (issue) { setError((issue as Error).message); } finally { setSaving(false); }
   }
-  async function saveCompanyDeal(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!detail) return;
-    const parsedAmount = dealValue.trim() ? Number(dealValue) : null;
-    if (parsedAmount !== null && (!Number.isFinite(parsedAmount) || parsedAmount < 0 || parsedAmount > 1_000_000_000)) { setDealError('Enter a valid amount in rupees, ₹0 or more.'); return; }
-    setSavingDeal(true); setDealError('');
-    const valueMinor = parsedAmount === null ? null : Math.round(parsedAmount * 100);
-    try {
-      await request(`/api/companies/${String(detail.person.company_id)}/deal`, { method: 'PUT', body: JSON.stringify({ valueMinor, status: dealStatus || null }) }, { csrfToken, workspaceId: session.workspace.id });
-      setDetail((current) => current ? { ...current, person: { ...current.person, deal_value_minor: valueMinor, deal_status: dealStatus || null } } : current);
-      notify('Company deal details saved.');
-    } catch (issue) { setDealError((issue as Error).message); }
-    finally { setSavingDeal(false); }
-  }
   if (!detail) return error ? <section className="surface-card skeleton-block">{error}<p><Link className="subtle-link" to="/people">Back to People</Link></p></section> : <Skeleton variant="detail" label="Loading person" />;
   const { person, timeline, products } = detail;
   const lastTalk = timeline.filter((item) => ['note', 'encounter', 'email', 'reply'].includes(String(item.kind)) && Date.parse(String(item.created_at)) <= Date.now()).map((item) => String(item.created_at)).sort().at(-1);
@@ -1135,11 +987,11 @@ function PersonPage() {
       <a className="button secondary" href="#person-voice-note" aria-current={personPanel === 'voice' ? 'location' : undefined} onClick={() => setPersonPanel('voice')}>Voice note</a>
       <a className="button secondary" href="#person-next-step" aria-current={personPanel === 'follow_up' ? 'location' : undefined} onClick={() => { setPersonPanel('follow_up'); setPlannerKind('follow_up'); }}>Follow-up</a>
       <a className="button secondary" href="#person-next-step" aria-current={personPanel === 'meeting' ? 'location' : undefined} onClick={() => { setPersonPanel('meeting'); setPlannerKind('meeting'); }}>Meeting</a>
-      {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deal-value" aria-current={personPanel === 'deal' ? 'location' : undefined} onClick={() => setPersonPanel('deal')}>Deal value</a>}
+      {session.workspace.kind === 'company' && <a className="button secondary" href="#person-deals" aria-current={personPanel === 'deal' ? 'location' : undefined} onClick={() => setPersonPanel('deal')}>Deals</a>}
       <a className="button secondary" href="#person-manage" aria-current={personPanel === 'manage' ? 'location' : undefined} onClick={() => setPersonPanel('manage')}>More</a>
     </nav>
     <div className="person-side" data-panel={personPanel}>
-      {session.workspace.kind === 'company' && <form id="person-deal-value" className="surface-card deal-form" onSubmit={(event) => void saveCompanyDeal(event)}><h2>Deal value for {String(person.company_name)}</h2>{canManageDeal ? <><label>Potential value (₹)<input type="number" min="0" step="0.01" value={dealValue} onChange={(event) => setDealValue(event.target.value)} placeholder="Not set" /></label><label>Deal status<select value={dealStatus} onChange={(event) => setDealStatus(event.target.value as typeof dealStatus)}><option value="">Not set</option><option value="open">Open</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{dealError && <p className="form-error" role="alert">{dealError}</p>}<p className="subtle">This value belongs to the company and is counted once, even when it has many people.</p><button className="button primary" disabled={savingDeal}>{savingDeal ? 'Saving…' : 'Save deal'}</button></> : <p className="subtle">{person.deal_value_minor === null ? 'No company deal value has been added.' : `${formatMoney(Number(person.deal_value_minor))} · ${String(person.deal_status || 'open')}. Only an admin or manager can change it.`}</p>}</form>}
+      {session.workspace.kind === 'company' && <DealsPanel contactId={contactId} deals={detail.deals} canSetValue={canSetDealValue} onChanged={() => void load()} />}
       <form id="person-conversation" className="surface-card note-form" onSubmit={(event) => void addNote(event)}>
         <h2>New conversation</h2>
         <label htmlFor="conversation-event">Where did you meet?</label>
@@ -1162,7 +1014,7 @@ function PersonPage() {
       {(session.workspace.kind === 'personal' || session.workspace.role === 'admin') && <DeletePersonPanel contactId={contactId} />}</div>
     </div>
     <article className="surface-card timeline-card"><h2>History</h2>{detail.conversationMemories.length > 0 && <div className="memory-history"><strong>Checked email context</strong>{detail.conversationMemories.map((item) => <ConversationMemoryCard key={item.id} item={item} contactId={contactId} onSaved={() => void load()} />)}</div>}{timeline.length ? <div className="timeline-list">{timeline.map((item) => <div className="timeline-item" key={`${String(item.kind)}-${String(item.id)}`}><span className="timeline-dot"></span><div><strong>{String(item.kind === 'note' ? 'Conversation note' : item.kind === 'encounter' ? 'Conversation' : item.kind === 'email' ? 'Email' : 'Follow-up')}{item.event_name ? ` · ${String(item.event_name)}` : ''}</strong><p>{String(item.detail || '')}</p><time>{new Date(String(item.created_at)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</time></div></div>)}</div> : <p className="records-empty">No notes or event conversations are recorded yet.</p>}</article></div>
-    <aside className="person-aside"><article className="surface-card person-card"><div className="section-head"><div><h2>Details</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{person.quality ? <Temperature quality={String(person.quality)} /> : 'Not set'}</dd><dt>Conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}<label>Change stage<select value={stageDraft || String(person.stage)} onChange={(event) => { const stage = event.target.value; if (stage === 'lost') { setStageDraft('lost'); setLostReason(''); } else { setStageDraft(''); void changeStage(stage); } }}><option value="new">New</option><option value="contacted">Contacted</option><option value="replied">Replied</option><option value="meeting">Meeting</option><option value="won">Won</option><option value="lost">Lost</option></select></label>{stageDraft === 'lost' && <div className="lost-reason-form"><label htmlFor="lost-reason">Why was this marked lost?<textarea id="lost-reason" rows={2} maxLength={500} value={lostReason} onChange={(event) => setLostReason(event.target.value)} placeholder="A short reason" /></label><button type="button" className="button primary" disabled={!lostReason.trim()} onClick={() => void changeStage('lost', lostReason)}>Save as lost</button><button type="button" className="text-button" onClick={() => { setStageDraft(''); setLostReason(''); }}>Cancel</button></div>}{person.stage === 'lost' && Boolean(person.lost_reason) && <p className="lost-reason-display">Lost because: {String(person.lost_reason)}</p>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}<CompanyAbout key={String(person.company_id)} companyId={String(person.company_id)} companyName={String(person.company_name)} initial={String(person.company_about ?? '')} hasWebsite={Boolean(person.company_website || person.website)} csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onSaved={(about) => setDetail((current) => current ? { ...current, person: { ...current.person, company_about: about } } : current)} /></article></aside></div></section>;
+    <aside className="person-aside"><article className="surface-card person-card"><div className="section-head"><div><h2>Details</h2></div><div className="person-head-actions"><StageBadge stage={String(person.stage)} />{!editing && <button type="button" className="button secondary" onClick={startEditing}>Edit details</button>}</div></div>{editing ? <form className="person-edit-form" onSubmit={(event) => void savePerson(event)}><label>Name<input value={editDraft.name} maxLength={160} required onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></label><label>Job title<input value={editDraft.title} maxLength={160} onChange={(event) => setEditDraft({ ...editDraft, title: event.target.value })} /></label><label>Email<input type="email" value={editDraft.email} maxLength={254} onChange={(event) => setEditDraft({ ...editDraft, email: event.target.value })} /></label><label>Phone<input type="tel" value={editDraft.phone} maxLength={60} onChange={(event) => setEditDraft({ ...editDraft, phone: event.target.value })} /></label><label>Website<input value={editDraft.website} maxLength={300} placeholder="example.com" onChange={(event) => setEditDraft({ ...editDraft, website: event.target.value })} /></label><p className="subtle">Keep at least one email address or phone number.</p>{editError && <div className="form-error" role="alert">{editError}{staleEdit && <button type="button" className="text-button" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); void load(); }}>Reload person</button>}</div>}<div className="person-edit-actions"><button type="button" className="button secondary" onClick={() => { setEditing(false); setEditError(''); setStaleEdit(false); }}>Cancel</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</button></div></form> : <dl className="person-fields"><dt>Email</dt><dd>{person.email ? <a href={`mailto:${String(person.email)}`}>{String(person.email)}</a> : 'Not added'}</dd><dt>Phone</dt><dd>{person.phone ? <a href={`tel:${String(person.phone)}`}>{String(person.phone)}</a> : 'Not added'}</dd><dt>Website</dt><dd>{person.website ? <a href={String(person.website)} target="_blank" rel="noreferrer">{String(person.website)}</a> : 'Not added'}</dd><dt>Quality</dt><dd>{person.quality ? <Temperature quality={String(person.quality)} /> : 'Not set'}</dd><dt>Conversations</dt><dd>{timeline.filter((item) => item.kind === 'encounter').length}</dd></dl>}{person.stage !== 'replied' && <button type="button" className="button secondary reply-action" onClick={() => void logReply()}>They replied</button>}{products.length > 0 && <div className="product-list"><strong>Products of interest</strong><p>{products.map((item) => item.name).join(' · ')}</p></div>}<CompanyAbout key={String(person.company_id)} companyId={String(person.company_id)} companyName={String(person.company_name)} initial={String(person.company_about ?? '')} hasWebsite={Boolean(person.company_website || person.website)} csrfToken={csrfToken} workspaceId={session.workspace.id} notify={notify} onSaved={(about) => setDetail((current) => current ? { ...current, person: { ...current.person, company_about: about } } : current)} /></article></aside></div></section>;
 }
 
 function ConversationMemoryCard({ item, contactId, onSaved }: { item: { id: string; summary: string; open_question: string; promised_next_step: string; changed_since_last: string; occurred_at: string; event_name: string | null }; contactId: string; onSaved: () => void }) {

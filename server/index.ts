@@ -46,12 +46,12 @@ import {
   countPeopleByStage,
   draftRecipientOptedOut,
   listPeople,
+  listContactConversations,
   listCompanies,
   suggestCompanies,
   listProducts,
   getCompanyDetail,
   mergeCompany,
-  updateCompanyDeal,
   getReportData,
   exportPeople,
   getWorkspaceExport,
@@ -62,7 +62,6 @@ import {
   addPersonNote,
   addConversation,
   updateConversationMemory,
-  updatePersonStage,
   updatePersonDetails,
   setPersonArchived,
   markContactReplied,
@@ -129,6 +128,7 @@ import { suggestConversationContext, summarizeCheckedTranscript } from './gemini
 import { suggestBusinessProfile } from './gemini-profile.js';
 import { isCompanyAboutEnabled, suggestCompanyAbout, suggestProfileFromWebsite } from './company-about.js';
 import { fetchPublicPageText } from './safe-web.js';
+import { archiveDeal, countDealsByStage, createDeal, listDeals, MAX_DEAL_VALUE_MINOR, moveDeal, updateDeal } from './deals.js';
 import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
 import { verifyLoginPassword } from './auth.js';
@@ -293,6 +293,14 @@ const taskLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (_req, res) => (res.locals.context as RequestContext | undefined)?.actor.id ?? 'unauthenticated',
   message: { code: 'task_rate_limit', message: 'Too many follow-ups were saved. Wait an hour and try again.' },
+});
+const dealWriteLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  limit: isProduction ? 600 : 5000,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: (_req, res) => (res.locals.context as RequestContext | undefined)?.actor.id ?? 'unauthenticated',
+  message: { code: 'deal_rate_limit', message: 'Too many deal changes. Wait a few minutes and try again.' },
 });
 
 function makeToken() { return randomBytes(32).toString('base64url'); }
@@ -824,17 +832,6 @@ app.post('/api/companies/:companyId/merge', requireContext, async (req, res) => 
   catch (error) { refuse(res, error, 409, 'company_merge_unavailable', 'These companies could not be merged.'); }
 });
 
-app.put('/api/companies/:companyId/deal', requireContext, async (req, res) => {
-  const { actor, workspace } = res.locals.context as RequestContext;
-  const id = z.string().min(1).max(80).safeParse(req.params.companyId);
-  const parsed = z.object({ valueMinor: z.number().int().nonnegative().nullable(), status: z.enum(['open','won','lost']).nullable() }).strict().safeParse(req.body);
-  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_deal', message: 'Enter a valid non-negative deal value.' });
-  try {
-    if (!await (updateCompanyDeal(actor.id, workspace.id, id.data, parsed.data.valueMinor, parsed.data.status))) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
-    res.json({ updated: true });
-  } catch (error) { refuse(res, error, 403, 'deal_permission', 'You cannot change this deal value.'); }
-});
-
 app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const id = z.string().min(1).max(80).safeParse(req.params.companyId);
@@ -927,6 +924,14 @@ app.get('/api/export/data.json', exportLimiter, requireContext, async (_req, res
     }
     res.end(']}');
   } catch (error) { next(error); }
+});
+
+app.get('/api/contacts/:contactId/conversations', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.contactId);
+  if (!id.success) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json({ conversations: await listContactConversations(actor.id, workspace.id, id.data) }); }
+  catch (error) { refuse(res, error, 404, 'person_missing', 'This person is no longer available.'); }
 });
 
 app.get('/api/contacts/:contactId', requireContext, async (req, res) => {
@@ -1192,13 +1197,64 @@ app.post(['/unsubscribe/:token', '/api/unsubscribe/:token'], async (req, res) =>
   res.type('html').send('<!doctype html><html lang="en"><meta charset="utf-8"><title>Preference saved</title><body style="font:16px system-ui;max-width:34rem;margin:12vh auto;padding:1.5rem;color:#1b1a17"><h1>You are unsubscribed.</h1><p>Encore will not send further follow-up email to this address.</p></body></html>');
 });
 
-app.patch('/api/contacts/:contactId/stage', requireContext, async (req, res) => {
+const DealStageSchema = z.enum(['new', 'contacted', 'replied', 'meeting', 'won', 'lost']);
+const DealValueSchema = z.number().int().nonnegative().max(MAX_DEAL_VALUE_MINOR).nullable();
+
+app.get('/api/deals', requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
-  const id = z.string().min(1).max(80).safeParse(req.params.contactId);
-  const parsed = z.object({ stage: z.enum(['new','contacted','replied','meeting','won','lost']), version: z.number().int().positive(), lostReason: z.string().trim().max(500).optional() }).strict().safeParse(req.body);
-  if (!id.success || !parsed.success || (parsed.success && parsed.data.stage === 'lost' && !parsed.data.lostReason?.trim())) return res.status(400).json({ code: 'invalid_stage', message: 'Add a short reason before marking this person as lost.' });
-  if (!await (updatePersonStage(actor.id, workspace.id, id.data, parsed.data.stage, parsed.data.version, parsed.data.lostReason))) return res.status(409).json({ code: 'record_changed', message: 'This person changed in another window. Refresh to see the latest.' });
-  res.json({ updated: true, version: parsed.data.version + 1 });
+  const query = z.object({
+    stage: z.union([z.literal(''), DealStageSchema]).default(''), search: z.string().trim().max(120).default(''), contactId: z.string().max(80).default(''), eventId: z.string().max(80).default(''),
+    page: z.coerce.number().int().min(1).max(10000).default(1), pageSize: z.coerce.number().int().min(1).max(200).default(40),
+  }).safeParse(req.query);
+  if (!query.success) return res.status(400).json({ code: 'invalid_search', message: 'Check the deal filters and try again.' });
+  const { stage, search, contactId, eventId, page, pageSize } = query.data;
+  const counts = await countDealsByStage(actor.id, workspace.id, { search, contactId, eventId });
+  const deals = await listDeals(actor.id, workspace.id, { stage, search, contactId, eventId }, pageSize, (page - 1) * pageSize);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ deals, stages: counts.stages, total: stage ? counts.stages[stage].count : counts.total, page, pageSize });
+});
+
+app.post('/api/deals', requireContext, dealWriteLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const parsed = z.object({ contactId: z.string().min(1).max(80), title: z.string().trim().max(120), valueMinor: DealValueSchema, encounterId: z.string().min(1).max(80).nullable().default(null), clientDealId: z.string().uuid().optional() }).strict().safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ code: 'invalid_deal', message: 'Check the deal name and value. The value cannot be negative.' });
+  try {
+    const saved = await createDeal(actor.id, workspace.id, parsed.data);
+    res.status(saved.duplicate ? 200 : 201).json(saved);
+  } catch (error) { refuse(res, error, 409, 'deal_not_created', 'The deal could not be saved.'); }
+});
+
+app.patch('/api/deals/:dealId', requireContext, dealWriteLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.dealId);
+  const parsed = z.object({ version: z.number().int().positive(), title: z.string().trim().max(120).optional(), valueMinor: DealValueSchema.optional(), encounterId: z.string().min(1).max(80).nullable().optional() }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_deal', message: 'Check the deal name and value. The value cannot be negative.' });
+  try {
+    const { version, ...changes } = parsed.data;
+    if (!await updateDeal(actor.id, workspace.id, id.data, version, changes)) return res.status(409).json({ code: 'record_changed', message: 'This deal changed in another window. Refresh to see the latest.' });
+    res.json({ updated: true, version: version + 1 });
+  } catch (error) { refuse(res, error, 409, 'deal_not_saved', 'The deal could not be saved.'); }
+});
+
+app.patch('/api/deals/:dealId/stage', requireContext, dealWriteLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.dealId);
+  const parsed = z.object({ stage: DealStageSchema, version: z.number().int().positive(), lostReason: z.string().trim().max(500).optional() }).strict().safeParse(req.body);
+  if (!id.success || !parsed.success || (parsed.data.stage === 'lost' && !parsed.data.lostReason?.trim())) return res.status(400).json({ code: 'invalid_stage', message: 'Add a short reason before marking this deal as lost.' });
+  try {
+    if (!await moveDeal(actor.id, workspace.id, id.data, parsed.data.stage, parsed.data.version, parsed.data.lostReason)) return res.status(409).json({ code: 'record_changed', message: 'This deal changed in another window. Refresh to see the latest.' });
+    res.json({ updated: true, version: parsed.data.version + 1 });
+  } catch (error) { refuse(res, error, 409, 'deal_not_moved', 'The deal could not be moved.'); }
+});
+
+app.delete('/api/deals/:dealId', requireContext, dealWriteLimiter, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.dealId);
+  if (!id.success) return res.status(404).json({ code: 'deal_missing', message: 'This deal is no longer available.' });
+  try {
+    if (!await archiveDeal(actor.id, workspace.id, id.data)) return res.status(404).json({ code: 'deal_missing', message: 'This deal is no longer available.' });
+    res.json({ removed: true });
+  } catch (error) { refuse(res, error, 409, 'deal_not_removed', 'The deal could not be removed.'); }
 });
 
 app.patch('/api/contacts/:contactId', requireContext, async (req, res) => {

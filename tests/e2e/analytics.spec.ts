@@ -40,7 +40,7 @@ test('analytics counts over 200 records, deduplicates companies and respects eve
   const contacts: string[] = [];
   try {
     database.transaction(() => {
-      database.prepare(`INSERT INTO companies(id,workspace_id,name,normalized_name,deal_value_minor,deal_status) VALUES (?,'demo-northstar','Analytics fixture',?,990000,'won')`).run(companyId, companyId);
+      database.prepare(`INSERT INTO companies(id,workspace_id,name,normalized_name) VALUES (?,'demo-northstar','Analytics fixture',?)`).run(companyId, companyId);
       database.prepare(`INSERT INTO events(id,workspace_id,name,starts_at,ends_at,time_zone) VALUES (?,'demo-northstar','Private analytics fixture',?,?,'Pacific/Kiritimati')`).run(eventId, new Date().toISOString(), new Date().toISOString());
       database.prepare(`INSERT INTO event_access(workspace_id,event_id,user_id) VALUES ('demo-northstar',?,'demo-owner')`).run(eventId);
       const contact = database.prepare(`INSERT INTO contacts(id,workspace_id,company_id,name,owner_user_id,archived_at) VALUES (?,'demo-northstar',?,?,'demo-owner',?)`);
@@ -49,7 +49,7 @@ test('analytics counts over 200 records, deduplicates companies and respects eve
         const id=randomUUID(); contacts.push(id);
         contact.run(id,companyId,`Analytics ${index}`,index===205 ? new Date().toISOString() : null);
         encounter.run(randomUUID(),id,eventId,new Date(Date.now()-(index===206 ? 10*86400000 : 0)).toISOString());
-        if(index===0) encounter.run(randomUUID(),id,eventId,new Date().toISOString());
+        if(index===0) { encounter.run(randomUUID(),id,eventId,new Date().toISOString()); database.prepare(`INSERT INTO deals(id,workspace_id,contact_id,company_id,event_id,title,value_minor,stage,owner_user_id) VALUES (?,'demo-northstar',?,?,?,'Analytics fixture deal',990000,'won','demo-owner')`).run(randomUUID(), id, companyId, eventId); }
       }
     })();
     await page.goto('/'); await page.getByRole('button',{name:/Maya Chen/}).click();

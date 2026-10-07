@@ -357,7 +357,7 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
 
   const companyBeforeResponse = await page.request.get('/api/companies/demo-ns-acme');
   expect(companyBeforeResponse.status()).toBe(200);
-  const companyBefore = await companyBeforeResponse.json() as { company: { id: string; deal_value_minor: number }; people: Array<{ id: string }> };
+  const companyBefore = await companyBeforeResponse.json() as { company: { id: string }; people: Array<{ id: string }> };
   const unique = Date.now();
   const leadName = `Sample Buyer ${unique}`;
   const recipient = `sample-buyer-${unique}@acmepackaging.example`;
@@ -438,20 +438,22 @@ test('one captured lead completes the sample-to-won lifecycle under one shared c
   await meeting.getByRole('button', { name: 'Confirm' }).click();
   await expect(meeting).toContainText('Confirmed');
   await page.goto(`/people/${contactId}`);
-  await page.getByLabel('Change stage').selectOption('won');
-  await expect.poll(async () => (((await page.request.get(`/api/contacts/${contactId}`)).json()) as Promise<{ person: { stage: string } }>).then((value) => value.person.stage)).toBe('won');
-  await page.getByRole('link', { name: 'Deal value', exact: true }).click();
-  await page.getByLabel('Potential value (₹)').fill('4200');
-  await page.getByLabel('Deal status').selectOption('won');
+  await page.getByRole('link', { name: 'Deals', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit' }).first().click();
+  await page.getByLabel('Deal name').fill('Sample Buyer first order');
+  await page.getByLabel('Value (₹)').fill('4200');
   await page.getByRole('button', { name: 'Save deal' }).click();
-  await expect(page.getByRole('status').getByText('Company deal details saved.')).toBeVisible();
-  const companyWon = await (await page.request.get('/api/companies/demo-ns-acme')).json() as { company: { id: string; deal_status: string; deal_value_minor: number } };
-  expect(companyWon.company).toMatchObject({ deal_status: 'won', deal_value_minor: 420000 });
+  await expect(page.getByRole('status').getByText('Deal saved.')).toBeVisible();
+  await page.getByLabel('Stage of Sample Buyer first order').selectOption('won');
+  await expect(page.getByRole('status').getByText('Deal moved to Won.')).toBeVisible();
+  await expect.poll(async () => (((await page.request.get(`/api/contacts/${contactId}`)).json()) as Promise<{ person: { stage: string } }>).then((value) => value.person.stage)).toBe('won');
+  const companyWon = await (await page.request.get('/api/companies/demo-ns-acme')).json() as { company: { id: string; won_value_minor: number } };
+  expect(companyWon.company.won_value_minor).toBe(125000 + 420000);
   expect(companyWon.company.id).toBe(companyBefore.company.id);
 
   await page.goto('/reports');
-  await expect(page.locator('.metric-card').filter({ hasText: 'Won companies' }).locator('.metric-number')).toHaveText('1');
-  await expect(page.locator('.metric-card').filter({ hasText: 'Won deal value' }).locator('.metric-number')).toHaveText('₹4,200');
+  await expect(page.locator('.metric-card').filter({ hasText: 'Won deals' }).locator('.metric-number')).toHaveText('2');
+  await expect(page.locator('.metric-card').filter({ hasText: 'Won deal value' }).locator('.metric-number')).toHaveText('₹5,450');
 });
 
 test('new accounts cannot sign in before email verification and receive a one-time verify link', async ({ browser }) => {

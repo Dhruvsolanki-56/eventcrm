@@ -12,6 +12,11 @@ describe('PostgreSQL baseline schema', () => {
     await db.exec(schema);
     const compatibility = await readFile(new URL('../server/migrations-postgres/002_sqlite_compat.sql', import.meta.url), 'utf8');
     await db.exec(compatibility);
+    // Every later migration, in order, exactly as a fresh hosted database would run them.
+    const directory = new URL('../server/migrations-postgres/', import.meta.url);
+    for (const name of (await readdir(directory)).filter((file) => /^0(0[3-9]|[1-9][0-9])_.*.sql$/.test(file)).sort()) {
+      await db.exec(await readFile(new URL(name, directory), 'utf8'));
+    }
   });
 
   afterAll(async () => db.close());
@@ -27,8 +32,9 @@ describe('PostgreSQL baseline schema', () => {
       'products', 'companies', 'contacts', 'scans', 'encounters', 'notes', 'contact_products',
       'emails', 'tasks', 'jobs', 'notifications', 'digest_runs', 'audit_events', 'workspace_settings',
       'user_workspace_preferences', 'account_tokens', 'email_send_limits', 'voice_note_usage', 'company_aliases',
+      'deals', 'email_campaigns', 'rate_limit_hits', 'ai_cache', 'ai_usage',
     ]));
-    expect(result.rows).toHaveLength(26);
+    expect(result.rows).toHaveLength(31);
   });
 
   test('keeps every SQLite table and column represented in the hosted schema', async () => {

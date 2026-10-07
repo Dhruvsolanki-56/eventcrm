@@ -617,7 +617,7 @@ export async function countPeopleByStage(actorId: string, workspaceId: string, s
 export async function listCompanies(actorId: string, workspaceId: string, search = '') {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const term = `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`;
-  return await (db.prepare(`SELECT co.id,co.name,co.website,co.deal_value_minor,co.deal_status,co.created_at,
+  const companyRows = await (db.prepare(`SELECT co.id,co.name,co.website,co.created_at,
       COUNT(DISTINCT c.id) AS people,COUNT(DISTINCT en.id) AS encounters,COUNT(DISTINCT material.id) AS materials
     FROM companies co LEFT JOIN contacts c ON c.company_id=co.id AND c.workspace_id=co.workspace_id AND c.deleted_at IS NULL AND c.archived_at IS NULL
       AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin') OR EXISTS (SELECT 1 FROM encounters x JOIN event_access ea ON ea.workspace_id=x.workspace_id AND ea.event_id=x.event_id WHERE x.workspace_id=c.workspace_id AND x.contact_id=c.id AND ea.user_id=?))
@@ -625,7 +625,21 @@ export async function listCompanies(actorId: string, workspaceId: string, search
     LEFT JOIN scans material ON material.workspace_id=co.workspace_id AND material.material_company_id=co.id AND material.status='saved'
       AND ((material.event_id IS NULL AND material.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=material.workspace_id AND ea.event_id=material.event_id AND ea.user_id=?))
     WHERE co.workspace_id=? AND co.archived_at IS NULL AND (?='' OR co.name LIKE ? ESCAPE '\\')
-    GROUP BY co.id HAVING COUNT(DISTINCT c.id)>0 OR COUNT(DISTINCT material.id)>0 OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=co.workspace_id AND m.user_id=? AND m.role='admin') ORDER BY people DESC,co.name LIMIT 200`).all(actorId, actorId, actorId, actorId, actorId, actorId, workspaceId, search.trim(), term, actorId)) as Array<Record<string, unknown>>;
+    GROUP BY co.id HAVING COUNT(DISTINCT c.id)>0 OR COUNT(DISTINCT material.id)>0 OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=co.workspace_id AND m.user_id=? AND m.role='admin') ORDER BY people DESC,co.name LIMIT 200`).all(actorId, actorId, actorId, actorId, actorId, actorId, workspaceId, search.trim(), term, actorId));
+  const totals = await companyDealTotals(actorId, workspaceId);
+  return (companyRows as Array<{ id: string; name: string; website: string | null; created_at: string; people: number; encounters: number; materials: number }>)
+    .map((row) => ({ ...row, open_value_minor: totals.get(row.id)?.open ?? 0, won_value_minor: totals.get(row.id)?.won ?? 0, deal_count: totals.get(row.id)?.count ?? 0 }));
+}
+
+/** What each company's deals add up to, counting only deals of people this person can see. */
+async function companyDealTotals(actorId: string, workspaceId: string) {
+  const rows = await (db.prepare(`SELECT d.company_id,
+      SUM(CASE WHEN d.stage NOT IN ('won','lost') THEN COALESCE(d.value_minor,0) ELSE 0 END) AS open_value,
+      SUM(CASE WHEN d.stage='won' THEN COALESCE(d.value_minor,0) ELSE 0 END) AS won_value,COUNT(*) AS deal_count
+    FROM deals d JOIN contacts c ON c.id=d.contact_id AND c.workspace_id=d.workspace_id
+    WHERE d.workspace_id=? AND d.archived_at IS NULL AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${contactVisibleSql('c')}
+    GROUP BY d.company_id`).all(workspaceId, actorId, actorId, actorId)) as Array<{ company_id: string; open_value: number | null; won_value: number | null; deal_count: number }>;
+  return new Map(rows.map((row) => [row.company_id, { open: Number(row.open_value ?? 0), won: Number(row.won_value ?? 0), count: Number(row.deal_count) }]));
 }
 
 export async function suggestCompanies(actorId: string, workspaceId: string, name: string, website: string, email: string) {
@@ -693,7 +707,10 @@ export async function getCompanyDetail(actorId: string, workspaceId: string, com
       .filter((item): item is string => typeof item === 'string' && !!item.trim());
     return { ...material, items: [...new Set(items)] };
   });
-  return { company: visible, people, materials };
+  const deals = await (db.prepare(`SELECT d.id,d.title,d.value_minor,d.stage,d.contact_id,c.name AS contact_name FROM deals d JOIN contacts c ON c.id=d.contact_id AND c.workspace_id=d.workspace_id
+    WHERE d.workspace_id=? AND d.company_id=? AND d.archived_at IS NULL AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${contactVisibleSql('c')}
+    ORDER BY CASE WHEN d.stage IN ('won','lost') THEN 1 ELSE 0 END,d.updated_at DESC LIMIT 100`).all(workspaceId, companyId, actorId, actorId, actorId));
+  return { company: visible, people, materials, deals };
 }
 
 export async function mergeCompany(actorId: string, workspaceId: string, sourceId: string, targetId: string) {
@@ -704,45 +721,29 @@ export async function mergeCompany(actorId: string, workspaceId: string, sourceI
   }
   if (sourceId === targetId) throw new Error('Choose another company to keep.');
   return await (db.transaction(async () => {
-    const getCompany = db.prepare(`SELECT id,name,normalized_name,normalized_domain,website,deal_value_minor,deal_status
+    const getCompany = db.prepare(`SELECT id,name,normalized_name,normalized_domain,website
       FROM companies WHERE workspace_id=? AND id=? AND archived_at IS NULL`);
-    const source = await (getCompany.get(workspaceId, sourceId)) as { id: string; name: string; normalized_name: string; normalized_domain: string | null; website: string | null; deal_value_minor: number | null; deal_status: string | null } | undefined;
+    const source = await (getCompany.get(workspaceId, sourceId)) as { id: string; name: string; normalized_name: string; normalized_domain: string | null; website: string | null } | undefined;
     const target = await (getCompany.get(workspaceId, targetId)) as typeof source;
     if (!source || !target) throw new Error('One of these companies is no longer available. Refresh and try again.');
-    if ((source.deal_value_minor !== null && target.deal_value_minor !== null) ||
-      (source.deal_status && target.deal_status && source.deal_status !== target.deal_status)) {
-      throw new Error('Both companies have deal details. Review those values before merging them.');
-    }
     const people = (await (db.prepare('SELECT COUNT(*) AS total FROM contacts WHERE workspace_id=? AND company_id=?').get(workspaceId, sourceId)) as { total: number }).total;
     const materials = (await (db.prepare('SELECT COUNT(*) AS total FROM scans WHERE workspace_id=? AND material_company_id=?').get(workspaceId, sourceId)) as { total: number }).total;
     await (db.prepare(`UPDATE contacts SET company_id=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND company_id=?`).run(targetId, workspaceId, sourceId));
+    // Deals follow their people; they must move before the old company row is removed or they would go with it.
+    await (db.prepare('UPDATE deals SET company_id=? WHERE workspace_id=? AND company_id=?').run(targetId, workspaceId, sourceId));
     await (db.prepare('UPDATE scans SET material_company_id=? WHERE workspace_id=? AND material_company_id=?').run(targetId, workspaceId, sourceId));
     await (db.prepare('UPDATE company_aliases SET company_id=? WHERE workspace_id=? AND company_id=?').run(targetId, workspaceId, sourceId));
     const addAlias = db.prepare('INSERT OR IGNORE INTO company_aliases(workspace_id,company_id,alias_type,alias_value) VALUES (?,?,?,?)');
     await (addAlias.run(workspaceId, targetId, 'name', source.normalized_name));
     if (source.normalized_domain) await (addAlias.run(workspaceId, targetId, 'domain', source.normalized_domain));
     await (db.prepare('DELETE FROM companies WHERE workspace_id=? AND id=?').run(workspaceId, sourceId));
-    await (db.prepare(`UPDATE companies SET website=COALESCE(NULLIF(website,''),?), normalized_domain=COALESCE(NULLIF(normalized_domain,''),?),
-      deal_value_minor=COALESCE(deal_value_minor,?), deal_status=COALESCE(deal_status,?) WHERE workspace_id=? AND id=?`)
-      .run(source.website, source.normalized_domain, source.deal_value_minor, source.deal_status, workspaceId, targetId));
+    await (db.prepare(`UPDATE companies SET website=COALESCE(NULLIF(website,''),?), normalized_domain=COALESCE(NULLIF(normalized_domain,''),?) WHERE workspace_id=? AND id=?`)
+      .run(source.website, source.normalized_domain, workspaceId, targetId));
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json)
       VALUES (?,?,?,'company_merged','company',?,?)`)
       .run(randomUUID(), workspaceId, actorId, targetId, JSON.stringify({ sourceId, sourceName: source.name, targetName: target.name, peopleMoved: people, materialsMoved: materials })));
     return { targetCompanyId: targetId, peopleMoved: people, materialsMoved: materials };
   })());
-}
-
-export async function updateCompanyDeal(actorId: string, workspaceId: string, companyId: string, valueMinor: number | null, status: 'open' | 'won' | 'lost' | null) {
-  const workspace = await (workspaceForActor(actorId, workspaceId));
-  if (!workspace || !['admin','manager'].includes(workspace.role)) throw new AccessDeniedError('An admin or manager updates company deal values.');
-  if (workspace.kind !== 'company') throw new Error('Deal values are only used in company spaces.');
-  if (!await (companyAccessible(actorId, workspaceId, companyId))) return false;
-  const changed = await (db.prepare(`UPDATE companies SET deal_value_minor=?,deal_status=? WHERE workspace_id=? AND id=? AND archived_at IS NULL`)
-    .run(valueMinor, status, workspaceId, companyId));
-  if (!changed.changes) return false;
-  await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'deal_updated','company',?,?)`)
-    .run(randomUUID(), workspaceId, actorId, companyId, JSON.stringify({ valueMinor, status })));
-  return true;
 }
 
 /** The website to read for a company: its saved website, else a person's website, else a work-email domain. */
@@ -776,10 +777,12 @@ export async function getReportData(actorId: string, workspaceId: string) {
   const stages = stageCounts.stages;
   const companies = await (listCompanies(actorId, workspaceId));
   const valueByStatus = { open: 0, won: 0, lost: 0 };
-  for (const company of companies) {
-    const status = String(company.deal_status ?? 'open') as keyof typeof valueByStatus;
-    if (company.deal_value_minor !== null && status in valueByStatus) valueByStatus[status] += Number(company.deal_value_minor);
-  }
+  const dealCounts = { open: 0, won: 0, lost: 0 };
+  const dealTotals = await (db.prepare(`SELECT CASE WHEN d.stage IN ('won','lost') THEN d.stage ELSE 'open' END AS status,COUNT(*) AS deal_count,SUM(COALESCE(d.value_minor,0)) AS total
+    FROM deals d JOIN contacts c ON c.id=d.contact_id AND c.workspace_id=d.workspace_id
+    WHERE d.workspace_id=? AND d.archived_at IS NULL AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${contactVisibleSql('c')}
+    GROUP BY CASE WHEN d.stage IN ('won','lost') THEN d.stage ELSE 'open' END`).all(workspaceId, actorId, actorId, actorId)) as Array<{ status: 'open' | 'won' | 'lost'; deal_count: number; total: number | null }>;
+  for (const row of dealTotals) { valueByStatus[row.status] = Number(row.total ?? 0); dealCounts[row.status] = Number(row.deal_count); }
   const personScope = `(c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.status='active' AND m.role='admin') OR EXISTS (SELECT 1 FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND ea.user_id=?))`;
   const workMetrics = await (db.prepare(`SELECT
       SUM(CASE WHEN t.kind='follow_up' AND t.status='done' THEN 1 ELSE 0 END) AS follow_ups_done,
@@ -811,10 +814,9 @@ export async function getReportData(actorId: string, workspaceId: string) {
     FROM events e JOIN event_access ea ON ea.event_id=e.id AND ea.workspace_id=e.workspace_id AND ea.user_id=?
     LEFT JOIN encounters en ON en.event_id=e.id AND en.workspace_id=e.workspace_id
     WHERE e.workspace_id=? GROUP BY e.id ORDER BY e.starts_at DESC`).all(actorId, workspaceId));
-  const wonCompanies = companies.filter((company) => company.deal_status === 'won');
   return {
-    stages, valueByStatus, companies: companies.length, people: stageCounts.total, events: eventRows,
-    metrics: { followUpsDone: Number(workMetrics.follow_ups_done ?? 0), replies, meetings: Number(workMetrics.meetings ?? 0), wonCount: wonCompanies.length },
+    stages, valueByStatus, dealCounts, companies: companies.length, people: stageCounts.total, events: eventRows,
+    metrics: { followUpsDone: Number(workMetrics.follow_ups_done ?? 0), replies, meetings: Number(workMetrics.meetings ?? 0), wonCount: dealCounts.won },
     dailyCaptures, activeEvent: activeEvent ? { id: activeEvent.id, name: activeEvent.name, timeZone: activeEvent.time_zone } : null,
   };
 }
@@ -833,7 +835,7 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
   const end = dateTimeInZone(shiftDay(1), 0, timeZone);
   const previousStart = dateTimeInZone(shiftDay(1 - days * 2), 0, timeZone);
   // The cohort comes only from accessible encounters, without the people-list pagination cap.
-  const rows = await (db.prepare(`SELECT c.id,c.name,c.company_id,c.stage,c.quality,c.email,c.phone,co.name AS company,co.deal_status,co.deal_value_minor,
+  const rows = await (db.prepare(`SELECT c.id,c.name,c.company_id,c.stage,c.quality,c.email,c.phone,co.name AS company,
       en.id AS encounter_id,en.event_id,en.occurred_at,e.name AS event_name
     FROM encounters en JOIN contacts c ON c.id=en.contact_id AND c.workspace_id=en.workspace_id
     JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
@@ -844,7 +846,7 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
         OR (en.event_id IS NULL AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin' AND m.status='active'))))
     ORDER BY en.occurred_at DESC`).all(workspaceId, previousStart, end, eventId, eventId, actorId, actorId, actorId)) as Array<{
       id: string; name: string; company_id: string; stage: string; quality: string | null; email: string; phone: string; company: string;
-      deal_status: string | null; deal_value_minor: number | null; encounter_id: string; event_id: string | null; occurred_at: string; event_name: string | null;
+      encounter_id: string; event_id: string | null; occurred_at: string; event_name: string | null;
     }>;
   const current = rows.filter((row) => row.occurred_at >= start);
   const workflowScans = await db.prepare(`SELECT s.event_id,s.queued_at,s.saved_at,e.name AS event_name FROM scans s
@@ -872,6 +874,13 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
   for (const email of workflowEmails) { const value = eventRow(email.event_id, email.event_name); if (inPeriod(email.created_at)) value.draftsPrepared++; if (inPeriod(email.approved_at)) value.userApproved++; if (inPeriod(email.sent_to_server_at)) value.serverAccepted++; if (inPeriod(email.reply_recorded_at)) value.repliesRecorded++; }
   const workflowEvents = [...workflowByEvent.values()].sort((a, b) => b.captured - a.captured);
   const people = [...new Map(current.map((row) => [row.id, row])).values()];
+  // Deal value comes from the deals of the people met in this period (and of this event, when one is chosen).
+  const dealRows = await (db.prepare(`SELECT d.company_id,d.stage,COALESCE(d.value_minor,0) AS value_minor FROM deals d JOIN contacts c ON c.id=d.contact_id AND c.workspace_id=d.workspace_id
+    WHERE d.workspace_id=? AND d.archived_at IS NULL AND c.deleted_at IS NULL AND c.archived_at IS NULL AND (?='' OR d.event_id=?) AND ${contactVisibleSql('c')}
+      AND EXISTS (SELECT 1 FROM encounters en WHERE en.workspace_id=d.workspace_id AND en.contact_id=d.contact_id AND en.occurred_at>=? AND en.occurred_at<? AND (?='' OR en.event_id=?))`)
+    .all(workspaceId, eventId, eventId, actorId, actorId, actorId, start, end, eventId, eventId)) as Array<{ company_id: string; stage: string; value_minor: number }>;
+  const openDeals = dealRows.filter((deal) => deal.stage !== 'won' && deal.stage !== 'lost');
+  const wonDeals = dealRows.filter((deal) => deal.stage === 'won');
   const companies = [...new Map(people.map((row) => [row.company_id, row])).values()];
   const dayMap = new Map(Array.from({ length: days }, (_, index) => [shiftDay(index + 1 - days), { people: new Set<string>(), conversations: 0 }]));
   const sourceMap = new Map<string, { id: string; name: string; people: Set<string>; conversations: number }>();
@@ -890,9 +899,10 @@ export async function getAnalytics(actorId: string, workspaceId: string, days: n
     metrics: {
       people: people.length, previousPeople: new Set(rows.filter((row) => row.occurred_at < start).map((row) => row.id)).size,
       companies: companies.length, conversations: current.length,
-      openValue: companies.filter((row) => row.deal_status === 'open').reduce((total, row) => total + (row.deal_value_minor ?? 0), 0),
-      wonValue: companies.filter((row) => row.deal_status === 'won').reduce((total, row) => total + (row.deal_value_minor ?? 0), 0),
-      wonCompanies: companies.filter((row) => row.deal_status === 'won').length,
+      openValue: openDeals.reduce((total, deal) => total + Number(deal.value_minor), 0),
+      wonValue: wonDeals.reduce((total, deal) => total + Number(deal.value_minor), 0),
+      openDeals: openDeals.length, wonDeals: wonDeals.length,
+      wonCompanies: new Set(wonDeals.map((deal) => deal.company_id)).size,
       contactable: people.filter((row) => row.email || row.phone).length,
     },
     daily: [...dayMap].map(([day, value]) => ({ day, people: value.people.size, conversations: value.conversations })),
@@ -931,7 +941,8 @@ export async function getWorkspaceExport(actorId: string, workspaceId: string) {
     workspace: { id: workspace.id, name: workspace.name, kind: workspace.kind },
     members: await (db.prepare(`SELECT u.id AS user_id,u.name,u.email,m.role,m.status,m.created_at FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? ORDER BY m.created_at`).all(workspaceId)),
     events: await (db.prepare(`SELECT id,name,starts_at,ends_at,time_zone,spend_minor,is_active,created_at FROM events WHERE workspace_id=? ORDER BY starts_at`).all(workspaceId)),
-    companies: await (db.prepare(`SELECT id,name,website,deal_value_minor,deal_status,archived_at,created_at FROM companies WHERE workspace_id=? ORDER BY name`).all(workspaceId)),
+    companies: await (db.prepare(`SELECT id,name,website,archived_at,created_at FROM companies WHERE workspace_id=? ORDER BY name`).all(workspaceId)),
+    deals: await (db.prepare(`SELECT id,contact_id,company_id,encounter_id,event_id,title,value_minor,stage,lost_reason,owner_user_id,closed_at,archived_at,created_at,updated_at FROM deals WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)),
     products: await (db.prepare(`SELECT id,name,description,url,archived_at FROM products WHERE workspace_id=? ORDER BY name`).all(workspaceId)),
     contacts: await (db.prepare(`SELECT id,company_id,name,title,email,phone,website,quality,stage,lost_reason,do_not_contact,owner_user_id,version,archived_at,deleted_at,created_at,updated_at FROM contacts WHERE workspace_id=? ORDER BY created_at`).all(workspaceId)),
     contactProducts: await (db.prepare(`SELECT contact_id,product_id FROM contact_products WHERE workspace_id=?`).all(workspaceId)),
@@ -1274,8 +1285,8 @@ export class TaskStorageLimitError extends Error {
 export async function updateTaskAction(actorId: string, workspaceId: string, taskId: string, action: 'done' | 'snooze_1' | 'snooze_3' | 'snooze_7' | 'confirm' | 'no_show' | 'cancel') {
   await (assertWorkspaceAccess(actorId, workspaceId));
   return await (db.transaction(async () => {
-    const task = await (db.prepare(`SELECT id,contact_id,kind,status,event_id FROM tasks WHERE workspace_id=? AND id=? AND status IN ('open','confirmed','proposed')`)
-      .get(workspaceId, taskId)) as { id: string; contact_id: string; kind: string; status: string; event_id: string | null } | undefined;
+    const task = await (db.prepare(`SELECT id,contact_id,kind,status,event_id,deal_id FROM tasks WHERE workspace_id=? AND id=? AND status IN ('open','confirmed','proposed')`)
+      .get(workspaceId, taskId)) as { id: string; contact_id: string; kind: string; status: string; event_id: string | null; deal_id: string | null } | undefined;
     if (!task || !await (contactAccessible(actorId, workspaceId, task.contact_id))) return false;
     if (task.event_id) {
       const authorized = await (db.prepare(`SELECT 1 FROM event_access WHERE workspace_id=? AND event_id=? AND user_id=?`).get(workspaceId, task.event_id, actorId));
@@ -1289,7 +1300,7 @@ export async function updateTaskAction(actorId: string, workspaceId: string, tas
     if (snoozeDays) await (db.prepare(`UPDATE tasks SET snoozed_until=strftime('%Y-%m-%dT09:00:00Z','now',?) WHERE workspace_id=? AND id=?`).run(`+${snoozeDays} days`, workspaceId, taskId));
     else await (db.prepare(`UPDATE tasks SET status=?,snoozed_until=NULL WHERE workspace_id=? AND id=?`).run(transition[action], workspaceId, taskId));
     if (action === 'confirm') {
-      await (db.prepare(`UPDATE contacts SET stage='meeting',version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=? AND stage NOT IN ('won','lost')`).run(workspaceId, task.contact_id));
+      await advanceDeals(workspaceId, task.contact_id, 'meeting', { dealId: task.deal_id });
     }
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'task_updated','task',?,?)`)
       .run(randomUUID(), workspaceId, actorId, taskId, JSON.stringify({ action })));
@@ -1299,7 +1310,7 @@ export async function updateTaskAction(actorId: string, workspaceId: string, tas
 
 export async function getPersonDetail(actorId: string, workspaceId: string, contactId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const person = await (db.prepare(`SELECT c.*,co.name AS company_name,co.website AS company_website,co.about AS company_about,co.deal_value_minor,co.deal_status
+  const person = await (db.prepare(`SELECT c.*,co.name AS company_name,co.website AS company_website,co.about AS company_about
     FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     WHERE c.workspace_id=? AND c.id=? AND c.deleted_at IS NULL`).get(workspaceId, contactId)) as Record<string, unknown> | undefined;
   if (!person || !await (contactAccessible(actorId, workspaceId, contactId))) return undefined;
@@ -1329,7 +1340,21 @@ export async function getPersonDetail(actorId: string, workspaceId: string, cont
       SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
       AND (en.summary<>'' OR en.open_question<>'' OR en.promised_next_step<>'' OR en.changed_since_last<>'')
     ORDER BY en.occurred_at DESC LIMIT 20`).all(workspaceId, contactId, actorId);
-  return { person, timeline, products, voiceNotes, conversationMemories };
+  const deals = await (db.prepare(`SELECT d.id,d.title,d.value_minor,d.stage,d.lost_reason,d.version,d.encounter_id,d.event_id,d.created_at,d.updated_at,en.occurred_at AS conversation_at,e.name AS event_name
+    FROM deals d LEFT JOIN encounters en ON en.id=d.encounter_id AND en.workspace_id=d.workspace_id
+    LEFT JOIN events e ON e.id=d.event_id AND e.workspace_id=d.workspace_id
+    WHERE d.workspace_id=? AND d.contact_id=? AND d.archived_at IS NULL ORDER BY CASE WHEN d.stage IN ('won','lost') THEN 1 ELSE 0 END,d.updated_at DESC`).all(workspaceId, contactId));
+  return { person, timeline, products, voiceNotes, conversationMemories, deals };
+}
+
+/** The conversations with a person that this person may see, newest first; deals can be linked to one of them. */
+export async function listContactConversations(actorId: string, workspaceId: string, contactId: string) {
+  await assertWorkspaceAccess(actorId, workspaceId);
+  await assertContactAccess(actorId, workspaceId, contactId);
+  return await (db.prepare(`SELECT en.id,en.occurred_at,en.summary,e.name AS event_name FROM encounters en
+    LEFT JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id
+    WHERE en.workspace_id=? AND en.contact_id=? AND (en.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
+    ORDER BY en.occurred_at DESC LIMIT 50`).all(workspaceId, contactId, actorId)) as Array<{ id: string; occurred_at: string; summary: string; event_name: string | null }>;
 }
 
 export async function setPersonArchived(actorId: string, workspaceId: string, contactId: string, archived: boolean) {
@@ -1607,19 +1632,82 @@ export async function deleteVoiceNote(actorId: string, workspaceId: string, note
   return note.audio_path;
 }
 
-export async function updatePersonStage(actorId: string, workspaceId: string, contactId: string, stage: string, version: number, lostReason = '') {
-  await (assertWorkspaceAccess(actorId, workspaceId));
-  await (assertContactAccess(actorId, workspaceId, contactId));
-  if (stage === 'lost' && !lostReason.trim()) return false;
-  return await (db.transaction(async () => {
-    const result = await (db.prepare(`UPDATE contacts SET stage=?,lost_reason=?,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-      WHERE workspace_id=? AND id=? AND version=? AND deleted_at IS NULL AND archived_at IS NULL`).run(stage, stage === 'lost' ? lostReason.trim() : null, workspaceId, contactId, version));
-    if (!result.changes) return false;
-    await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'stage_changed','contact',?,?)`)
-      .run(randomUUID(), workspaceId, actorId, contactId, JSON.stringify({ stage, ...(stage === 'lost' ? { lostReason: lostReason.trim() } : {}) })));
-    return true;
-  })());
+const OPEN_STAGES = ['new', 'contacted', 'replied', 'meeting'] as const;
+const NOW_SQL = `strftime('%Y-%m-%dT%H:%M:%fZ','now')`;
+
+/** The part of a query that limits contacts to the ones this person may see, written for a contact aliased `c`. It takes the actor id three times. */
+export function contactVisibleSql(alias = 'c') {
+  return `(${alias}.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships vm WHERE vm.workspace_id=${alias}.workspace_id AND vm.user_id=? AND vm.status='active' AND vm.role='admin')
+    OR EXISTS (SELECT 1 FROM encounters ven JOIN event_access vea ON vea.workspace_id=ven.workspace_id AND vea.event_id=ven.event_id
+      WHERE ven.workspace_id=${alias}.workspace_id AND ven.contact_id=${alias}.id AND vea.user_id=?))`;
 }
+
+/**
+ * A person's own stage follows their deals: the furthest-along open deal, else won if any deal was won, else lost.
+ * It stays on the person so the people list and its filters keep working, but deals are what move.
+ */
+export async function syncContactStage(workspaceId: string, contactId: string) {
+  const deals = await db.prepare(`SELECT stage,lost_reason FROM deals WHERE workspace_id=? AND contact_id=? AND archived_at IS NULL ORDER BY updated_at DESC`)
+    .all(workspaceId, contactId) as Array<{ stage: string; lost_reason: string | null }>;
+  if (!deals.length) return;
+  const open = deals.filter((deal) => (OPEN_STAGES as readonly string[]).includes(deal.stage));
+  let stage: string;
+  let lostReason: string | null = null;
+  if (open.length) stage = open.reduce((best, deal) => OPEN_STAGES.indexOf(deal.stage as typeof OPEN_STAGES[number]) > OPEN_STAGES.indexOf(best as typeof OPEN_STAGES[number]) ? deal.stage : best, open[0]!.stage);
+  else if (deals.some((deal) => deal.stage === 'won')) stage = 'won';
+  else { stage = 'lost'; lostReason = deals.find((deal) => deal.stage === 'lost')?.lost_reason ?? null; }
+  await db.prepare(`UPDATE contacts SET stage=?,lost_reason=?,version=version+1,updated_at=${NOW_SQL}
+    WHERE workspace_id=? AND id=? AND (stage<>? OR COALESCE(lost_reason,'')<>COALESCE(?,''))`).run(stage, lostReason, workspaceId, contactId, stage, lostReason);
+}
+
+/** Gives a person a first deal when they have none (people created before deals existed, or by a path that skips them). */
+export async function ensureDealForContact(workspaceId: string, contactId: string, createdBy: string | null = null) {
+  const has = await db.prepare(`SELECT 1 FROM deals WHERE workspace_id=? AND contact_id=? AND archived_at IS NULL LIMIT 1`).get(workspaceId, contactId);
+  if (has) return;
+  const contact = await db.prepare(`SELECT company_id,stage,lost_reason,owner_user_id FROM contacts WHERE workspace_id=? AND id=? AND deleted_at IS NULL`).get(workspaceId, contactId) as
+    { company_id: string; stage: string; lost_reason: string | null; owner_user_id: string | null } | undefined;
+  if (!contact) return;
+  const encounter = await db.prepare(`SELECT id,event_id FROM encounters WHERE workspace_id=? AND contact_id=? ORDER BY occurred_at DESC LIMIT 1`).get(workspaceId, contactId) as { id: string; event_id: string | null } | undefined;
+  await db.prepare(`INSERT INTO deals(id,workspace_id,contact_id,company_id,encounter_id,event_id,title,stage,lost_reason,owner_user_id,created_by) VALUES (?,?,?,?,?,?,'',?,?,?,?) ON CONFLICT(id) DO NOTHING`)
+    .run(`deal-${contactId}`, workspaceId, contactId, contact.company_id, encounter?.id ?? null, encounter?.event_id ?? null, contact.stage, contact.lost_reason, contact.owner_user_id, createdBy ?? contact.owner_user_id);
+}
+
+const advanceFrom: Record<'contacted' | 'replied' | 'meeting', string[]> = {
+  contacted: ['new'],
+  replied: ['new', 'contacted', 'lost'],
+  meeting: ['new', 'contacted', 'replied'],
+};
+
+/**
+ * Something happened for a person (an email went out, they replied, a meeting was confirmed). Only the deal it belongs to moves:
+ * the one named, else the open deals tied to the same conversation, else the person's most recently active deal.
+ */
+export async function advanceDeals(workspaceId: string, contactId: string, to: 'contacted' | 'replied' | 'meeting', target: { dealId?: string | null; encounterId?: string | null } = {}) {
+  await ensureDealForContact(workspaceId, contactId);
+  const from = advanceFrom[to];
+  const marks = from.map(() => '?').join(',');
+  let ids: string[] = [];
+  if (target.dealId) {
+    ids = (await db.prepare(`SELECT id FROM deals WHERE workspace_id=? AND contact_id=? AND id=? AND archived_at IS NULL AND stage IN (${marks})`).all(workspaceId, contactId, target.dealId, ...from) as Array<{ id: string }>).map((row) => row.id);
+  } else if (target.encounterId) {
+    ids = (await db.prepare(`SELECT id FROM deals WHERE workspace_id=? AND contact_id=? AND encounter_id=? AND archived_at IS NULL AND stage IN (${marks})`).all(workspaceId, contactId, target.encounterId, ...from) as Array<{ id: string }>).map((row) => row.id);
+  }
+  if (!ids.length) {
+    const primary = await db.prepare(`SELECT id FROM deals WHERE workspace_id=? AND contact_id=? AND archived_at IS NULL AND stage IN (${marks}) ORDER BY CASE WHEN stage='lost' THEN 1 ELSE 0 END,updated_at DESC LIMIT 1`).get(workspaceId, contactId, ...from) as { id: string } | undefined;
+    if (primary) ids = [primary.id];
+  }
+  if (!ids.length) return 0;
+  let changed = 0;
+  for (const id of ids) {
+    const result = await db.prepare(`UPDATE deals SET stage=?,lost_reason=NULL,closed_at=NULL,version=version+1,updated_at=${NOW_SQL} WHERE workspace_id=? AND id=? AND stage IN (${marks})`).run(to, workspaceId, id, ...from);
+    changed += Number(result.changes ?? 0);
+  }
+  if (changed) await syncContactStage(workspaceId, contactId);
+  return changed;
+}
+
+/** Internals the deal, event and batch-email modules build on. */
+export { db as database, assertWorkspaceAccess, assertContactAccess, contactAccessible, noteScope, emailAccessSql, hash as sha256Hex };
 
 export async function updatePersonDetails(actorId: string, workspaceId: string, contactId: string, version: number, input: { name: string; title: string; email: string; phone: string; website: string }) {
   await (assertWorkspaceAccess(actorId, workspaceId));
@@ -1654,20 +1742,17 @@ export async function markContactReplied(actorId: string, workspaceId: string, c
       .get(workspaceId, contactId)) as { stage: string; lost_reason: string | null } | undefined;
     if (!contact) return false;
 
-    const latestSentEmail = await (db.prepare(`SELECT m.id FROM emails m
+    const latestSentEmail = await (db.prepare(`SELECT m.id,m.encounter_id FROM emails m
       JOIN contacts c ON c.workspace_id=m.workspace_id AND c.id=m.contact_id
       JOIN memberships ms ON ms.workspace_id=m.workspace_id AND ms.user_id=? AND ms.status='active'
       LEFT JOIN encounters linked ON linked.workspace_id=m.workspace_id AND linked.id=m.encounter_id
       WHERE m.workspace_id=? AND m.contact_id=? AND m.status='sent' AND c.deleted_at IS NULL AND c.archived_at IS NULL
         AND ${emailAccessSql()} ORDER BY m.sent_to_server_at DESC LIMIT 1`)
-      .get(actorId, workspaceId, contactId, actorId, actorId, actorId)) as { id: string } | undefined;
-    const contactChanged = contact.stage !== 'replied' || contact.lost_reason !== null;
-    if (!contactChanged && !latestSentEmail) return true;
-
-    if (contactChanged) {
-      await (db.prepare(`UPDATE contacts SET stage='replied',lost_reason=NULL,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE workspace_id=? AND id=? AND deleted_at IS NULL AND archived_at IS NULL`).run(workspaceId, contactId));
-    }
+      .get(actorId, workspaceId, contactId, actorId, actorId, actorId)) as { id: string; encounter_id: string | null } | undefined;
+    // The reply belongs to the deal the email was about; the person's other deals stay where they are.
+    const moved = await advanceDeals(workspaceId, contactId, 'replied', { encounterId: latestSentEmail?.encounter_id ?? null });
+    if (!moved && !latestSentEmail) return true;
+    if (moved) await (db.prepare(`UPDATE contacts SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=?`).run(workspaceId, contactId));
     if (latestSentEmail) {
       await (db.prepare(`UPDATE emails SET status='replied',reply_recorded_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND contact_id=? AND id=? AND status='sent'`)
         .run(workspaceId, contactId, latestSentEmail.id));
@@ -1943,12 +2028,13 @@ export async function getEmailForWorker(emailId: string, workspaceId: string, un
 
 export async function recordEmailSent(emailId: string, workspaceId: string, messageId: string | null) {
   await (db.transaction(async () => {
-    const email = await (db.prepare(`SELECT contact_id,created_by FROM emails WHERE workspace_id=? AND id=? AND status='queued'`).get(workspaceId, emailId)) as { contact_id: string; created_by: string | null } | undefined;
+    const email = await (db.prepare(`SELECT contact_id,created_by,encounter_id FROM emails WHERE workspace_id=? AND id=? AND status='queued'`).get(workspaceId, emailId)) as { contact_id: string; created_by: string | null; encounter_id: string | null } | undefined;
     if (!email) return;
     const changed = await (db.prepare(`UPDATE emails SET status='sent',provider_message_id=?,sent_to_server_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),error_message=NULL WHERE workspace_id=? AND id=? AND status='queued'`)
       .run(messageId, workspaceId, emailId));
     if (!changed.changes) return;
-    await (db.prepare(`UPDATE contacts SET stage=CASE WHEN stage='new' THEN 'contacted' ELSE stage END,version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=? AND deleted_at IS NULL`)
+    await advanceDeals(workspaceId, email.contact_id, 'contacted', { encounterId: email.encounter_id });
+    await (db.prepare(`UPDATE contacts SET version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=? AND deleted_at IS NULL`)
       .run(workspaceId, email.contact_id));
     if (email.created_by) await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'email_sent','contact',?,?)`)
       .run(randomUUID(), workspaceId, email.created_by, email.contact_id, JSON.stringify({ emailId })));
@@ -2583,6 +2669,7 @@ export async function saveScannedLead(actorId: string, workspaceId: string, inpu
   return await (db.transaction(async () => {
     let companyId = '';
     let contactId = '';
+    let newContact = false;
     if (samePersonAccepted && personMatch) {
       if (!await (contactAccessible(actorId, workspaceId, personMatch.id))) throw new Error('This person is no longer available in your event. Ask your admin for access.');
       contactId = personMatch.id;
@@ -2605,12 +2692,14 @@ export async function saveScannedLead(actorId: string, workspaceId: string, inpu
       }
       companyId = company.id;
       contactId = randomUUID();
+      newContact = true;
       await (db.prepare(`INSERT INTO contacts(id,workspace_id,company_id,name,title,email,email_normalized,phone,phone_normalized,quality,stage,owner_user_id,website)
         VALUES (?,?,?,?,?,?,?,?,?,?,'new',?,?)`).run(contactId, workspaceId, companyId, name, input.title.trim(), email, emailNormalized, phone, phoneNormalized, input.quality, actorId, input.website.trim()));
     }
     await (db.prepare(`INSERT OR IGNORE INTO encounters(id,workspace_id,contact_id,event_id,scan_id) VALUES (?,?,?,?,?)`)
       .run(randomUUID(), workspaceId, contactId, scan.event_id, scan.id));
     const encounter = await (db.prepare(`SELECT id FROM encounters WHERE scan_id=?`).get(scan.id)) as { id: string } | undefined;
+    if (newContact) await ensureDealForContact(workspaceId, contactId, actorId);
     if (input.note.trim()) await (db.prepare(`INSERT INTO notes(id,workspace_id,contact_id,encounter_id,created_by,kind,body) VALUES (?,?,?,?,?,'text',?)`)
       .run(randomUUID(), workspaceId, contactId, encounter?.id ?? null, actorId, input.note.trim()));
     const insertProductInterest = db.prepare(`INSERT OR IGNORE INTO contact_products(workspace_id,contact_id,product_id) VALUES (?,?,?)`);
@@ -2786,16 +2875,9 @@ export async function seedDemoData(passwordHash: string) {
       ['demo-sam-company', 'demo-sam-space', 'Sam Patel', 'sampatel', null],
       ['demo-riley-company', 'demo-riley-space', 'Riley Morgan', 'rileymorgan', null],
     ] as const;
-    const insertCompany = db.prepare(`INSERT INTO companies(id,workspace_id,name,normalized_name,website,normalized_domain,deal_value_minor,deal_status)
-      VALUES (?,?,?,?,?,NULL,NULL,NULL) ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalized_name=excluded.normalized_name`);
+    const insertCompany = db.prepare(`INSERT INTO companies(id,workspace_id,name,normalized_name,website,normalized_domain)
+      VALUES (?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalized_name=excluded.normalized_name`);
     for (const company of companies) await (insertCompany.run(company[0], company[1], company[2], company[3], company[4]));
-    const seededDeals = [
-      ['demo-ns-acme', 125000, 'won'], ['demo-ns-juniper', 800000, 'open'], ['demo-ns-morrow', 450000, 'open'],
-      ['demo-ns-sora', 500000, 'lost'], ['demo-ns-bluebird', 900000, 'open'], ['demo-ns-cedar', 125000, 'open'],
-    ] as const;
-    for (const [companyId, dealValue, dealStatus] of seededDeals) {
-      await (db.prepare(`UPDATE companies SET deal_value_minor=?,deal_status=? WHERE id=? AND workspace_id='demo-northstar'`).run(dealValue, dealStatus, companyId));
-    }
     const contacts = [
       ['demo-ns-contact-1','demo-northstar','demo-ns-acme','Tessa Morgan','Procurement Director','tessa@acmepackaging.example','+1 415 555 0121','warm','contacted','demo-owner'],
       ['demo-ns-contact-2','demo-northstar','demo-ns-acme','Noah Price','Packaging Buyer','noah@acmepackaging.example','','hot','meeting','demo-rep'],
@@ -2881,6 +2963,28 @@ export async function seedDemoData(passwordHash: string) {
     await (insertEncounter.run('demo-encounter-tessa-ended', 'demo-northstar', 'demo-ns-contact-1', 'event-main-ended'));
     await (insertEncounter.run('demo-encounter-sam-private', 'demo-sam-space', 'demo-sam-contact-1', 'event-sam-private'));
     await (insertEncounter.run('demo-encounter-riley-private', 'demo-riley-space', 'demo-riley-contact-1', 'event-riley-private'));
+    // Sample deals: one for every person at the stage they are in, some with values, and a few people with more than one.
+    const dealDetails: Record<string, [string, number | null]> = {
+      'demo-ns-contact-1': ['Flexible cartons pilot', 450000], 'demo-ns-contact-2': ['Mailer sizes and lead times', 800000], 'demo-ns-contact-3': ['Seasonal launch cartons', 300000],
+      'demo-ns-contact-4': ['Market pack sizes', 450000], 'demo-ns-contact-5': ['Retail display samples', 500000], 'demo-ns-contact-6': ['Research team mailers', 900000],
+      'demo-ns-contact-10': ['Sourcing contract', 125000], 'demo-ns-contact-17': ['Pantry starter pack', 125000],
+    };
+    const dealEncounterFor = (contactId: string, workspaceId: string) => workspaceId === 'demo-northstar' ? (['demo-ns-contact-1', 'demo-ns-contact-2', 'demo-ns-contact-3'].includes(contactId) ? `demo-encounter-${contactId.slice(-1)}` : `demo-encounter-${contactId}`)
+      : workspaceId === 'demo-sam-space' ? 'demo-encounter-sam-private' : workspaceId === 'demo-riley-space' ? 'demo-encounter-riley-private' : null;
+    const dealEventFor = (workspaceId: string) => workspaceId === 'demo-northstar' ? 'event-main-active' : workspaceId === 'demo-sam-space' ? 'event-sam-private' : workspaceId === 'demo-riley-space' ? 'event-riley-private' : null;
+    const upsertDeal = db.prepare(`INSERT INTO deals(id,workspace_id,contact_id,company_id,encounter_id,event_id,title,value_minor,stage,lost_reason,owner_user_id,created_by,closed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,value_minor=excluded.value_minor,stage=excluded.stage,lost_reason=excluded.lost_reason,encounter_id=excluded.encounter_id,event_id=excluded.event_id,closed_at=excluded.closed_at`);
+    const seedDeal = async (id: string, contact: readonly string[], title: string, value: number | null, stage: string, lostReason: string | null, encounterId: string | null, eventId: string | null) =>
+      upsertDeal.run(id, contact[1], contact[0], contact[2], encounterId, eventId, title, value, stage, lostReason, contact[9], contact[9], stage === 'won' || stage === 'lost' ? new Date().toISOString() : null);
+    for (const contact of contacts) {
+      const detail = dealDetails[contact[0]] ?? ['', null];
+      const encounterId = contact[1] === 'demo-riverbend' ? null : dealEncounterFor(contact[0], contact[1]);
+      await seedDeal(`deal-${contact[0]}`, contact, detail[0], detail[1], contact[8], null, encounterId, encounterId ? dealEventFor(contact[1]) : null);
+    }
+    const byId = new Map(contacts.map((contact) => [contact[0], contact] as const));
+    await seedDeal('demo-deal-tessa-mailers', byId.get('demo-ns-contact-1')!, 'Recycled mailers rollout', 125000, 'new', null, 'demo-encounter-tessa-ended', 'event-main-ended');
+    await seedDeal('demo-deal-ari-displays', byId.get('demo-ns-contact-5')!, 'Display refresh', 500000, 'lost', 'Budget moved to next year', 'demo-encounter-demo-ns-contact-5', 'event-main-active');
+    await seedDeal('demo-deal-olivia-sample', byId.get('demo-ns-contact-10')!, 'Sample order', 125000, 'won', null, 'demo-encounter-demo-ns-contact-10', 'event-main-active');
     await (db.prepare(`DELETE FROM notes WHERE id IN ('demo-note-1','demo-note-sam-private','demo-note-riley-private')`).run());
     await (db.prepare(`INSERT OR IGNORE INTO notes(id,workspace_id,contact_id,encounter_id,kind,body) VALUES
       ('demo-note-2','demo-northstar','demo-ns-contact-2','demo-encounter-2','text','Asked for recyclable mailer sizes and lead times.'),

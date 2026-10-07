@@ -610,9 +610,9 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 .person-side[data-panel=voice] > .voice-panel,
 .person-side[data-panel=follow_up] > .planner-form,
 .person-side[data-panel=meeting] > .planner-form,
-.person-side[data-panel=deal] > .deal-form { display: grid; }
+.person-side[data-panel=deal] > .deals-panel { display: grid; }
 .person-side[data-panel=manage] > .person-manage { display: grid; gap: 16px; }
-.note-form, .voice-panel, .planner-form, .person-side .deal-form, .person-side > .email-compose { gap: 12px; padding: 20px; }
+.note-form, .voice-panel, .planner-form, .person-side .deals-panel, .person-side .deal-form, .person-side > .email-compose { gap: 12px; padding: 20px; }
 .note-form h2, .voice-panel h2, .planner-form h2, .person-side .deal-form h2, .email-compose .section-head h2 { margin: 0; font-size: 15px; }
 .note-form > .subtle, .voice-disclosure { margin: -6px 0 0; color: var(--muted); font-size: 13px; }
 .note-form > label { margin-bottom: -6px; }
@@ -1098,7 +1098,7 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
   .person-aside { position: static; max-height: none; overflow: visible; }
   .person-edit-form { grid-template-columns: minmax(0, 1fr); }
   .person-edit-form > * { grid-column: 1 !important; }
-  .note-form, .voice-panel, .planner-form, .person-side .deal-form, .person-side > .email-compose, .person-card, .timeline-card { padding: 16px; }
+  .note-form, .voice-panel, .planner-form, .person-side .deals-panel, .person-side .deal-form, .person-side > .email-compose, .person-card, .timeline-card { padding: 16px; }
   .note-form-actions > .button { flex: 1 1 100%; }
   .task-row { flex-wrap: wrap; padding: 14px; }
   .task-copy { flex-basis: calc(100% - 42px); }

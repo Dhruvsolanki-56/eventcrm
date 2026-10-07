@@ -43,9 +43,9 @@ test('sample company and attendee accounts enter their own spaces', async ({ pag
       const seededCompanies = ((await (await page.request.get('/api/companies')).json()).companies) as Array<{ id: string; name: string }>;
       expect(seededCompanies).toHaveLength(12);
       expect(new Set(seededCompanies.map((company) => company.name.toLowerCase())).size).toBe(12);
-      const acme = await (await page.request.get('/api/companies/demo-ns-acme')).json() as { people: Array<{ id: string }>; company: { deal_status: string; deal_value_minor: number } };
+      const acme = await (await page.request.get('/api/companies/demo-ns-acme')).json() as { people: Array<{ id: string }>; company: { deal_count: number; open_value_minor: number; won_value_minor: number } };
       expect(acme.people).toHaveLength(3);
-      expect(acme.company).toMatchObject({ deal_status: 'won', deal_value_minor: 125000 });
+      expect(acme.company).toMatchObject({ deal_count: 5, open_value_minor: 1500000, won_value_minor: 125000 });
       const seededPage = await (await page.request.get('/api/contacts?pageSize=200')).json() as { people: Array<{ id: string }>; total: number };
       expect(seededPage.people).toHaveLength(30);
       expect(seededPage.total).toBe(30);
@@ -268,15 +268,16 @@ test('event-limited members cannot link hidden companies or act on another event
   } finally { after.close(); }
 });
 
-test('event-scoped managers cannot change the deal for an inaccessible company', async ({ page }) => {
+test('event-scoped managers cannot see or change the deals of a person outside their events', async ({ page }) => {
   const databasePath = resolve(process.env.DATABASE_PATH ?? '');
   const db = new Database(databasePath);
-  const hiddenCompanyId = randomUUID();
+  const hiddenCompanyId = randomUUID(), hiddenContactId = randomUUID(), hiddenDealId = randomUUID();
   try {
     db.transaction(() => {
       db.prepare("UPDATE memberships SET role='manager' WHERE workspace_id='demo-northstar' AND user_id='demo-rep'").run();
-      db.prepare('INSERT INTO companies(id,workspace_id,name,normalized_name,website,normalized_domain,deal_value_minor,deal_status) VALUES (?,?,?,? ,\'\',\'\',?,?)')
-        .run(hiddenCompanyId, 'demo-northstar', 'Restricted Deal Partner', 'restricteddealpartner', 250000, 'open');
+      db.prepare("INSERT INTO companies(id,workspace_id,name,normalized_name) VALUES (?,?,?,?)").run(hiddenCompanyId, 'demo-northstar', 'Restricted Deal Partner', 'restricteddealpartner');
+      db.prepare("INSERT INTO contacts(id,workspace_id,company_id,name,owner_user_id) VALUES (?,'demo-northstar',?,'Restricted Person','demo-owner')").run(hiddenContactId, hiddenCompanyId);
+      db.prepare("INSERT INTO deals(id,workspace_id,contact_id,company_id,title,value_minor,stage,owner_user_id) VALUES (?,'demo-northstar',?,?,'Restricted deal',250000,'new','demo-owner')").run(hiddenDealId, hiddenContactId, hiddenCompanyId);
     })();
   } finally { db.close(); }
 
@@ -286,20 +287,18 @@ test('event-scoped managers cannot change the deal for an inaccessible company',
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.getByRole('heading', { name: /Good morning, Jordan/ })).toBeVisible();
   const csrf = await page.evaluate(async () => await (await fetch('/api/auth/csrf', { credentials: 'same-origin' })).json() as { csrfToken: string });
-  const response = await page.evaluate(async ({ companyId, csrfToken }) => {
-    const result = await fetch(`/api/companies/${companyId}/deal`, {
-      method: 'PUT', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-Workspace-Id': 'demo-northstar', 'X-CSRF-Token': csrfToken },
-      body: JSON.stringify({ valueMinor: 999999, status: 'won' }),
-    });
-    return { status: result.status, body: await result.text() };
-  }, { companyId: hiddenCompanyId, csrfToken: csrf.csrfToken });
-  expect(response.status, response.body).toBe(404);
+  const outcome = await page.evaluate(async ({ dealId, csrfToken }) => {
+    const headers = { 'Content-Type': 'application/json', 'X-Workspace-Id': 'demo-northstar', 'X-CSRF-Token': csrfToken };
+    const moved = await fetch(`/api/deals/${dealId}/stage`, { method: 'PATCH', credentials: 'same-origin', headers, body: JSON.stringify({ stage: 'won', version: 1 }) });
+    const listed = await (await fetch('/api/deals?pageSize=200', { credentials: 'same-origin', headers })).json() as { deals: Array<{ id: string }> };
+    return { status: moved.status, body: await moved.text(), listed: listed.deals.some((deal) => deal.id === dealId) };
+  }, { dealId: hiddenDealId, csrfToken: csrf.csrfToken });
+  expect(outcome.status, outcome.body).toBe(403);
+  expect(outcome.listed).toBe(false);
 
   const verify = new Database(databasePath, { readonly: true });
   try {
-    expect(verify.prepare('SELECT deal_value_minor,deal_status FROM companies WHERE id=?').get(hiddenCompanyId))
-      .toMatchObject({ deal_value_minor: 250000, deal_status: 'open' });
+    expect(verify.prepare('SELECT stage,value_minor FROM deals WHERE id=?').get(hiddenDealId)).toMatchObject({ stage: 'new', value_minor: 250000 });
   } finally { verify.close(); }
 });
 

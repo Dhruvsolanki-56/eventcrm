@@ -1,0 +1,34 @@
+/* Deals: the list on a person, and the pipeline cards. Colours and spacing come from the app tokens. */
+.deals-panel { display: grid; gap: 10px; }
+.deals-panel .section-head { align-items: flex-start; }
+.deal-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.deal-row { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.deal-row-main { display: grid; gap: 3px; min-width: 0; }
+.deal-row-main strong { overflow-wrap: anywhere; font-size: 14px; font-weight: 600; }
+.deal-row-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12.5px; }
+.deal-value { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.deal-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.deal-stage-pick { display: inline-flex; align-items: center; gap: 7px; margin: 0; }
+.deal-stage-pick select { min-height: 36px; padding-block: 4px; }
+.text-button.danger { color: var(--danger, #a3362d); }
+.deal-edit-form { display: grid; gap: 10px; }
+.deal-edit-form label { display: grid; gap: 4px; font-size: 13px; }
+.deal-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+.pipeline-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.pipeline-explainer { margin: 0 2px 12px; padding: 9px 12px; border-radius: var(--radius); background: var(--accent-soft); color: var(--accent-ink); font-size: 13px; line-height: 1.45; }
+.pipeline-column-value { margin: 0; padding: 0 12px 4px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pipeline-deal-value { margin-top: 3px; color: var(--ink-2); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pipeline-conversation { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-deal-dialog { display: grid; gap: 12px; width: min(460px, calc(100vw - 32px)); }
+.new-deal-dialog label { display: grid; gap: 4px; font-size: 13px; }
+.deal-person-hits { display: grid; gap: 2px; margin: 6px 0 0; padding: 0; list-style: none; }
+.deal-person-hits button { display: grid; width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; cursor: pointer; }
+.deal-person-hits button:hover, .deal-person-hits button:focus-visible { border-color: var(--accent-line); background: var(--accent-soft); }
+.deal-person-hits small { color: var(--muted); }
+.deal-person-chosen { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0; }
+.deal-person-chosen span { color: var(--muted); }
+@media (max-width: 760px) {
+  .pipeline-actions { justify-content: stretch; }
+  .pipeline-actions .button { flex: 1 1 100%; }
+}

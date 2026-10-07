@@ -60,7 +60,9 @@ test('each Pipeline column shows its true total and loads more on request', asyn
   const base = db.prepare("SELECT * FROM contacts WHERE id='demo-rb-contact-1'").get() as Record<string, unknown>;
   const insert = db.prepare(`INSERT INTO contacts (${cols.join(',')}) VALUES (${cols.map((column) => '@' + column).join(',')})`);
   const stamp = Date.now();
-  db.transaction(() => { for (let i = 0; i < 205; i++) insert.run({ ...base, id: `board-${stamp}-${i}`, name: `Board ${i}`, email: `b${i}-${stamp}@board.example`, email_normalized: `b${i}-${stamp}@board.example`, phone: '', phone_normalized: '', stage: 'replied' }); })();
+  const insertDeal = db.prepare("INSERT INTO deals(id,workspace_id,contact_id,company_id,title,stage) VALUES (?,?,?,?,?,'replied')");
+  db.transaction(() => { for (let i = 0; i < 205; i++) insertDeal.run(`board-deal-${stamp}-${i}`, base.workspace_id, `board-${stamp}-${i}`, base.company_id, `Board deal ${i}`);
+    for (let i = 0; i < 205; i++) insert.run({ ...base, id: `board-${stamp}-${i}`, name: `Board ${i}`, email: `b${i}-${stamp}@board.example`, email_normalized: `b${i}-${stamp}@board.example`, phone: '', phone_normalized: '', stage: 'replied' }); })();
   db.close();
   await page.goto('/');
   await page.getByRole('button', { name: /Alex Rivera/ }).click();

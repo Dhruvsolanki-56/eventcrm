@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import pg, { type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 
 const { Pool } = pg;
+// Counts, sums and money columns come back from Postgres as 64-bit integers; the rest of the code expects plain numbers, as SQLite gives.
+pg.types.setTypeParser(20, (value: string) => Number(value));
 type Queryable = { query: (text: string, values?: unknown[]) => Promise<QueryResult<QueryResultRow>> };
 type NamedValues = Record<string, unknown>;
 type SyncOrAsync<T> = T | Promise<T>;

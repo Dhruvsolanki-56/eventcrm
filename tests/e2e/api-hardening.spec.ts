@@ -72,7 +72,7 @@ test('acting on an archived person is refused with 403 (not a server error) and 
   expect(archive.status(), await archive.text()).toBe(200);
   try {
     const attempts: Array<[string, string, unknown?]> = [
-      ['PATCH', `/api/contacts/${target.id}/stage`, { stage: 'contacted', version: target.version }],
+      ['POST', '/api/deals', { contactId: target.id, title: 'sneaky', valueMinor: null, encounterId: null }],
       ['PATCH', `/api/contacts/${target.id}`, { version: target.version, name: 'Renamed', title: '', email: '', phone: '', website: '' }],
       ['POST', `/api/contacts/${target.id}/notes`, { body: 'sneaky' }],
       ['POST', `/api/contacts/${target.id}/conversations`, { body: 'sneaky', eventId: null, clientConversationId: crypto.randomUUID() }],
@@ -98,7 +98,7 @@ test('acting on an archived person is refused with 403 (not a server error) and 
 test('every API address refuses an unauthenticated caller and never reveals internals', async () => {
   const ctx: APIRequestContext = await pwRequest.newContext({ baseURL: api() });
   const { csrfToken } = await (await ctx.get('/api/auth/csrf')).json() as { csrfToken: string };
-  const protectedReads = ['/api/workspace', '/api/contacts', '/api/companies', '/api/tasks', '/api/email-desk', '/api/scans', '/api/settings', '/api/team', '/api/problems', '/api/analytics', '/api/reports', '/api/dashboard', '/api/notifications', '/api/export/people.csv', '/api/export/data.json', '/api/contacts/demo-ns-contact-1', '/api/companies/demo-ns-acme', '/api/emails/demo-email-tessa-draft', '/api/notes/x/audio', '/api/scans/x/image'];
+  const protectedReads = ['/api/workspace', '/api/deals', '/api/contacts', '/api/companies', '/api/tasks', '/api/email-desk', '/api/scans', '/api/settings', '/api/team', '/api/problems', '/api/analytics', '/api/reports', '/api/dashboard', '/api/notifications', '/api/export/people.csv', '/api/export/data.json', '/api/contacts/demo-ns-contact-1', '/api/companies/demo-ns-acme', '/api/emails/demo-email-tessa-draft', '/api/notes/x/audio', '/api/scans/x/image'];
   for (const path of protectedReads) {
     const res = await ctx.get(path);
     const text = await res.text();
@@ -107,7 +107,7 @@ test('every API address refuses an unauthenticated caller and never reveals inte
     expect(text).not.toContain('Tessa');
   }
   const protectedWrites: Array<[string, string, unknown]> = [
-    ['POST', '/api/contacts/demo-ns-contact-1/notes', { body: 'x' }], ['PATCH', '/api/contacts/demo-ns-contact-1/stage', { stage: 'won', version: 1 }], ['DELETE', '/api/contacts/demo-ns-contact-1', {}],
+    ['POST', '/api/contacts/demo-ns-contact-1/notes', { body: 'x' }], ['PATCH', '/api/deals/deal-demo-ns-contact-1/stage', { stage: 'won', version: 1 }], ['POST', '/api/deals', { contactId: 'demo-ns-contact-1', title: 'x', valueMinor: null, encounterId: null }], ['DELETE', '/api/deals/deal-demo-ns-contact-1', {}], ['DELETE', '/api/contacts/demo-ns-contact-1', {}],
     ['POST', '/api/events', { name: 'x', startsAt: '2026-01-01T00:00:00Z', endsAt: '2026-01-02T00:00:00Z', timeZone: 'UTC', spendMinor: null, active: false }],
     ['PUT', '/api/settings', { key: 'email', value: {} }], ['POST', '/api/team/invites', { role: 'manager', eventIds: [] }], ['POST', '/api/emails/demo-email-tessa-draft/send', {}],
   ];

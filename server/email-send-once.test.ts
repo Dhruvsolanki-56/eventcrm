@@ -71,6 +71,15 @@ async function approveFreshDraft(label: string) {
   expect(approved.status).toBe('queued');
   return id;
 }
+// The database clock and this process's clock can differ by a few milliseconds, so a job made a moment ago may not be due yet.
+async function claimWhenDue(database: typeof import('./db.js')) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const job = await database.claimNextJob();
+    if (job) return job;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return undefined;
+}
 const jobFor = (emailId: string) => raw.prepare("SELECT id,payload_json FROM jobs WHERE type='email_send' AND payload_json LIKE ?").get(`%${emailId}%`) as { id: string; payload_json: string };
 const statusOf = (emailId: string) => raw.prepare('SELECT status,error_message FROM emails WHERE id=?').get(emailId) as { status: string; error_message: string | null };
 
@@ -79,7 +88,7 @@ describe('sending one approved email', () => {
     const { processJob } = await import('./worker.js');
     const database = await import('./db.js');
     const id = await approveFreshDraft('normal');
-    const job = (await database.claimNextJob())!;
+    const job = (await claimWhenDue(database))!;
     expect(job.payload_json).toContain(id);
     const before = accepted;
     await processJob(job);
@@ -93,7 +102,7 @@ describe('sending one approved email', () => {
     const id = await approveFreshDraft('crashed');
     // What a crashed worker leaves behind: sending began, nothing was recorded.
     await database.setJobPayloadField(jobFor(id).id, 'sendStartedAt', new Date().toISOString());
-    const job = (await database.claimNextJob())!;
+    const job = (await claimWhenDue(database))!;
     expect(job.payload_json).toContain(id);
     const before = accepted;
     await processJob(job);
@@ -109,7 +118,7 @@ describe('sending one approved email', () => {
     const id = await approveFreshDraft('refused');
     refuseRecipients = true;
     try {
-      const job = (await database.claimNextJob())!;
+      const job = (await claimWhenDue(database))!;
       await expect(processJob(job)).rejects.toThrow();
     } finally { refuseRecipients = false; }
     expect(JSON.parse(jobFor(id).payload_json)).not.toHaveProperty('sendStartedAt');

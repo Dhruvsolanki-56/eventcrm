@@ -16,6 +16,7 @@ test('an admin combines duplicate companies without losing people or deal accoun
       const addPerson = db.prepare('INSERT INTO contacts(id,workspace_id,company_id,name,email,email_normalized,owner_user_id) VALUES (?,\'demo-northstar\',?,?,?,?,\'demo-owner\')');
       addPerson.run(sourcePersonId, sourceId, 'Source Person', 'source@fieldnote-merge.example', 'source@fieldnote-merge.example');
       addPerson.run(targetPersonId, targetId, 'Target Person', 'target@harbor-merge.example', 'target@harbor-merge.example');
+      db.prepare("INSERT INTO deals(id,workspace_id,contact_id,company_id,title,value_minor,stage,owner_user_id) VALUES (?,'demo-northstar',?,?,'Merge fixture deal',777000,'new','demo-owner')").run(randomUUID(), sourcePersonId, sourceId);
     })();
   } finally { db.close(); }
   try {
@@ -37,9 +38,11 @@ test('an admin combines duplicate companies without losing people or deal accoun
   await page.getByRole('button', { name: 'Combine company records' }).click();
   await expect(page).toHaveURL(new RegExp(`/companies/${targetId}$`));
   await expect(page.getByRole('heading', { name: 'Harbor Duplicate Test' })).toBeVisible();
-  const after = await (await page.request.get(`/api/companies/${targetId}`, { headers })).json() as { people: Array<{ id: string }>; company: { deal_value_minor: number | null } };
+  const after = await (await page.request.get(`/api/companies/${targetId}`, { headers })).json() as { people: Array<{ id: string }>; company: { deal_count: number; open_value_minor: number }; deals: Array<{ contact_id: string; title: string }> };
   expect(new Set(after.people.map((person) => person.id))).toEqual(new Set([...beforeSource.people, ...beforeTarget.people].map((person) => person.id)));
-  expect(after.company.deal_value_minor).toBeNull();
+  // The deal moved with its person; it did not go when the old company record was removed.
+  expect(after.company).toMatchObject({ deal_count: 1, open_value_minor: 777000 });
+  expect(after.deals).toEqual([expect.objectContaining({ contact_id: sourcePersonId, title: 'Merge fixture deal' })]);
   expect((await page.request.get(`/api/companies/${sourceId}`, { headers })).status()).toBe(404);
   const byOldName = await (await page.request.get('/api/companies/suggestions?name=Fieldnote%20Duplicate%20Test', { headers })).json() as { companies: Array<{ id: string; reason: string }> };
   expect(byOldName.companies[0]).toMatchObject({ id: targetId, reason: 'same name' });
@@ -54,18 +57,11 @@ test('an admin combines duplicate companies without losing people or deal accoun
   }
 });
 
-test('a team member cannot merge companies and conflicting deal values are protected', async ({ page }) => {
+test('a team member cannot merge companies', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Priya Shah/ }).click();
   const csrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
   const headers = { 'X-Workspace-Id': 'demo-northstar', 'X-CSRF-Token': csrf.csrfToken };
   const denied = await page.request.post('/api/companies/demo-ns-juniper/merge', { headers, data: { targetCompanyId: 'demo-ns-acme', confirmation: 'MERGE' } });
   expect(denied.status()).toBe(403);
-  await page.locator('.profile-button').click();
-  await page.getByRole('menuitem', { name: 'Sign out' }).click();
-  await page.getByRole('button', { name: /Maya Chen/ }).click();
-  const ownerCsrf = await (await page.request.get('/api/auth/csrf')).json() as { csrfToken: string };
-  const conflict = await page.request.post('/api/companies/demo-ns-juniper/merge', { headers: { ...headers, 'X-CSRF-Token': ownerCsrf.csrfToken }, data: { targetCompanyId: 'demo-ns-acme', confirmation: 'MERGE' } });
-  expect(conflict.status()).toBe(409);
-  expect((await conflict.json() as { message: string }).message).toContain('Both companies have deal details');
 });
