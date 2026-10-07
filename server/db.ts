@@ -1956,6 +1956,7 @@ export async function updateEmailDraft(actorId: string, workspaceId: string, ema
   const draft = await (db.prepare(`SELECT contact_id FROM emails WHERE workspace_id=? AND id=? AND status='draft'`).get(workspaceId, emailId)) as { contact_id: string } | undefined;
   if (!draft || !await (emailAccessible(actorId, workspaceId, emailId))) return false;
   await db.prepare(`UPDATE jobs SET status='failed',last_error='A person saved this draft.',finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND type='email_draft' AND json_extract(payload_json,'$.emailId')=? AND status IN ('queued','running')`).run(workspaceId, emailId);
+  await cancelAutoSend(workspaceId, emailId);
   const changed = await (db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft' AND contact_id IN (
     SELECT id FROM contacts WHERE workspace_id=? AND do_not_contact=0 AND deleted_at IS NULL)`)
     .run(subject.trim(), body.trim(), workspaceId, emailId, workspaceId));
@@ -1964,7 +1965,7 @@ export async function updateEmailDraft(actorId: string, workspaceId: string, ema
 
 export async function listEmailDesk(actorId: string, workspaceId: string) {
   await assertWorkspaceAccess(actorId, workspaceId);
-  const drafts = await db.prepare(`SELECT m.id,m.contact_id,m.recipient,m.subject,m.body,m.status,m.created_at,m.approved_at,m.sent_to_server_at,m.sources_json,
+  const drafts = await db.prepare(`SELECT m.id,m.contact_id,m.recipient,m.subject,m.body,m.status,m.created_at,m.approved_at,m.sent_to_server_at,m.send_at,m.sources_json,
       c.name AS person_name,co.name AS company_name,e.name AS event_name,
       linked.summary,linked.open_question,linked.promised_next_step,linked.changed_since_last
     FROM emails m JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
@@ -1993,7 +1994,7 @@ export async function listEmailDesk(actorId: string, workspaceId: string) {
   return { drafts, people };
 }
 
-export async function approveEmailDraft(actorId: string, workspaceId: string, emailId: string, smtpReady: boolean, publicBaseUrl: string) {
+export async function approveEmailDraft(actorId: string, workspaceId: string, emailId: string, smtpReady: boolean, publicBaseUrl: string, sendAt?: Date) {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const email = await (db.prepare(`SELECT m.id,m.contact_id,m.subject,m.body,c.email,c.do_not_contact FROM emails m
     JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
@@ -2008,15 +2009,68 @@ export async function approveEmailDraft(actorId: string, workspaceId: string, em
   }
   const token = randomBytes(32).toString('base64url');
   const emailIdLink = randomUUID();
+  const runAt = (sendAt ?? new Date()).toISOString();
+  const later = Boolean(sendAt) && sendAt!.getTime() > Date.now() + 30_000;
   await (db.transaction(async () => {
     await (recordEmailSendAllowance(actorId, workspaceId));
-    const changed = await (db.prepare(`UPDATE emails SET status='queued',approved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),unsubscribe_token_hash=? WHERE workspace_id=? AND id=? AND status='draft'`)
-      .run(hash(token), workspaceId, emailId));
+    const changed = await (db.prepare(`UPDATE emails SET status='queued',approved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),unsubscribe_token_hash=?,send_at=? WHERE workspace_id=? AND id=? AND status='draft'`)
+      .run(hash(token), later ? runAt : null, workspaceId, emailId));
     if (!changed.changes) throw new Error('This draft was already approved or changed.');
-    await (db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at) VALUES (?,?, 'email_send', ?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
-      .run(emailIdLink, workspaceId, JSON.stringify({ emailId, unsubscribeToken: token })));
+    await (db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at) VALUES (?,?, 'email_send', ?,${later ? '?' : "strftime('%Y-%m-%dT%H:%M:%fZ','now')"})`)
+      .run(...[emailIdLink, workspaceId, JSON.stringify({ emailId, unsubscribeToken: token }), ...(later ? [runAt] : [])]));
   })());
-  return { status: 'queued' as const, message: 'Approved and queued for the mail server.' };
+  return later
+    ? { status: 'queued' as const, scheduled: true, sendAt: runAt, message: 'Approved. It will go out at the time you chose.' }
+    : { status: 'queued' as const, scheduled: false, sendAt: null, message: 'Approved and queued for the mail server.' };
+}
+
+/** The shortest hold before an automatic send, so a person always has time to look. */
+export function autoSendMinimumHoldMs() {
+  const seconds = Number(process.env.AUTO_SEND_MIN_DELAY_SECONDS);
+  return (Number.isFinite(seconds) && seconds >= 0 ? seconds : 300) * 1000;
+}
+
+/** Plans an automatic send for a draft. A person can stop it any time before it goes out. */
+export async function queueAutoSend(workspaceId: string, emailId: string, actorId: string, sendAt: Date) {
+  const when = new Date(Math.max(sendAt.getTime(), Date.now() + autoSendMinimumHoldMs())).toISOString();
+  await (db.transaction(async () => {
+    await (db.prepare(`UPDATE emails SET send_at=? WHERE workspace_id=? AND id=? AND status='draft'`).run(when, workspaceId, emailId));
+    await (db.prepare(`INSERT INTO jobs(id,workspace_id,type,payload_json,run_at,max_attempts) VALUES (?,?, 'email_auto_send', ?, ?, 3)`)
+      .run(randomUUID(), workspaceId, JSON.stringify({ emailId, actorId }), when));
+  })());
+  return when;
+}
+
+/** Removes a planned automatic send. Returns true if one was waiting. */
+export async function cancelAutoSend(workspaceId: string, emailId: string) {
+  const removed = await (db.prepare(`DELETE FROM jobs WHERE workspace_id=? AND type='email_auto_send' AND status IN ('queued','running') AND json_extract(payload_json,'$.emailId')=?`).run(workspaceId, emailId));
+  if (removed.changes) await (db.prepare(`UPDATE emails SET send_at=NULL WHERE workspace_id=? AND id=? AND status='draft'`).run(workspaceId, emailId));
+  return removed.changes > 0;
+}
+
+/** Puts a running job back to be tried again later without using up one of its attempts. */
+export async function deferJob(jobId: string, seconds: number) {
+  await (db.prepare(`UPDATE jobs SET status='queued',lease_until=NULL,attempts=CASE WHEN attempts>0 THEN attempts-1 ELSE 0 END,run_at=? WHERE id=? AND status='running'`)
+    .run(new Date(Date.now() + seconds * 1000).toISOString(), jobId));
+}
+
+export async function emailDraftIsImproving(workspaceId: string, emailId: string) {
+  const row = await (db.prepare(`SELECT 1 AS found FROM jobs WHERE workspace_id=? AND type='email_draft' AND status IN ('queued','running') AND json_extract(payload_json,'$.emailId')=?`).get(workspaceId, emailId));
+  return Boolean(row);
+}
+
+/** Takes a scheduled email back before it goes out, and returns it to drafts. */
+export async function cancelScheduledEmail(actorId: string, workspaceId: string, emailId: string) {
+  await (assertWorkspaceAccess(actorId, workspaceId));
+  if (!await (emailAccessible(actorId, workspaceId, emailId))) return false;
+  if (await (cancelAutoSend(workspaceId, emailId))) return true;
+  return await (db.transaction(async () => {
+    const removed = await (db.prepare(`DELETE FROM jobs WHERE workspace_id=? AND type='email_send' AND status='queued' AND run_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_extract(payload_json,'$.emailId')=?`).run(workspaceId, emailId));
+    if (!removed.changes) return false;
+    await (db.prepare(`UPDATE emails SET status='draft',approved_at=NULL,send_at=NULL,unsubscribe_token_hash=NULL WHERE workspace_id=? AND id=? AND status='queued'`).run(workspaceId, emailId));
+    await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id) VALUES (?,?,?,'email_schedule_cancelled','email',?)`).run(randomUUID(), workspaceId, actorId, emailId));
+    return true;
+  })());
 }
 
 export async function getEmailForWorker(emailId: string, workspaceId: string, unsubscribeToken: string) {

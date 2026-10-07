@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { createTransport } from 'nodemailer';
 import { leadMailTransportReady, sendResendEmail } from './resend-email.js';
 import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetConfirmSchema, PasswordResetRequestSchema, SaveLeadSchema, SignupSchema, SessionSchema, WebsiteSchema } from '../shared/contracts.js';
+import { parseSendSchedule, resolveSendAt } from '../shared/send-schedule.js';
 import {
   AccessDeniedError,
   createSession,
@@ -86,6 +87,8 @@ import {
   updateEmailDraft,
   listEmailDesk,
   approveEmailDraft,
+  cancelScheduledEmail,
+  queueAutoSend,
   unsubscribeByToken,
   getEmailStatus,
   retryEmail,
@@ -1024,11 +1027,17 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add a conversation note and choose an event, or choose no event.' });
   try {
     const saved = await addConversation(actor.id, workspace.id, id.data, parsed.data);
-    const draftSettings = await getWorkspaceSetting(actor.id, workspace.id, 'draftAutomation') as { autoDraftAfterConversation?: boolean } | undefined;
+    const draftSettings = await getWorkspaceSetting(actor.id, workspace.id, 'draftAutomation') as { autoDraftAfterConversation?: boolean; autoSend?: { enabled?: boolean; schedule?: unknown } } | undefined;
     let autoDraft: (Omit<Awaited<ReturnType<typeof createEmailDraft>>, 'generation'> & { generation: string }) | null = null;
+    let autoSendAt: string | null = null;
     if (draftSettings?.autoDraftAfterConversation && !saved.duplicate) {
       try {
         autoDraft = await createEmailDraft(actor.id, workspace.id, id.data);
+        const schedule = draftSettings.autoSend?.enabled ? parseSendSchedule(draftSettings.autoSend.schedule) : null;
+        if (schedule && leadMailTransportReady() && await workspaceMailSender(workspace.id) && process.env.PUBLIC_BASE_URL) {
+          try { autoSendAt = await queueAutoSend(workspace.id, autoDraft.id, actor.id, resolveSendAt(schedule)); }
+          catch { console.error(JSON.stringify({ event: 'auto_send_not_queued', workspaceId: workspace.id })); }
+        }
         if (isEmailDraftAIEnabled()) {
           try {
             await queueEmailDraftImprovement(workspace.id, autoDraft.id, autoDraft.subject, autoDraft.body);
@@ -1038,7 +1047,7 @@ app.post('/api/contacts/:contactId/conversations', requireContext, noteLimiter, 
       }
       catch { console.error(JSON.stringify({ event: 'automatic_draft_unavailable', workspaceId: workspace.id })); }
     }
-    res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate, autoDraft });
+    res.status(saved.duplicate ? 200 : 201).json({ saved: true, encounterId: saved.id, duplicate: saved.duplicate, autoDraft, autoSendAt });
   } catch (error) {
     if (error instanceof NoteStorageLimitError) return res.status(413).json({ code: error.code, message: error.message });
     if (error instanceof AccessDeniedError) return res.status(403).json({ code: 'forbidden', message: error.message });
@@ -1158,14 +1167,14 @@ app.put('/api/emails/:emailId', requireContext, async (req, res) => {
 app.post('/api/emails/:emailId/send', requireContext, async (req, res) => {
   const { actor, workspace } = res.locals.context as RequestContext;
   const id = z.string().uuid().safeParse(req.params.emailId);
-  const parsed = z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(8000) }).strict().safeParse(req.body);
+  const parsed = z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(8000), sendAt: z.string().datetime().optional() }).strict().safeParse(req.body);
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_email_draft', message: 'Add a subject and message before sending.' });
   if (await draftRecipientOptedOut(actor.id, workspace.id, id.data)) return res.status(409).json({ code: 'recipient_opted_out', message: 'This person has asked not to receive follow-up email, so this draft will not be sent.' });
   if (!await (updateEmailDraft(actor.id, workspace.id, id.data, parsed.data.subject, parsed.data.body))) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to send.' });
   const publicUrl = process.env.PUBLIC_BASE_URL ?? '';
   if (isProduction && publicUrl && !publicUrl.startsWith('https://')) return res.status(503).json({ code: 'https_required', message: 'The public email link must use HTTPS before sending.' });
   try {
-    const result = await (approveEmailDraft(actor.id, workspace.id, id.data, Boolean(leadMailTransportReady() && await (workspaceMailSender(workspace.id))), publicUrl));
+    const result = await (approveEmailDraft(actor.id, workspace.id, id.data, Boolean(leadMailTransportReady() && await (workspaceMailSender(workspace.id))), publicUrl, parsed.data.sendAt ? resolveSendAt({ mode: 'at', at: parsed.data.sendAt }) : undefined));
     res.json(result);
   } catch (error) {
     if (error instanceof EmailSendRateLimitError) {
@@ -1174,6 +1183,13 @@ app.post('/api/emails/:emailId/send', requireContext, async (req, res) => {
     }
     refuse(res, error, 409, 'email_not_approved', 'This email could not be approved.');
   }
+});
+
+app.post('/api/emails/:emailId/cancel-schedule', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().uuid().safeParse(req.params.emailId);
+  if (!id.success || !await (cancelScheduledEmail(actor.id, workspace.id, id.data))) return res.status(409).json({ code: 'email_not_scheduled', message: 'This email is not waiting for a scheduled time, or it has already gone out.' });
+  res.json({ status: 'draft', message: 'Scheduling cancelled. The email is back in drafts.' });
 });
 
 app.get('/api/emails/:emailId', requireContext, async (req, res) => {
@@ -1490,8 +1506,14 @@ app.put('/api/settings', requireContext, async (req, res) => {
     value = reminderSettings.data;
   }
   if (parsed.data.key === 'draftAutomation') {
-    const settings = z.object({ autoDraftAfterConversation: z.boolean() }).strict().safeParse(value);
+    const settings = z.object({ autoDraftAfterConversation: z.boolean(), autoSend: z.object({ enabled: z.boolean(), schedule: z.unknown() }).strict().optional() }).strict().safeParse(value);
     if (!settings.success) return res.status(400).json({ code: 'invalid_draft_automation', message: 'Choose whether to prepare drafts after a conversation.' });
+    if (settings.data.autoSend) {
+      const schedule = parseSendSchedule(settings.data.autoSend.schedule);
+      if (!schedule) return res.status(400).json({ code: 'invalid_send_schedule', message: 'Choose a valid time for automatic sending.' });
+      if (settings.data.autoSend.enabled && !settings.data.autoDraftAfterConversation) return res.status(400).json({ code: 'auto_send_needs_drafts', message: 'Automatic sending needs automatic drafts to be on.' });
+      settings.data.autoSend.schedule = schedule;
+    }
     value = settings.data;
   }
   await (setWorkspaceSetting(actor.id, workspace.id, parsed.data.key, value));

@@ -108,34 +108,50 @@ export default function SettingsPage() {
   </section>;
 }
 
+type AutoSendChoice = { enabled: boolean; kind: 'delay' | 'window'; minutes: number; time: string; businessDaysOnly: boolean };
+
 function DraftAutomationSettings() {
   const { session, csrfToken, notify } = useWorkspace();
   const [enabled, setEnabled] = useState(false);
+  const [send, setSend] = useState<AutoSendChoice>({ enabled: false, kind: 'window', minutes: 60, time: '09:00', businessDaysOnly: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [caps, setCaps] = useState<{ emailDrafts: boolean; emailSending: boolean } | null>(null);
   useEffect(() => {
     void Promise.all([
-      request<{ draftAutomation?: { autoDraftAfterConversation?: boolean } | null }>('/api/settings', {}, { workspaceId: session.workspace.id }),
+      request<{ draftAutomation?: { autoDraftAfterConversation?: boolean; autoSend?: { enabled?: boolean; schedule?: { mode: string; minutes?: number; time?: string; businessDaysOnly?: boolean } } } | null }>('/api/settings', {}, { workspaceId: session.workspace.id }),
       request<{ emailDrafts?: boolean; emailSending?: boolean }>('/api/capabilities').catch(() => ({} as { emailDrafts?: boolean; emailSending?: boolean })),
     ]).then(([settings, capabilities]) => {
       setEnabled(Boolean(settings.draftAutomation?.autoDraftAfterConversation));
+      const saved = settings.draftAutomation?.autoSend;
+      if (saved?.schedule) setSend({ enabled: Boolean(saved.enabled), kind: saved.schedule.mode === 'delay' ? 'delay' : 'window', minutes: saved.schedule.minutes ?? 60, time: saved.schedule.time ?? '09:00', businessDaysOnly: saved.schedule.businessDaysOnly !== false });
       setCaps({ emailDrafts: Boolean(capabilities.emailDrafts), emailSending: Boolean(capabilities.emailSending) });
     }).catch((error) => notify((error as Error).message)).finally(() => setLoading(false));
   }, [session.workspace.id, notify]);
-  // A single on/off switch saves itself; there is no second button to forget.
-  async function toggle(next: boolean) {
-    const previous = enabled;
-    setEnabled(next); setSaving(true);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // Every change saves itself; there is no second button to forget.
+  async function persist(nextDrafts: boolean, nextSend: AutoSendChoice, message: string) {
+    const previous = { enabled, send };
+    setEnabled(nextDrafts); setSend(nextSend); setSaving(true);
+    const schedule = nextSend.kind === 'delay' ? { mode: 'delay', minutes: nextSend.minutes } : { mode: 'window', time: nextSend.time, timeZone, businessDaysOnly: nextSend.businessDaysOnly };
     try {
-      await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'draftAutomation', value: { autoDraftAfterConversation: next } }) }, { csrfToken, workspaceId: session.workspace.id });
-      notify(next ? 'Drafts will be prepared when you save a conversation.' : 'Automatic drafts are off.');
-    } catch (error) { setEnabled(previous); notify((error as Error).message); }
+      await request('/api/settings', { method: 'PUT', body: JSON.stringify({ key: 'draftAutomation', value: { autoDraftAfterConversation: nextDrafts, autoSend: { enabled: nextDrafts && nextSend.enabled, schedule } } }) }, { csrfToken, workspaceId: session.workspace.id });
+      notify(message);
+    } catch (error) { setEnabled(previous.enabled); setSend(previous.send); notify((error as Error).message); }
     finally { setSaving(false); }
   }
+  const toggle = (next: boolean) => persist(next, { ...send, enabled: next ? send.enabled : false }, next ? 'Drafts will be prepared when you save a conversation.' : 'Automatic drafts are off.');
+  const changeSend = (patch: Partial<AutoSendChoice>) => persist(enabled, { ...send, ...patch }, patch.enabled === undefined ? 'Sending time saved.' : patch.enabled ? 'Drafts will be sent automatically at the chosen time.' : 'Automatic sending is off. Drafts wait for you.');
   return <Section className="draft-automation-settings" titleId="draft-automation-title" title="Drafts after a conversation" description="Encore can prepare an editable email as soon as you save a conversation. Nothing is sent on its own.">
     {loading ? <p className="task-group-empty">Loading…</p> : <>
       <label className="draft-automation-choice"><input type="checkbox" checked={enabled} disabled={saving} onChange={(event) => void toggle(event.target.checked)} /><span><strong>Prepare a draft when a conversation is saved</strong><small>One draft per conversation. People without an email address, or who opted out, get none. Saves as soon as you change it.</small></span></label>
+      {enabled && <div className="auto-send-box"><label className="draft-automation-choice"><input type="checkbox" checked={send.enabled} disabled={saving || !caps?.emailSending} onChange={(event) => void changeSend({ enabled: event.target.checked })} /><span><strong>Send these drafts automatically</strong><small>{caps?.emailSending ? 'Off by default. When on, each draft is sent for you at the time below unless you edit or approve it first, and the person is never emailed if they opted out. There is always at least a five-minute hold so you can stop it.' : 'Mail sending is not set up, so drafts cannot be sent automatically.'}</small></span></label>
+        {send.enabled && <fieldset className="auto-send-timing"><legend>When should it go out?</legend>
+          <label><input type="radio" name="auto-send-kind" checked={send.kind === 'window'} disabled={saving} onChange={() => void changeSend({ kind: 'window' })} /> At a set time of day</label>
+          <label><input type="radio" name="auto-send-kind" checked={send.kind === 'delay'} disabled={saving} onChange={() => void changeSend({ kind: 'delay' })} /> After a delay</label>
+          {send.kind === 'window' ? <div className="auto-send-row"><label>Time of day<input type="time" value={send.time} disabled={saving} onChange={(event) => event.target.value && void changeSend({ time: event.target.value })} /></label><label className="inline-check"><input type="checkbox" checked={send.businessDaysOnly} disabled={saving} onChange={(event) => void changeSend({ businessDaysOnly: event.target.checked })} /> Weekdays only</label><small>Uses your time zone ({timeZone}).</small></div>
+            : <div className="auto-send-row"><label>Wait<select value={send.minutes} disabled={saving} onChange={(event) => void changeSend({ minutes: Number(event.target.value) })}>{[[15, '15 minutes'], [60, '1 hour'], [240, '4 hours'], [1440, '1 day'], [2880, '2 days']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div>}
+        </fieldset>}</div>}
       <ol className="automation-steps" aria-label="How a draft reaches the person">
         <li><strong>You save a conversation</strong><span>On the person’s page.</span></li>
         <li><strong>A draft is prepared</strong><span>{caps?.emailDrafts ? 'It starts as a template, then AI improves it in a few seconds.' : 'A clear template with what you discussed. AI writing is not set up.'}</span></li>

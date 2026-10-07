@@ -1588,3 +1588,14 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 .pipeline-more { width: 100%; min-height: 40px; margin-top: 4px; border: 1px dashed var(--line-strong); border-radius: 8px; background: transparent; color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer; }
 .pipeline-more:hover:not(:disabled) { background: var(--surface); }
 .pipeline-more:disabled { cursor: wait; opacity: .7; }
+
+.send-timing { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem 1rem; }
+.send-timing label { display: grid; gap: .25rem; font-size: .85rem; }
+.send-timing small { color: var(--muted, #5d5a52); }
+
+.auto-send-box { display: grid; gap: .75rem; margin: .75rem 0; padding: .9rem 1rem; border: 1px solid var(--line, #d9d5c9); border-radius: .6rem; }
+.auto-send-timing { display: grid; gap: .5rem; border: 0; padding: 0; margin: 0; }
+.auto-send-timing legend { font-weight: 600; margin-bottom: .25rem; }
+.auto-send-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1.25rem; }
+.auto-send-row label { display: grid; gap: .25rem; }
+.auto-send-row .inline-check { display: flex; align-items: center; gap: .4rem; }
