@@ -13,6 +13,7 @@ import { createTransport } from 'nodemailer';
 import { leadMailTransportReady, sendResendEmail } from './resend-email.js';
 import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetConfirmSchema, PasswordResetRequestSchema, SaveLeadSchema, SignupSchema, SessionSchema, WebsiteSchema } from '../shared/contracts.js';
 import { approveCampaign, cancelCampaign, CampaignLimitError, createCampaign, getCampaign, listCampaigns, previewAudience, removeCampaignRecipient, updateCampaignTemplate } from './campaigns.js';
+import { guardedAI, trimForAI } from './ai-guard.js';
 import { parseSendSchedule, resolveSendAt } from '../shared/send-schedule.js';
 import {
   AccessDeniedError,
@@ -871,7 +872,8 @@ app.post('/api/companies/:companyId/about-suggestion', aiSuggestionLimiter, requ
   if (!target) return res.status(404).json({ code: 'company_missing', message: 'This company is no longer available.' });
   try {
     const page = await fetchPublicPageText(target.website);
-    const about = await suggestCompanyAbout(target.name, page.text);
+    const pageText = trimForAI(page.text, 6000);
+    const about = await guardedAI({ workspaceId: workspace.id, kind: 'company_about', input: { name: target.name, pageText }, run: () => suggestCompanyAbout(target.name, pageText) });
     if (!about) return res.status(422).json({ code: 'about_unclear', message: 'The website does not say clearly what this company does. You can type a short description instead.' });
     res.json({ about, source: new URL(page.finalUrl).hostname.replace(/^www\./, '') });
   } catch (error) { refuse(res, error, 422, 'about_unavailable', 'The company could not be read.'); }
@@ -1072,7 +1074,7 @@ app.post('/api/contacts/:contactId/conversation-summary-suggestion', aiSuggestio
   const parsed = z.object({ text: z.string().trim().min(1).max(4000) }).strict().safeParse(req.body);
   if (!id.success || !parsed.success) return res.status(400).json({ code: 'invalid_conversation', message: 'Add what you discussed first.' });
   if (!await getPersonDetail(actor.id, workspace.id, id.data)) return res.status(404).json({ code: 'person_missing', message: 'This person is no longer available.' });
-  try { res.json({ summary: await summarizeCheckedTranscript(parsed.data.text) }); }
+  try { const text = trimForAI(parsed.data.text, 4000); res.json({ summary: await guardedAI({ workspaceId: workspace.id, kind: 'transcript_summary', input: text, run: () => summarizeCheckedTranscript(text) }) }); }
   catch (error) { refuse(res, error, 503, 'summary_unavailable', 'A summary could not be prepared.'); }
 });
 
@@ -1086,9 +1088,10 @@ app.post('/api/contacts/:contactId/conversation-context-suggestion', aiSuggestio
   const settings = await getWorkspaceSetting(actor.id, workspace.id, workspace.kind === 'personal' ? 'aboutMe' : 'knowledge') as Record<string, unknown> | undefined;
   const previous = detail.conversationMemories as Array<{ summary?: string }>;
   try {
-    res.json(await suggestConversationContext({ note: parsed.data.text, personName: String(detail.person.name ?? ''),
+    const contextInput = { note: trimForAI(parsed.data.text, 4000), personName: String(detail.person.name ?? ''),
       ourRole: String(settings?.ourRole ?? settings?.role ?? ''), whatWeSell: String(settings?.whatYouSell ?? settings?.lookingFor ?? ''),
-      previousSummary: previous[0]?.summary ?? '' }));
+      previousSummary: trimForAI(previous[0]?.summary ?? '', 700) };
+    res.json(await guardedAI({ workspaceId: workspace.id, kind: 'conversation_context', input: contextInput, run: () => suggestConversationContext(contextInput) }));
   } catch (error) { refuse(res, error, 503, 'context_suggestion_unavailable', 'AI note help is unavailable.'); }
 });
 
@@ -1129,7 +1132,7 @@ app.post('/api/contacts/:contactId/follow-up-suggestion', aiSuggestionLimiter, r
   try {
     const context = await (getFollowUpSuggestionContext(actor.id, workspace.id, id.data));
   if (!isAIProviderEnabled()) return res.json({ available: false, message: 'AI suggestions are turned off. Choose a date and write the next step yourself.' });
-    const suggestion = await suggestFollowUp(context);
+    const suggestion = await guardedAI({ workspaceId: workspace.id, kind: 'follow_up', input: context, run: () => suggestFollowUp(context) });
     if (!suggestion) return res.json({ available: false, message: 'AI suggestions are not set up. Choose a date and write the next step yourself.' });
     res.json({ available: true, ...suggestion });
   } catch {
@@ -1153,7 +1156,7 @@ app.post('/api/emails/:emailId/alternate', requireContext, async (req, res) => {
     if (isEmailDraftAIEnabled()) {
       const suggestion = await getAlternateEmailDraftSuggestion(actor.id, workspace.id, id.data);
       if (!suggestion) return res.status(409).json({ code: 'email_draft_changed', message: 'This draft is no longer available to change.' });
-      try { generated = await draftEmail(suggestion.aiContext, true); }
+      try { generated = await guardedAI({ workspaceId: workspace.id, kind: 'email_draft_alternate', input: suggestion.aiContext, run: () => draftEmail(suggestion.aiContext, true) }); }
       catch { console.error(JSON.stringify({ event: 'ai_email_alternate_unavailable', workspaceId: workspace.id })); }
     }
     const draft = await (createAlternateEmailDraft(actor.id, workspace.id, id.data, generated ?? undefined));
@@ -1487,7 +1490,7 @@ app.post('/api/notes/:noteId/summary-suggestion', aiSuggestionLimiter, requireCo
   const note = await getVoiceNote(actor.id, workspace.id, id.data);
   if (!note) return res.status(404).json({ code: 'audio_missing', message: 'This recording is no longer available.' });
   if (!note.transcript.trim()) return res.status(409).json({ code: 'transcript_needed', message: 'Check and save the words first.' });
-  try { return res.json({ summary: await summarizeCheckedTranscript(note.transcript) }); }
+  try { const text = trimForAI(note.transcript, 4000); return res.json({ summary: await guardedAI({ workspaceId: workspace.id, kind: 'transcript_summary', input: text, run: () => summarizeCheckedTranscript(text) }) }); }
   catch (error) { return refuse(res, error, 503, 'summary_unavailable', 'AI note help is unavailable.'); }
 });
 
@@ -1527,7 +1530,7 @@ app.post('/api/setup/profile-suggestion', aiSuggestionLimiter, requireContext, a
   if (workspace.kind !== 'company' || workspace.role !== 'admin') return res.status(403).json({ code: 'settings_permission', message: 'A company admin manages shared email context.' });
   const parsed = z.object({ sourceText: z.string().trim().min(30).max(8000) }).strict().safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ code: 'invalid_profile_source', message: 'Paste at least a short paragraph from your website or brochure.' });
-  try { res.json(await suggestBusinessProfile(parsed.data.sourceText)); }
+  try { const sourceText = trimForAI(parsed.data.sourceText, 6000); res.json(await guardedAI({ workspaceId: workspace.id, kind: 'business_profile', input: sourceText, run: () => suggestBusinessProfile(sourceText) })); }
   catch (error) { refuse(res, error, 503, 'profile_suggestion_unavailable', 'AI setup help is unavailable.'); }
 });
 
@@ -1539,7 +1542,8 @@ app.post('/api/setup/profile-from-website', aiSuggestionLimiter, requireContext,
   if (!isCompanyAboutEnabled()) return res.status(503).json({ code: 'about_ai_off', message: 'AI is not set up here. You can type a short description instead.' });
   try {
     const page = await fetchPublicPageText(parsed.data.website);
-    res.json({ ...(await suggestProfileFromWebsite(page.text)), website: page.finalUrl.replace(/\/$/, '') });
+    const pageText = trimForAI(page.text, 6000);
+    res.json({ ...(await guardedAI({ workspaceId: workspace.id, kind: 'business_profile', input: pageText, run: () => suggestProfileFromWebsite(pageText) })), website: page.finalUrl.replace(/\/$/, '') });
   } catch (error) { refuse(res, error, 422, 'profile_from_website_unavailable', 'The website could not be read.'); }
 });
 
@@ -1835,7 +1839,8 @@ app.post('/api/scans/:scanId/ai-read', aiSuggestionLimiter, requireContext, asyn
   try {
     const scan = await getScan(actor.id, workspace.id, scanId.data);
     if (!scan?.image_path || !scan.image_mime || ['saved','discarded'].includes(scan.status)) return res.status(404).json({ code: 'scan_not_available', message: 'This photo is already saved or was removed.' });
-    const result = await readCard(scan.image_path, scan.image_mime);
+    const imageHash = createHash('sha256').update(await readFile(scan.image_path)).digest('hex');
+    const result = await guardedAI({ workspaceId: workspace.id, kind: 'card_read', input: imageHash, cacheable: (value) => value.available, run: () => readCard(scan.image_path!, scan.image_mime!) });
     if (!result.available) return res.status(503).json({ code: 'ai_read_failed', message: 'AI could not read this photo. Check the on-device result or type the details.' });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ fields: result.data, source: 'ai_suggestion', needsReview: true });
