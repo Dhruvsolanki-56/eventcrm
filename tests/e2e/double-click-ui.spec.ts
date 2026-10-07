@@ -22,11 +22,11 @@ test('double-clicking Create and use on the capture screen makes one event', asy
   expect(await eventsNamed(page, name)).toBe(1);
 });
 
-test('double-clicking Add event in Settings makes one event', async ({ page }) => {
+test('double-clicking Add event on the Events page makes one event', async ({ page }) => {
   await signInAsMaya(page);
-  await page.goto('/settings?tab=team');
+  await page.goto('/events');
   await page.getByRole('button', { name: 'Add event' }).first().click();
-  const name = `Settings Double ${Date.now()}`;
+  const name = `Events Page Double ${Date.now()}`;
   await page.getByLabel('Event name').fill(name);
   await page.getByLabel('Starts').fill('2027-06-10');
   await page.getByLabel('Ends').fill('2027-06-12');

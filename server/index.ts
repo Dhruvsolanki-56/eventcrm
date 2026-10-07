@@ -128,6 +128,7 @@ import { suggestConversationContext, summarizeCheckedTranscript } from './gemini
 import { suggestBusinessProfile } from './gemini-profile.js';
 import { isCompanyAboutEnabled, suggestCompanyAbout, suggestProfileFromWebsite } from './company-about.js';
 import { fetchPublicPageText } from './safe-web.js';
+import { getEventDetail, listEventsWithStats } from './events.js';
 import { archiveDeal, countDealsByStage, createDeal, listDeals, MAX_DEAL_VALUE_MINOR, moveDeal, updateDeal } from './deals.js';
 import { imageDifferenceHash } from './visual-hash.js';
 import { startWorker } from './worker.js';
@@ -673,6 +674,23 @@ app.put('/api/events/:eventId', requireContext, async (req, res) => {
     const message = userMessage(error, 'The event could not be saved.');
     res.status(message.startsWith('Only a company admin') ? 403 : 400).json({ code: 'event_not_saved', message });
   }
+});
+
+app.get('/api/events', requireContext, async (_req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(await listEventsWithStats(actor.id, workspace.id)); }
+  catch (error) { refuse(res, error, 409, 'events_unavailable', 'The events could not be loaded.'); }
+});
+
+app.get('/api/events/:eventId', requireContext, async (req, res) => {
+  const { actor, workspace } = res.locals.context as RequestContext;
+  const id = z.string().min(1).max(80).safeParse(req.params.eventId);
+  if (!id.success) return res.status(404).json({ code: 'event_missing', message: 'This event is no longer available.' });
+  try {
+    const detail = await getEventDetail(actor.id, workspace.id, id.data);
+    if (!detail) return res.status(404).json({ code: 'event_missing', message: 'This event is no longer available.' });
+    res.setHeader('Cache-Control', 'private, no-store'); res.json(detail);
+  } catch (error) { refuse(res, error, 409, 'events_unavailable', 'The event could not be loaded.'); }
 });
 
 app.delete('/api/team/invites/:inviteId', requireContext, async (req, res) => {

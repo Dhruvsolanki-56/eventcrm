@@ -80,11 +80,12 @@ test('implemented route and accessible-button audit at desktop and phone widths'
   await page.getByRole('link', { name: 'Company details' }).first().click();
   await expect(page.getByRole('heading', { name: 'Acme Packaging' })).toBeVisible();
   await expect(page.locator('.company-deals').getByText('Acme first order')).toBeVisible();
-  await page.getByRole('link', { name: 'Settings', exact: true }).click();
-  await page.getByRole('button', { name: /Events & team/ }).click();
-  await page.getByRole('button', { name: /Pacific Packaging Expo/ }).first().click();
+  await page.getByRole('link', { name: 'Events', exact: true }).click();
+  await page.getByRole('link', { name: /Pacific Packaging Expo/ }).first().click();
+  await page.getByRole('button', { name: 'Edit event' }).click();
   await page.getByLabel('Event spend (₹)').fill('10000');
   await page.getByRole('button', { name: 'Save event' }).click();
+  await expect(page.getByRole('status').getByText('Event details saved.')).toBeVisible();
   await page.getByRole('link', { name: 'Reports', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
   await expect(page.locator('.metric-card').filter({ hasText: 'Follow-ups done' })).toBeVisible();

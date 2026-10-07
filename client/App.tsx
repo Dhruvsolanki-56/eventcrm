@@ -29,6 +29,8 @@ const SettingsRoute = lazy(() => import('./SettingsPage.js'));
 const OnboardingRoute = lazy(() => import('./OnboardingPage.js'));
 const AnalyticsRoute = lazy(() => import('./AnalyticsPage.js'));
 const EmailDeskRoute = lazy(() => import('./EmailDeskPage.js'));
+const EventsRoute = lazy(() => import('./EventsPage.js').then((module) => ({ default: module.EventsPage })));
+const EventDetailRoute = lazy(() => import('./EventsPage.js').then((module) => ({ default: module.EventDetailPage })));
 const OverviewActivity = lazy(() => import('./AnalyticsPage.js').then((module) => ({ default: module.OverviewActivity })));
 const TOUR_STEPS = [
   { title: 'Capture one card at a time.', body: 'Take a picture or choose a card photo. Upload starts reading right away, while you can keep adding the next card.' },
@@ -379,6 +381,7 @@ function WorkspaceShell() {
     { to: '/follow-ups', label: 'Follow-ups', icon: Clock3 },
     { to: '/people', label: 'People', icon: Users },
     { to: '/companies', label: 'Companies', icon: Building2 },
+    { to: '/events', label: 'Events', icon: CalendarDays },
     ...(manager ? [{ to: '/pipeline', label: 'Pipeline', icon: ArrowRight }, { to: '/analytics', label: 'Analytics', icon: BarChart3 }, { to: '/reports', label: 'Reports', icon: FileChartColumn }] : []),
     ...(admin ? [{ to: '/settings', label: 'Settings', icon: SettingsIcon }] : []),
   ];
@@ -387,6 +390,7 @@ function WorkspaceShell() {
     { to: '/scan', label: 'Scan', icon: ScanLine },
     { to: '/email', label: 'Email Desk', icon: Mail },
     { to: '/people', label: 'People', icon: Users },
+    { to: '/events', label: 'Events', icon: CalendarDays },
     { to: '/follow-ups', label: 'Follow-ups', icon: Clock3 },
     { to: '/analytics', label: 'Analytics', icon: BarChart3 },
     { to: '/settings', label: 'Settings', icon: SettingsIcon },
@@ -451,6 +455,8 @@ function WorkspaceShell() {
           <Route path="/review/:scanId" element={<ReviewPage />} />
           <Route path="/people" element={<PeoplePage />} />
           <Route path="/people/:contactId" element={<PersonPage />} />
+          <Route path="/events" element={<Suspense fallback={<div className="surface-card records-empty">Opening events…</div>}><EventsRoute /></Suspense>} />
+          <Route path="/events/:eventId" element={<Suspense fallback={<div className="surface-card records-empty">Opening event…</div>}><EventDetailRoute /></Suspense>} />
           <Route path="/companies" element={company ? <CompaniesPage /> : <NotFoundPage />} />
           <Route path="/companies/:companyId" element={company ? <CompanyPage /> : <NotFoundPage />} />
           <Route path="/pipeline" element={manager ? <PipelinePage /> : <NotFoundPage />} />

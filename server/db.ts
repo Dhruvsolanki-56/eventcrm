@@ -2982,7 +2982,7 @@ export async function seedDemoData(passwordHash: string) {
       await seedDeal(`deal-${contact[0]}`, contact, detail[0], detail[1], contact[8], null, encounterId, encounterId ? dealEventFor(contact[1]) : null);
     }
     const byId = new Map(contacts.map((contact) => [contact[0], contact] as const));
-    await seedDeal('demo-deal-tessa-mailers', byId.get('demo-ns-contact-1')!, 'Recycled mailers rollout', 125000, 'new', null, 'demo-encounter-tessa-ended', 'event-main-ended');
+    await seedDeal('demo-deal-tessa-mailers', byId.get('demo-ns-contact-1')!, 'Recycled mailers rollout', 125000, 'new', null, 'demo-encounter-1', 'event-main-active');
     await seedDeal('demo-deal-ari-displays', byId.get('demo-ns-contact-5')!, 'Display refresh', 500000, 'lost', 'Budget moved to next year', 'demo-encounter-demo-ns-contact-5', 'event-main-active');
     await seedDeal('demo-deal-olivia-sample', byId.get('demo-ns-contact-10')!, 'Sample order', 125000, 'won', null, 'demo-encounter-demo-ns-contact-10', 'event-main-active');
     await (db.prepare(`DELETE FROM notes WHERE id IN ('demo-note-1','demo-note-sam-private','demo-note-riley-private')`).run());

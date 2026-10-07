@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, Download, Mic, Pencil, Plus, RefreshCw, X } from 'lucide-react';
+import { CheckCircle2, Download, Mic, RefreshCw } from 'lucide-react';
 import { statusWords } from '../shared/contracts.js';
 import { request, requestDownload, saveDownload } from './api.js';
 import { askConfirm } from './confirm.js';
@@ -8,7 +8,6 @@ import { IdeaChips } from './quick-capture-ui.js';
 import { addListPhrase, neverPromiseIdeas, roleIdeas } from './quick-capture.js';
 import { useWorkspace } from './workspace-context.js';
 import { Skeleton } from './skeletons.js';
-import { formatMoney } from './money.js';
 
 type SectionProps = { title: string; description?: string; className?: string; titleId?: string; action?: ReactNode; children: ReactNode };
 
@@ -52,7 +51,7 @@ export default function SettingsPage() {
   const tabs: Array<[SectionKey, string]> = [
     ['profile', personal ? 'My profile' : 'Business profile'],
     ['email', 'Email & reminders'],
-    ...(admin ? [['team', 'Events & team'] as [SectionKey, string]] : []),
+    ...(admin ? [['team', 'Team'] as [SectionKey, string]] : []),
     ['data', 'Data & activity'],
   ];
   const text = (key: string) => String(form[key] ?? '');
@@ -97,7 +96,7 @@ export default function SettingsPage() {
       {admin || personal ? <DraftAutomationSettings /> : null}
       {personal || session.workspace.role === 'admin' ? <ReminderSettings /> : null}
     </div>
-    {admin && <div hidden={section !== 'team'} className="settings-card"><EventSettings /><TeamSettings /></div>}
+    {admin && <div hidden={section !== 'team'} className="settings-card"><TeamSettings /></div>}
     <div hidden={section !== 'data'} className="settings-card">
       {admin && <DataExportPanel personal={false} />}
       {personal && <DataExportPanel personal />}
@@ -315,77 +314,6 @@ type TeamSettingsData = {
   members: Array<{ user_id: string; name: string; email: string; role: 'admin' | 'manager' | 'representative'; event_names: string | null; event_ids: string[] }>;
   invites: Array<{ id: string; role: string; eventIds: string[]; expiresAt: string; expired: boolean }>;
 };
-type EventEditorState = { id?: string; name: string; startDate: string; endDate: string; timeZone: string; spend: string; active: boolean };
-function eventEditor(event: TeamSettingsData['events'][number]): EventEditorState {
-  return { id: event.id, name: event.name, startDate: event.starts_at.slice(0, 10), endDate: event.ends_at.slice(0, 10), timeZone: event.time_zone, spend: event.spend_minor === null ? '' : (event.spend_minor / 100).toFixed(2), active: Boolean(event.is_active) };
-}
-const shortDate = (value: string) => new Date(`${value.slice(0, 10)}T12:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-const money = (minor: number | null) => minor === null ? '' : formatMoney(minor);
-
-function EventSettings() {
-  const { session, csrfToken, notify } = useWorkspace();
-  const [events, setEvents] = useState<TeamSettingsData['events']>([]);
-  const [draft, setDraft] = useState<EventEditorState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const load = useCallback(async () => {
-    const result = await request<TeamSettingsData>('/api/team', {}, { workspaceId: session.workspace.id });
-    setEvents(result.events);
-    setDraft((current) => {
-      const match = current?.id ? result.events.find((event) => event.id === current.id) : undefined;
-      return match ? eventEditor(match) : current;
-    });
-  }, [session.workspace.id]);
-  useEffect(() => { void load().catch((issue) => setError((issue as Error).message)).finally(() => setLoading(false)); }, [load]);
-  function newEvent() {
-    const today = new Date().toISOString().slice(0, 10);
-    setDraft({ name: '', startDate: today, endDate: today, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', spend: '', active: false });
-    setError('');
-  }
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!draft) return;
-    setSaving(true); setError('');
-    try {
-      const startsAt = new Date(`${draft.startDate}T00:00:00.000Z`).toISOString();
-      const endsAt = new Date(`${draft.endDate}T23:59:59.000Z`).toISOString();
-      const spendMinor = draft.spend.trim() ? Math.round(Number(draft.spend) * 100) : null;
-      if (draft.spend.trim() && (!Number.isFinite(spendMinor) || spendMinor! < 0)) throw new Error('Enter a valid event spend.');
-      const payload = { name: draft.name, startsAt, endsAt, timeZone: draft.timeZone, spendMinor, active: draft.active };
-      const result = draft.id
-        ? await request<{ id: string }>(`/api/events/${draft.id}`, { method: 'PUT', body: JSON.stringify(payload) }, { csrfToken, workspaceId: session.workspace.id })
-        : await request<{ id: string }>('/api/events', { method: 'POST', body: JSON.stringify(payload) }, { csrfToken, workspaceId: session.workspace.id });
-      setDraft((current) => current ? { ...current, id: result.id } : current);
-      await load();
-      window.dispatchEvent(new Event('gather:workspace-changed'));
-      notify('Event details saved.');
-    } catch (issue) { setError((issue as Error).message); }
-    finally { setSaving(false); }
-  }
-  const editor = draft && <form className="event-edit-form" onSubmit={(event) => void submit(event)} aria-label={draft.id ? `Edit ${draft.name}` : 'New event'}>
-    <div className="field-grid"><label>Event name<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} maxLength={160} required autoFocus={!draft.id} /></label><label>Time zone<input value={draft.timeZone} onChange={(event) => setDraft({ ...draft, timeZone: event.target.value })} maxLength={80} placeholder="America/Los_Angeles" required /><small>Use a time zone name such as America/Los_Angeles.</small></label></div>
-    <div className="field-grid three"><label>Starts<input type="date" value={draft.startDate} onChange={(event) => setDraft({ ...draft, startDate: event.target.value })} required /></label><label>Ends<input type="date" value={draft.endDate} onChange={(event) => setDraft({ ...draft, endDate: event.target.value })} required /></label><label>Event spend (₹)<input type="number" min="0" step="0.01" value={draft.spend} onChange={(event) => setDraft({ ...draft, spend: event.target.value })} placeholder="Not set" /></label></div>
-    <label className="active-event-toggle"><input type="checkbox" checked={draft.active} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} /> Make this the active event</label>
-    <div className="event-form-footer"><button type="button" className="button secondary" onClick={() => { setDraft(null); setError(''); }}>Close</button><button className="button primary" disabled={saving}>{saving ? 'Saving…' : draft.id ? 'Save event' : 'Add event'}</button></div>
-  </form>;
-  return <Section className="event-settings" title="Events" description="Dates, local time zone and optional spend for each event. The active event is used for new captures." action={<button type="button" className="button secondary" onClick={newEvent}><Plus size={15} aria-hidden="true" /> Add event</button>}>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    {loading ? <p className="task-group-empty">Loading events…</p> : <div className="event-choice-list">
-      {draft && !draft.id && editor}
-      {events.map((event) => <div className={`event-item${draft?.id === event.id ? ' open' : ''}`} key={event.id}>
-        <button className="event-choice" type="button" aria-expanded={draft?.id === event.id} onClick={() => { setDraft(draft?.id === event.id ? null : eventEditor(event)); setError(''); }}>
-          <span className="event-choice-name"><strong>{event.name}</strong>{event.is_active ? <span className="active-event-label">Active</span> : null}</span>
-          <span className="event-choice-meta">{shortDate(event.starts_at)} – {shortDate(event.ends_at)}</span>
-          <span className="event-choice-meta">{event.time_zone}</span>
-          <span className="event-choice-meta">{money(event.spend_minor) || 'No spend'}</span>
-          {draft?.id === event.id ? <X size={15} aria-hidden="true" /> : <Pencil size={14} aria-hidden="true" />}
-        </button>
-        {draft?.id === event.id && editor}
-      </div>)}
-      {!events.length && !draft && <p className="task-group-empty">No events yet. Add the event you are attending.</p>}
-    </div>}
-  </Section>;
-}
 
 function TeamSettings() {
   const { session, csrfToken, notify } = useWorkspace();

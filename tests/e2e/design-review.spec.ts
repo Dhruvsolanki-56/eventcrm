@@ -40,7 +40,7 @@ test('light workspace renders without horizontal overflow on core routes', async
         }
       }
       if (name === 'settings') {
-        for (const section of ['Email & reminders', 'Events & team', 'Data & activity', 'Business profile']) {
+        for (const section of ['Email & reminders', 'Team', 'Data & activity', 'Business profile']) {
           await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: new RegExp(section) }).click();
           await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
           await page.screenshot({ path: testInfo.outputPath(`settings-${section.split(' ')[0].toLowerCase()}-${width}.png`), fullPage: true });

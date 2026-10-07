@@ -471,7 +471,7 @@ test('company invite links create scoped team access and removal takes effect im
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Events & team/ }).click();
+  await page.getByRole('button', { name: 'Team', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Team access' })).toBeVisible();
   const openInvites = page.locator('.team-list').filter({ has: page.getByRole('heading', { name: 'Open invite links' }) });
   await expect(page.getByRole('button', { name: 'Create invite link' })).toBeVisible();
@@ -516,7 +516,7 @@ test('company invite links create scoped team access and removal takes effect im
   await adminPage.goto('/');
   await adminPage.getByRole('button', { name: /Maya Chen/ }).click();
   await adminPage.getByRole('link', { name: 'Settings' }).click();
-  await adminPage.getByRole('button', { name: /Events & team/ }).click();
+  await adminPage.getByRole('button', { name: 'Team', exact: true }).click();
   const memberRow = adminPage.locator('.team-row').filter({ hasText: email });
   await expect(memberRow).toBeVisible();
   await memberRow.getByRole('button', { name: 'Edit access' }).click();
@@ -551,9 +551,9 @@ test('company invite links create scoped team access and removal takes effect im
 test('company admins can create events, set dates and spend, and switch the active event', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Events & team/ }).click();
+  await page.getByRole('link', { name: 'Events', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Events', exact: true })).toBeVisible();
+  // Events are managed here, not in Settings.
   await page.getByRole('button', { name: 'Add event' }).first().click();
   const eventName = `New Event ${Date.now()}`;
   await page.getByLabel('Event name').fill(eventName);
@@ -563,19 +563,29 @@ test('company admins can create events, set dates and spend, and switch the acti
   await page.getByLabel('Event spend (₹)').fill('12345');
   await page.getByLabel('Make this the active event').check();
   await page.getByRole('button', { name: 'Add event' }).last().click();
-  await expect(page.getByText(eventName).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: eventName })).toBeVisible();
   await expect(page.locator('.topbar-event')).toHaveText(eventName);
+  await expect(page.locator('.event-stat').filter({ hasText: 'Spend' }).first()).toContainText('₹12,345');
   await page.getByRole('link', { name: 'Reports' }).click();
   await expect(page.getByText('Event spend: ₹12,345').first()).toBeVisible();
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Events & team/ }).click();
-  await page.getByRole('button', { name: /Pacific Packaging Expo/ }).first().click();
+  await page.getByRole('link', { name: 'Events', exact: true }).click();
+  await page.getByRole('link', { name: /Pacific Packaging Expo/ }).first().click();
+  await page.getByRole('button', { name: 'Edit event' }).click();
   await page.getByLabel('Make this the active event').check();
   await page.getByRole('button', { name: 'Save event' }).click();
   await expect(page.locator('.topbar-event')).toHaveText('Pacific Packaging Expo');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1440, height: 1000 });
+});
+
+test('Settings no longer holds event management', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /Maya Chen/ }).click();
+  await page.goto('/settings?tab=team');
+  await expect(page.getByRole('heading', { name: 'Team access' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add event' })).toHaveCount(0);
+  await expect(page.getByLabel('Event spend (₹)')).toHaveCount(0);
 });
 
 test('person detail edits detect stale changes and offer a reload', async ({ page, browser }) => {

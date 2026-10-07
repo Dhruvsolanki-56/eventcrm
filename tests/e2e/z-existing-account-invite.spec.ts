@@ -9,7 +9,7 @@ test('an existing attendee accepts a company invite and keeps both workspaces', 
   await page.goto('/');
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Events & team/ }).click();
+  await page.getByRole('button', { name: 'Team', exact: true }).click();
   await page.locator('.team-event-choice input').first().check();
   await page.getByRole('button', { name: 'Create invite link' }).click();
   const inviteInput = page.getByLabel(/Share this link/);
