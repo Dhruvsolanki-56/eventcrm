@@ -8,7 +8,7 @@ test('main screens keep unique ids, labelled fields and full-size selects on a p
   await page.getByRole('button', { name: /Maya Chen/ }).click();
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const path of ['/', '/scan', '/people', '/pipeline', '/companies', '/email', '/analytics', '/settings', '/settings?tab=team', '/people/demo-ns-contact-1', '/companies/demo-ns-acme', '/follow-ups', '/problems']) {
+  for (const path of ['/', '/scan', '/people', '/pipeline', '/events', '/events/event-main-active', '/campaigns', '/companies', '/email', '/analytics', '/settings', '/settings?tab=team', '/people/demo-ns-contact-1', '/companies/demo-ns-acme', '/follow-ups', '/problems']) {
     await page.goto(path);
     await page.waitForLoadState('networkidle');
     const found = await page.evaluate(() => {

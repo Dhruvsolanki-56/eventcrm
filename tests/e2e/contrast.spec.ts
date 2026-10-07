@@ -8,7 +8,7 @@ test('text contrast meets WCAG AA on the main screens at desktop and phone width
   const seen = new Map<string, { n: number; where: string }>();
   for (const width of [1280, 390]) {
   await page.setViewportSize({ width, height: width > 500 ? 900 : 844 });
-  for (const path of ['/', '/scan', '/people', '/pipeline', '/companies', '/email', '/analytics', '/settings', '/settings?tab=team', '/people/demo-ns-contact-1', '/companies/demo-ns-acme', '/follow-ups', '/problems']) {
+  for (const path of ['/', '/scan', '/people', '/pipeline', '/events', '/events/event-main-active', '/campaigns', '/companies', '/email', '/analytics', '/settings', '/settings?tab=team', '/people/demo-ns-contact-1', '/companies/demo-ns-acme', '/follow-ups', '/problems']) {
     await page.goto(path); await page.waitForLoadState('networkidle');
     const found = await page.evaluate(() => {
       const parse = (c: string) => { const m = c.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1]!.split(/[ ,\/]+/).filter(Boolean).map(Number); return { r: p[0]!, g: p[1]!, b: p[2]!, a: p[3] ?? 1 }; };

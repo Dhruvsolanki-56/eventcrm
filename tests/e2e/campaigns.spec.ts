@@ -37,6 +37,24 @@ function addGroup() {
   return ids;
 }
 
+// Fixture people and companies are removed afterwards so other specs that count seeded records are not affected.
+test.afterEach(() => {
+  const db = new Database(resolve(process.env.DATABASE_PATH!));
+  try {
+    db.transaction(() => {
+      db.prepare("DELETE FROM jobs WHERE type='email_send' AND json_extract(payload_json,'$.emailId') IN (SELECT id FROM emails WHERE campaign_id IS NOT NULL)").run();
+      db.prepare("DELETE FROM emails WHERE campaign_id IS NOT NULL").run();
+      db.prepare("DELETE FROM email_campaigns").run();
+      db.prepare("DELETE FROM encounters WHERE contact_id IN (SELECT id FROM contacts WHERE email LIKE '%@batch.example' OR name='No Address')").run();
+      db.prepare("DELETE FROM deals WHERE contact_id IN (SELECT id FROM contacts WHERE email LIKE '%@batch.example' OR name='No Address')").run();
+      db.prepare("DELETE FROM contacts WHERE email LIKE '%@batch.example' OR name='No Address'").run();
+      db.prepare("DELETE FROM companies WHERE name LIKE 'Batch Co %'").run();
+      db.prepare("DELETE FROM event_access WHERE event_id IN (SELECT id FROM events WHERE name LIKE 'Batch Expo %')").run();
+      db.prepare("DELETE FROM events WHERE name LIKE 'Batch Expo %'").run();
+    })();
+  } finally { db.close(); }
+});
+
 test('a group preview says who is left out and why, and a campaign makes one draft each from one template', async () => {
   const ids = addGroup();
   const maya = await signIn('demo-owner', 'demo-northstar');

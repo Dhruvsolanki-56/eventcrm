@@ -22,6 +22,13 @@ describe('production configuration check', () => {
     const report = checkProductionConfig({ ...good, DATABASE_SSL: 'disable', TRUST_PROXY_HOPS: 'lots' });
     expect(report.errors).toHaveLength(2);
   });
+  it('checks the limits, timeouts and automatic-send hold', () => {
+    expect(checkProductionConfig({ ...good, API_LIMIT_PER_SESSION_PER_MINUTE: '0', PG_POOL_MAX: 'many' }).errors).toHaveLength(2);
+    expect(checkProductionConfig({ ...good, AUTO_SEND_MIN_DELAY_SECONDS: '5' }).errors.join(' ')).toMatch(/AUTO_SEND_MIN_DELAY_SECONDS/);
+    expect(checkProductionConfig({ ...good, AUTO_SEND_MIN_DELAY_SECONDS: '300', API_LIMIT_PER_ADDRESS_PER_MINUTE: '2000' })).toEqual({ errors: [], warnings: [] });
+    expect(checkProductionConfig({ ...good, RATE_LIMIT_STORE: 'redis' }).errors.join(' ')).toMatch(/RATE_LIMIT_STORE/);
+    expect(checkProductionConfig({ ...good, RATE_LIMIT_STORE: 'memory' }).warnings.join(' ')).toMatch(/multiplied/);
+  });
   it('refuses resend without a key', () => {
     expect(checkProductionConfig({ ...good, RESEND_API_KEY: '' }).errors.join(' ')).toMatch(/RESEND_API_KEY/);
   });

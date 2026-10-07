@@ -17,9 +17,12 @@ export const getPostgresPool = () => {
   if (!pool) {
     pool = new Pool({
       connectionString,
-      max: 5,
+      // Each server copy opens at most this many connections; keep (copies x this) under the database's own limit.
+      max: Number.isInteger(Number(process.env.PG_POOL_MAX)) && Number(process.env.PG_POOL_MAX) > 0 ? Number(process.env.PG_POOL_MAX) : 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 10_000,
+      // A query that runs this long is stopped, so one slow request cannot hold a connection for everyone.
+      statement_timeout: Number.isInteger(Number(process.env.PG_STATEMENT_TIMEOUT_MS)) && Number(process.env.PG_STATEMENT_TIMEOUT_MS) > 0 ? Number(process.env.PG_STATEMENT_TIMEOUT_MS) : 20_000,
       ssl: process.env.DATABASE_SSL === 'disable' ? false : { rejectUnauthorized: true },
     });
     pool.on('error', (error) => console.error(JSON.stringify({ event: 'postgres_idle_client_error', message: error.message })));

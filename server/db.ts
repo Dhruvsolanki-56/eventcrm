@@ -582,20 +582,21 @@ export async function getDashboard(actorId: string, workspaceId: string) {
 }
 
 // Who a person can see: their own people, everyone for an admin, and people met at events they are on.
-function peopleScope(actorId: string, workspaceId: string, search: string, includeArchived: boolean) {
+function peopleScope(actorId: string, workspaceId: string, search: string, includeArchived: boolean, companyId = '') {
   const term = `%${search.trim().replace(/[\%_]/g, '\$&')}%`;
   const sql = `FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     WHERE c.workspace_id=? AND c.deleted_at IS NULL AND ((?=1 AND c.archived_at IS NOT NULL) OR (?=0 AND c.archived_at IS NULL))
       AND (c.owner_user_id=? OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=c.workspace_id AND m.user_id=? AND m.role='admin') OR c.id IN (SELECT en.contact_id FROM encounters en JOIN event_access ea ON ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id WHERE en.workspace_id=? AND ea.user_id=?))
-      AND (?='' OR c.name LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR co.name LIKE ? ESCAPE '\\')`;
+      AND (?='' OR c.name LIKE ? ESCAPE '\\' OR c.email LIKE ? ESCAPE '\\' OR co.name LIKE ? ESCAPE '\\')
+      AND (?='' OR c.company_id=?)`;
   const flag = includeArchived ? 1 : 0;
-  return { sql, args: [workspaceId, flag, flag, actorId, actorId, workspaceId, actorId, search.trim(), term, term, term] };
+  return { sql, args: [workspaceId, flag, flag, actorId, actorId, workspaceId, actorId, search.trim(), term, term, term, companyId, companyId] };
 }
 
 // One page of people, newest first. `limit` defaults to a screenful; an export or a report passes a larger one to get everyone.
-export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false, limit = 200, offset = 0, stage = '') {
+export async function listPeople(actorId: string, workspaceId: string, search = '', includeArchived = false, limit = 200, offset = 0, stage = '', companyId = '') {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const scope = peopleScope(actorId, workspaceId, search, includeArchived);
+  const scope = peopleScope(actorId, workspaceId, search, includeArchived, companyId);
   return await (db.prepare(`SELECT c.id,c.name,c.title,c.email,c.phone,c.website,c.quality,c.stage,c.version,c.updated_at,
       co.id AS company_id,co.name AS company_name,
       (SELECT COUNT(*) FROM encounters en WHERE en.contact_id=c.id AND en.workspace_id=c.workspace_id) AS encounters,
@@ -614,7 +615,7 @@ export async function countPeopleByStage(actorId: string, workspaceId: string, s
   return { total: rows.reduce((sum, row) => sum + Number(row.n), 0), stages };
 }
 
-export async function listCompanies(actorId: string, workspaceId: string, search = '') {
+export async function listCompanies(actorId: string, workspaceId: string, search = '', onlyCompanyId = '') {
   await (assertWorkspaceAccess(actorId, workspaceId));
   const term = `%${search.trim().replace(/[\\%_]/g, '\\$&')}%`;
   const companyRows = await (db.prepare(`SELECT co.id,co.name,co.website,co.created_at,
@@ -624,8 +625,8 @@ export async function listCompanies(actorId: string, workspaceId: string, search
     LEFT JOIN encounters en ON en.contact_id=c.id AND en.workspace_id=c.workspace_id AND (en.event_id IS NULL OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=en.workspace_id AND ea.event_id=en.event_id AND ea.user_id=?))
     LEFT JOIN scans material ON material.workspace_id=co.workspace_id AND material.material_company_id=co.id AND material.status='saved'
       AND ((material.event_id IS NULL AND material.created_by=?) OR EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=material.workspace_id AND ea.event_id=material.event_id AND ea.user_id=?))
-    WHERE co.workspace_id=? AND co.archived_at IS NULL AND (?='' OR co.name LIKE ? ESCAPE '\\')
-    GROUP BY co.id HAVING COUNT(DISTINCT c.id)>0 OR COUNT(DISTINCT material.id)>0 OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=co.workspace_id AND m.user_id=? AND m.role='admin') ORDER BY people DESC,co.name LIMIT 200`).all(actorId, actorId, actorId, actorId, actorId, actorId, workspaceId, search.trim(), term, actorId));
+    WHERE co.workspace_id=? AND co.archived_at IS NULL AND (?='' OR co.name LIKE ? ESCAPE '\\') AND (?='' OR co.id=?)
+    GROUP BY co.id HAVING COUNT(DISTINCT c.id)>0 OR COUNT(DISTINCT material.id)>0 OR EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id=co.workspace_id AND m.user_id=? AND m.role='admin') ORDER BY people DESC,co.name LIMIT 200`).all(actorId, actorId, actorId, actorId, actorId, actorId, workspaceId, search.trim(), term, onlyCompanyId, onlyCompanyId, actorId));
   const totals = await companyDealTotals(actorId, workspaceId);
   return (companyRows as Array<{ id: string; name: string; website: string | null; created_at: string; people: number; encounters: number; materials: number }>)
     .map((row) => ({ ...row, open_value_minor: totals.get(row.id)?.open ?? 0, won_value_minor: totals.get(row.id)?.won ?? 0, deal_count: totals.get(row.id)?.count ?? 0 }));
@@ -690,11 +691,9 @@ export async function listProducts(actorId: string, workspaceId: string) {
 
 export async function getCompanyDetail(actorId: string, workspaceId: string, companyId: string) {
   await (assertWorkspaceAccess(actorId, workspaceId));
-  const companies = await listCompanies(actorId, workspaceId);
-  const visible = companies.find((item) => item.id === companyId);
+  const visible = (await listCompanies(actorId, workspaceId, '', companyId))[0];
   if (!visible) return undefined;
-  const allPeople = await listPeople(actorId, workspaceId, '', false, 1_000_000);
-  const people = allPeople.filter((person) => person.company_id === companyId);
+  const people = await listPeople(actorId, workspaceId, '', false, 5000, 0, '', companyId);
   const materialRows = await (db.prepare(`SELECT s.id AS scan_id,s.image_mime,s.saved_at,s.extracted_json,e.name AS event_name
     FROM scans s LEFT JOIN events e ON e.id=s.event_id AND e.workspace_id=s.workspace_id
     WHERE s.workspace_id=? AND s.material_company_id=? AND s.status='saved'

@@ -39,5 +39,13 @@ export function checkProductionConfig(env: Record<string, string | undefined>): 
   if ((resend || env.SMTP_HOST) && !env.SMTP_FROM_ADDRESS) warnings.push('SMTP_FROM_ADDRESS is not set; each workspace must save its own sender before anything can go out.');
   if (env.TRUST_PROXY_HOPS !== undefined && !/^[0-9]+$/.test(env.TRUST_PROXY_HOPS)) problem('TRUST_PROXY_HOPS must be a whole number (how many proxies sit in front of the server).');
   if (env.AI_MODE === 'provider' && !(env.GEMINI_API_KEY || env.ANTHROPIC_API_KEY || env.GROQ_API_KEY)) warnings.push('AI_MODE is provider but no AI key is set, so cards and drafts will fall back to manual entry.');
+  for (const name of ['API_LIMIT_PER_ADDRESS_PER_MINUTE', 'API_LIMIT_PER_SESSION_PER_MINUTE', 'API_REQUEST_TIMEOUT_MS', 'PG_POOL_MAX', 'PG_STATEMENT_TIMEOUT_MS', 'CAMPAIGN_DAILY_LIMIT'] as const) {
+    if (env[name] !== undefined && !/^[1-9][0-9]*$/.test(env[name]!)) problem(`${name} must be a whole number above zero.`);
+  }
+  if (env.AUTO_SEND_MIN_DELAY_SECONDS !== undefined && !/^[0-9]+$/.test(env.AUTO_SEND_MIN_DELAY_SECONDS)) problem('AUTO_SEND_MIN_DELAY_SECONDS must be a whole number of seconds.');
+  else if (env.AUTO_SEND_MIN_DELAY_SECONDS !== undefined && Number(env.AUTO_SEND_MIN_DELAY_SECONDS) < 60) problem('AUTO_SEND_MIN_DELAY_SECONDS is under a minute. Automatic email needs a hold long enough for a person to stop it.');
+  if (env.RATE_LIMIT_STORE && !['database', 'memory'].includes(env.RATE_LIMIT_STORE)) problem('RATE_LIMIT_STORE must be database or memory.');
+  if (hosted && env.RATE_LIMIT_STORE === 'memory') warnings.push('Rate limits are counted in the memory of each server copy. With more than one copy, a limit is multiplied by the number of copies. Remove RATE_LIMIT_STORE to share counters through the database.');
+  if (Number(env.PG_POOL_MAX) > 50) warnings.push('PG_POOL_MAX is above 50 for each server copy. Check it against the database connection limit.');
   return { errors, warnings };
 }

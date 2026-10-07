@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import argon2 from 'argon2';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -14,6 +14,8 @@ import { leadMailTransportReady, sendResendEmail } from './resend-email.js';
 import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetConfirmSchema, PasswordResetRequestSchema, SaveLeadSchema, SignupSchema, SessionSchema, WebsiteSchema } from '../shared/contracts.js';
 import { approveCampaign, cancelCampaign, CampaignLimitError, createCampaign, getCampaign, listCampaigns, previewAudience, removeCampaignRecipient, updateCampaignTemplate } from './campaigns.js';
 import { guardedAI, trimForAI } from './ai-guard.js';
+import { limiterStore } from './rate-limit-store.js';
+import { apiProtection, applyServerTimeouts, securityHeaders } from './protections.js';
 import { parseSendSchedule, resolveSendAt } from '../shared/send-schedule.js';
 import {
   AccessDeniedError,
@@ -188,6 +190,8 @@ app.use((_req, res, next) => {
   res.setHeader('X-Request-Id', requestId);
   next();
 });
+app.use(securityHeaders);
+app.use('/api', ...apiProtection({ isProduction, sessionCookie: SESSION_COOKIE }));
 app.use(express.json({ limit: '2mb', strict: true }));
 
 // A NUL character cannot be stored in text columns on every database and has no place in names, notes or search words.
@@ -235,6 +239,8 @@ async function csrfGuard(req: Request, res: Response, next: NextFunction) {
 app.use(csrfGuard);
 
 const loginLimiter = rateLimit({
+  store: limiterStore('loginLimiter'),
+  passOnStoreError: true,
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: 'draft-8',
@@ -242,6 +248,8 @@ const loginLimiter = rateLimit({
   message: { code: 'rate_limit', message: 'Too many sign-in attempts. Wait 15 minutes and try again.' },
 });
 const exportLimiter = rateLimit({
+  store: limiterStore('exportLimiter'),
+  passOnStoreError: true,
   windowMs: 15 * 60 * 1000,
   limit: isProduction ? 5 : 100,
   standardHeaders: 'draft-8',
@@ -249,6 +257,8 @@ const exportLimiter = rateLimit({
   message: { code: 'export_rate_limit', message: 'Too many exports were requested. Wait 15 minutes and try again.' },
 });
 const recoveryRequestLimiter = rateLimit({
+  store: limiterStore('recoveryRequestLimiter'),
+  passOnStoreError: true,
   windowMs: 15 * 60 * 1000,
   limit: 5,
   standardHeaders: 'draft-8',
@@ -256,6 +266,8 @@ const recoveryRequestLimiter = rateLimit({
   message: { code: 'recovery_rate_limit', message: 'Too many account email requests. Wait 15 minutes and try again.' },
 });
 const recoveryTokenLimiter = rateLimit({
+  store: limiterStore('recoveryTokenLimiter'),
+  passOnStoreError: true,
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: 'draft-8',
@@ -263,6 +275,8 @@ const recoveryTokenLimiter = rateLimit({
   message: { code: 'recovery_token_rate_limit', message: 'Too many link attempts. Wait 15 minutes and try again.' },
 });
 const aiSuggestionLimiter = rateLimit({
+  store: limiterStore('aiSuggestionLimiter'),
+  passOnStoreError: true,
   windowMs: 15 * 60 * 1000,
   limit: isProduction ? 30 : 200,
   standardHeaders: 'draft-8',
@@ -270,6 +284,8 @@ const aiSuggestionLimiter = rateLimit({
   message: { code: 'suggestion_rate_limit', message: 'Too many suggestions were requested. Wait a little and try again.' },
 });
 const emailTestLimiter = rateLimit({
+  store: limiterStore('emailTestLimiter'),
+  passOnStoreError: true,
   windowMs: 60 * 60 * 1000,
   limit: 3,
   standardHeaders: 'draft-8',
@@ -277,6 +293,8 @@ const emailTestLimiter = rateLimit({
   message: { code: 'email_test_rate_limit', message: 'Too many test messages. Wait an hour before trying again.' },
 });
 const voiceLimiter = rateLimit({
+  store: limiterStore('voiceLimiter'),
+  passOnStoreError: true,
   windowMs: 60 * 60_000,
   limit: 30,
   standardHeaders: 'draft-8',
@@ -285,6 +303,8 @@ const voiceLimiter = rateLimit({
   message: { code: 'voice_rate_limit', message: 'Too many recordings were added. Wait an hour before trying again.' },
 });
 const noteLimiter = rateLimit({
+  store: limiterStore('noteLimiter'),
+  passOnStoreError: true,
   windowMs: 60 * 60_000,
   limit: isProduction ? 120 : 1000,
   standardHeaders: 'draft-8',
@@ -293,6 +313,8 @@ const noteLimiter = rateLimit({
   message: { code: 'note_rate_limit', message: 'Too many notes were saved. Wait an hour before trying again.' },
 });
 const taskLimiter = rateLimit({
+  store: limiterStore('taskLimiter'),
+  passOnStoreError: true,
   windowMs: 60 * 60_000,
   limit: taskCreationLimit,
   standardHeaders: 'draft-8',
@@ -301,6 +323,8 @@ const taskLimiter = rateLimit({
   message: { code: 'task_rate_limit', message: 'Too many follow-ups were saved. Wait an hour and try again.' },
 });
 const dealWriteLimiter = rateLimit({
+  store: limiterStore('dealWriteLimiter'),
+  passOnStoreError: true,
   windowMs: 60 * 60_000,
   limit: isProduction ? 600 : 5000,
   standardHeaders: 'draft-8',
@@ -309,6 +333,8 @@ const dealWriteLimiter = rateLimit({
   message: { code: 'deal_rate_limit', message: 'Too many deal changes. Wait a few minutes and try again.' },
 });
 const campaignLimiter = rateLimit({
+  store: limiterStore('campaignLimiter'),
+  passOnStoreError: true,
   windowMs: 60 * 60_000,
   limit: isProduction ? 120 : 5000,
   standardHeaders: 'draft-8',
@@ -382,7 +408,19 @@ app.get('/api/auth/csrf', async (req, res) => {
   res.json({ csrfToken });
 });
 
-app.post('/api/auth/login', loginLimiter, async (req, res, next) => {
+const loginAccountLimiter = rateLimit({
+  store: limiterStore('loginAccount'),
+  passOnStoreError: true,
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  skipSuccessfulRequests: true,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  // Guessing one account's password from many addresses still counts against that account.
+  keyGenerator: (req) => typeof req.body?.email === 'string' && req.body.email.trim() ? `email:${req.body.email.trim().toLowerCase().slice(0, 254)}` : ipKeyGenerator(req.ip ?? ''),
+  message: { code: 'rate_limit', message: 'Too many sign-in attempts for this account. Wait 15 minutes and try again.' },
+});
+app.post('/api/auth/login', loginLimiter, loginAccountLimiter, async (req, res, next) => {
   try {
     const input = LoginSchema.parse(req.body);
     const user = await (findUserByEmail(input.email));
@@ -1660,6 +1698,8 @@ if (!isProduction) {
 }
 
 const scanLimiter = rateLimit({
+  store: limiterStore('scanLimiter'),
+  passOnStoreError: true,
   windowMs: 60_000,
   limit: 45,
   standardHeaders: 'draft-8',
@@ -1953,6 +1993,7 @@ app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
 const port = Number(process.env.PORT ?? 3001);
 const host = process.env.HOST ?? '127.0.0.1';
 const server = app.listen(port, host, () => console.info(`Gather API listening on http://${host}:${port}`));
+applyServerTimeouts(server);
 let closeServerPromise: Promise<void> | undefined;
 export function closeHttpServer() {
   closeServerPromise ??= new Promise<void>((resolveClose, rejectClose) => {
