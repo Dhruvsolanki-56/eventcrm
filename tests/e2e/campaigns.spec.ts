@@ -174,3 +174,53 @@ test('a representative does not see Group emails', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Scan cards', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Group emails' })).toHaveCount(0);
 });
+
+test('a manager reaches only their own group emails and only events they can open', async () => {
+  const ids = addGroup();
+  const db = new Database(resolve(process.env.DATABASE_PATH!));
+  const setRole = (role: string) => { db.prepare("UPDATE memberships SET role=? WHERE user_id='demo-rep' AND workspace_id='demo-northstar'").run(role); };
+  const original = (db.prepare("SELECT role FROM memberships WHERE user_id='demo-rep' AND workspace_id='demo-northstar'").get() as { role: string }).role;
+  const maya = await signIn('demo-owner', 'demo-northstar');
+  const id = randomUUID();
+  try {
+    expect((await maya.send('POST', '/api/campaigns', { clientCampaignId: id, name: 'Admin only', subject: 'Hi {{firstName}}', body: 'Hello there.', audience: { eventId: ids.event } })).status()).toBe(201);
+    setRole('manager');
+    const jordan = await signIn('demo-rep', 'demo-northstar');
+    // Another person's group email is invisible and untouchable.
+    expect(((await (await jordan.send('GET', '/api/campaigns')).json()) as { campaigns: Array<{ id: string }> }).campaigns.some((row) => row.id === id)).toBe(false);
+    expect((await jordan.send('GET', `/api/campaigns/${id}`)).status()).toBe(404);
+    expect((await jordan.send('POST', `/api/campaigns/${id}/approve`, {})).status()).toBe(409);
+    expect((await jordan.send('POST', `/api/campaigns/${id}/cancel`)).status()).toBe(409);
+    expect((await jordan.send('PUT', `/api/campaigns/${id}`, { subject: 'Hijack', body: 'Hijack' })).status()).toBe(409);
+    // An event this manager has no access to reaches no one, and its name is not revealed.
+    const preview = await (await jordan.send('POST', '/api/campaigns/preview', { eventId: ids.event })).json() as { matched: number };
+    expect(preview.matched).toBe(0);
+    const stillThere = await (await maya.send('GET', `/api/campaigns/${id}`)).json() as Detail;
+    expect(stillThere.campaign.status).toBe('draft');
+    expect(stillThere.counts.draft).toBe(2);
+    await jordan.ctx.dispose();
+  } finally { setRole(original); db.close(); await maya.ctx.dispose(); }
+});
+
+test('a subject can never carry a line break, whatever a name contains', async () => {
+  const ids = addGroup();
+  const db = new Database(resolve(process.env.DATABASE_PATH!));
+  try { db.prepare("UPDATE contacts SET name='Priya\nBcc: someone@evil.example' WHERE id=?").run(ids.good1); } finally { db.close(); }
+  const maya = await signIn('demo-owner', 'demo-northstar');
+  const id = randomUUID();
+  expect((await maya.send('POST', '/api/campaigns', { clientCampaignId: id, name: 'Header test', subject: 'Hello {{name}}', body: 'Hi.', audience: { eventId: ids.event } })).status()).toBe(201);
+  const detail = await (await maya.send('GET', `/api/campaigns/${id}`)).json() as Detail;
+  for (const row of detail.recipients) expect(row.subject).not.toMatch(/[\r\n]/);
+  await maya.ctx.dispose();
+});
+
+test('the health and readiness checks answer, and API answers are never cached', async () => {
+  const ctx = await pwRequest.newContext({ baseURL: api() });
+  expect((await ctx.get('/api/health')).status()).toBe(200);
+  const ready = await ctx.get('/api/ready');
+  expect(ready.status()).toBe(200);
+  expect(await ready.json()).toMatchObject({ status: 'ready' });
+  expect(ready.headers()['cache-control']).toBe('no-store');
+  expect(ready.headers()['permissions-policy']).toContain('camera=(self)');
+  await ctx.dispose();
+});

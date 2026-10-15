@@ -48,6 +48,21 @@ function addFixture() {
   return ids;
 }
 
+// Fixture events, people and deals are removed afterwards so other specs that count seeded records are not affected.
+test.afterEach(() => {
+  const db = new Database(resolve(process.env.DATABASE_PATH!));
+  try {
+    db.transaction(() => {
+      db.prepare("DELETE FROM deals WHERE contact_id IN (SELECT id FROM contacts WHERE email LIKE '%@fixture.example')").run();
+      db.prepare("DELETE FROM encounters WHERE contact_id IN (SELECT id FROM contacts WHERE email LIKE '%@fixture.example')").run();
+      db.prepare("DELETE FROM contacts WHERE email LIKE '%@fixture.example'").run();
+      db.prepare("DELETE FROM companies WHERE name LIKE 'Fixture Co %'").run();
+      db.prepare("DELETE FROM event_access WHERE event_id IN (SELECT id FROM events WHERE name LIKE 'Fixture Expo %' OR name LIKE 'Fixture Forum %')").run();
+      db.prepare("DELETE FROM events WHERE name LIKE 'Fixture Expo %' OR name LIKE 'Fixture Forum %'").run();
+    })();
+  } finally { db.close(); }
+});
+
 test('the events list shows every event the person can reach with its own numbers', async () => {
   const ids = addFixture();
   const maya = await signIn('demo-owner', 'demo-northstar');

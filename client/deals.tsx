@@ -311,7 +311,7 @@ export function PipelinePage() {
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOverStage(''); }}
         onDrop={(event) => { event.preventDefault(); drop(stage); }}>
         <div className="pipeline-column-head"><h2>{stageLabel(stage)}</h2><span className="pipeline-count">{countFor(stage)}</span></div>
-        {columnValue > 0 && <p className="pipeline-column-value">{formatMoney(columnValue)}</p>}
+        {columnValue > 0 && <p className="pipeline-column-value">{formatMoney(columnValue)} in this stage</p>}
         <div className="pipeline-cards">{column.map((deal) => <div className="pipeline-item" key={deal.id}>
           <Link className={`pipeline-person${dragId === deal.id ? ' is-dragged' : ''}${movingId === deal.id ? ' is-moving' : ''}`} to={`/people/${deal.contact_id}`} draggable
             onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', deal.id); setDragId(deal.id); }}

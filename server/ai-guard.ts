@@ -15,7 +15,7 @@ export class AiPausedError extends Error {
 export type AiKind = 'card_read' | 'email_draft' | 'email_draft_alternate' | 'conversation_context' | 'transcript_summary' | 'follow_up' | 'business_profile' | 'company_about';
 
 const DEFAULT_TTL_SECONDS: Record<AiKind, number> = {
-  card_read: 30 * 86400, email_draft: 6 * 3600, email_draft_alternate: 0, conversation_context: 24 * 3600,
+  card_read: 7 * 86400, email_draft: 6 * 3600, email_draft_alternate: 0, conversation_context: 24 * 3600,
   transcript_summary: 7 * 86400, follow_up: 6 * 3600, business_profile: 7 * 86400, company_about: 7 * 86400,
 };
 const DEFAULT_DAILY_BUDGET: Record<AiKind, number> = {
@@ -35,7 +35,7 @@ const PAUSE_MS = 60_000;
 const today = () => new Date().toISOString().slice(0, 10);
 
 async function bump(workspaceId: string, kind: AiKind, column: 'calls' | 'cache_hits' | 'failures') {
-  await db.prepare(`INSERT INTO ai_usage(workspace_id,day,kind,${column}) VALUES (?,?,?,1) ON CONFLICT(workspace_id,day,kind) DO UPDATE SET ${column}=${column}+1`)
+  await db.prepare(`INSERT INTO ai_usage(workspace_id,day,kind,${column}) VALUES (?,?,?,1) ON CONFLICT(workspace_id,day,kind) DO UPDATE SET ${column}=ai_usage.${column}+1`)
     .run(workspaceId, today(), kind).catch(() => undefined);
 }
 

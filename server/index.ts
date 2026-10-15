@@ -15,10 +15,11 @@ import { CardReadOutputSchema, LoginSchema, OneTimeTokenSchema, PasswordResetCon
 import { approveCampaign, cancelCampaign, CampaignLimitError, createCampaign, getCampaign, listCampaigns, previewAudience, removeCampaignRecipient, updateCampaignTemplate } from './campaigns.js';
 import { guardedAI, trimForAI } from './ai-guard.js';
 import { limiterStore } from './rate-limit-store.js';
-import { apiProtection, applyServerTimeouts, securityHeaders } from './protections.js';
+import { accessLog, apiProtection, applyServerTimeouts, securityHeaders, withTimeout } from './protections.js';
 import { parseSendSchedule, resolveSendAt } from '../shared/send-schedule.js';
 import {
   AccessDeniedError,
+  database,
   createSession,
   consumePasswordReset,
   consumeEmailVerification,
@@ -190,6 +191,7 @@ app.use((_req, res, next) => {
   res.setHeader('X-Request-Id', requestId);
   next();
 });
+app.use(accessLog(isProduction || process.env.LOG_REQUESTS === 'true'));
 app.use(securityHeaders);
 app.use('/api', ...apiProtection({ isProduction, sessionCookie: SESSION_COOKIE }));
 app.use(express.json({ limit: '2mb', strict: true }));
@@ -382,6 +384,11 @@ async function issueSession(res: Response, userId: string) {
 }
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+// Ready means the database answers. A load balancer should use this one, so a copy that lost its database is taken out of rotation.
+app.get('/api/ready', async (_req, res) => {
+  try { await withTimeout(database.prepare('SELECT 1 AS ok').get(), 3000); res.json({ status: 'ready' }); }
+  catch { res.status(503).json({ status: 'unavailable' }); }
+});
 app.get('/api/capabilities', (_req, res) => res.json({
   cardReading: process.env.AI_MODE === 'demo' && process.env.NODE_ENV === 'test' ? 'demo' : isGeminiCardEnabled() ? 'provider' : 'browser',
   aiCardAssist: isCardAIEnabled(),
@@ -1976,6 +1983,8 @@ app.use('/api', (_req, res) => res.status(404).json({ code: 'not_found', message
 
 app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
   const requestId = res.locals.requestId as string | undefined;
+  // A timeout or a closed connection may already have answered; a second answer would throw.
+  if (res.headersSent) { console.error(JSON.stringify({ event: 'error_after_response', requestId, method: req.method, path: req.path })); return; }
   const reply = (status: number, code: string, message: string, extra: Record<string, unknown> = {}) => res.status(status).json({ code, message, ...extra, requestId });
   if (error instanceof z.ZodError) return reply(400, 'invalid_input', 'Check the highlighted information and try again.', { fields: error.issues.map((item) => ({ path: item.path.join('.'), message: item.message })) });
   if (error instanceof AccessDeniedError) return reply(403, 'forbidden', error.message);
@@ -2005,5 +2014,8 @@ function shutdown() {
   void closeHttpServer().then(() => process.exit(0), () => process.exit(1));
   setTimeout(() => process.exit(1), 10_000).unref();
 }
+// A promise nobody caught or an unexpected throw must not take the server down silently or leave it half-working.
+process.on('unhandledRejection', (reason) => console.error(JSON.stringify({ event: 'unhandled_rejection', message: reason instanceof Error ? reason.message : 'unknown' })));
+process.on('uncaughtException', (error) => { console.error(JSON.stringify({ event: 'uncaught_exception', message: error.message })); shutdown(); });
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

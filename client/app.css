@@ -1599,3 +1599,9 @@ a.records-row:hover, .company-row:hover { background: var(--surface-2); }
 .auto-send-row { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1.25rem; }
 .auto-send-row label { display: grid; gap: .25rem; }
 .auto-send-row .inline-check { display: flex; align-items: center; gap: .4rem; }
+
+/* A row of actions that scrolls sideways fades at the edge, so the last ones (such as Deals) are seen to be there. */
+@media (max-width: 760px) {
+  .person-action-row { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); scroll-snap-type: x proximity; }
+  .person-action-row > a { scroll-snap-align: start; }
+}

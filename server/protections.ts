@@ -60,3 +60,29 @@ export function applyServerTimeouts(server: Server) {
   // A whole request, including a photo or voice note on a slow connection.
   server.requestTimeout = positive(process.env.REQUEST_TIMEOUT_MS, 120_000);
 }
+
+/** Gives up waiting for a slow dependency instead of hanging with it. */
+export function withTimeout<T>(work: Promise<T> | T, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out.')), ms);
+    Promise.resolve(work).then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
+}
+
+/**
+ * One log line per API request: what was asked, the answer, how long it took. No query string, body or cookie is
+ * written, so a log never holds a person's data. Slow requests are marked so they are easy to find.
+ */
+export function accessLog(enabled: boolean): RequestHandler {
+  const slowMs = positive(process.env.SLOW_REQUEST_MS, 2000);
+  return (req, res, next) => {
+    if (!enabled) return next();
+    const started = process.hrtime.bigint();
+    res.on('finish', () => {
+      if (!req.originalUrl.startsWith('/api/') || req.originalUrl.startsWith('/api/health') || req.originalUrl.startsWith('/api/ready')) return;
+      const ms = Number((process.hrtime.bigint() - started) / 1_000_000n);
+      console.info(JSON.stringify({ event: ms >= slowMs ? 'slow_request' : 'request', requestId: res.locals.requestId, method: req.method, path: (req.baseUrl + req.path).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id'), status: res.statusCode, ms }));
+    });
+    next();
+  };
+}

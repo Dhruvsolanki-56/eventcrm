@@ -24,30 +24,43 @@ export function unknownMergeFields(...templates: string[]) {
   return [...found];
 }
 
+/** One line only: a person's name must never be able to add a header or a second line to a subject. */
+export const oneLine = (text: string) => text.replace(/[\r\n\u2028\u2029]+/g, ' ').trim();
+
 export function renderTemplate(template: string, values: { name: string; company: string; event: string }) {
   const first = values.name.trim().split(/\s+/)[0] || 'there';
   const map: Record<string, string> = { firstName: first, name: values.name.trim() || 'there', company: values.company || 'your company', event: values.event || 'our recent event' };
   return template.replace(/\{\{\s*([A-Za-z]+)\s*\}\}/g, (_all, key: string) => map[key] ?? '');
 }
 
+/** The event's name, but only for an event this person has access to (an admin has access to all). */
+function eventNameSql(forGivenEvent: boolean) {
+  const access = `(EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=e.workspace_id AND ea.event_id=e.id AND ea.user_id=?) OR EXISTS (SELECT 1 FROM memberships mm WHERE mm.workspace_id=e.workspace_id AND mm.user_id=? AND mm.status='active' AND mm.role='admin'))`;
+  return forGivenEvent
+    ? `(SELECT e.name FROM events e WHERE e.workspace_id=c.workspace_id AND e.id=? AND ${access})`
+    : `(SELECT e.name FROM encounters en JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND ${access} ORDER BY en.occurred_at DESC LIMIT 1)`;
+}
+const eventNameArgs = (actorId: string, eventId?: string) => [...(eventId ? [eventId] : []), actorId, actorId];
+
 type Candidate = { id: string; name: string; email: string | null; company: string; do_not_contact: number; recent: number; event_name: string | null };
 
 async function candidates(actorId: string, workspaceId: string, audience: Audience, limit: number): Promise<Candidate[]> {
   const stages = clean(audience.stages), quality = clean(audience.quality), ids = clean(audience.contactIds);
   const marks = (list: string[]) => list.map(() => '?').join(',');
-  const eventName = audience.eventId ? `(SELECT e.name FROM events e WHERE e.workspace_id=c.workspace_id AND e.id=?)` : `(SELECT e.name FROM encounters en JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id ORDER BY en.occurred_at DESC LIMIT 1)`;
+  const eventName = eventNameSql(Boolean(audience.eventId));
   const sql = `SELECT c.id,c.name,c.email,co.name AS company,c.do_not_contact,${eventName} AS event_name,
       (SELECT COUNT(*) FROM emails m WHERE m.workspace_id=c.workspace_id AND m.contact_id=c.id AND m.status IN ('sent','queued') AND COALESCE(m.sent_to_server_at,m.approved_at)>?) AS recent
     FROM contacts c JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
     WHERE c.workspace_id=? AND c.deleted_at IS NULL AND c.archived_at IS NULL AND ${contactVisibleSql('c')}
-      ${audience.eventId ? 'AND EXISTS (SELECT 1 FROM encounters en WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND en.event_id=?)' : ''}
+      ${audience.eventId ? `AND EXISTS (SELECT 1 FROM encounters en WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id AND en.event_id=?)
+      AND (EXISTS (SELECT 1 FROM event_access ea WHERE ea.workspace_id=c.workspace_id AND ea.event_id=? AND ea.user_id=?) OR EXISTS (SELECT 1 FROM memberships mm WHERE mm.workspace_id=c.workspace_id AND mm.user_id=? AND mm.status='active' AND mm.role='admin'))` : ''}
       ${stages.length ? `AND c.stage IN (${marks(stages)})` : ''}
       ${quality.length ? `AND c.quality IN (${marks(quality)})` : ''}
       ${audience.companyId ? 'AND c.company_id=?' : ''}
       ${ids.length ? `AND c.id IN (${marks(ids)})` : ''}
     ORDER BY c.updated_at DESC,c.id LIMIT ?`;
   const since = new Date(Date.now() - RECENT_CONTACT_DAYS * 86400000).toISOString();
-  const args = [...(audience.eventId ? [audience.eventId] : []), since, workspaceId, actorId, actorId, actorId, ...(audience.eventId ? [audience.eventId] : []), ...stages, ...quality, ...(audience.companyId ? [audience.companyId] : []), ...ids, limit];
+  const args = [...eventNameArgs(actorId, audience.eventId), since, workspaceId, actorId, actorId, actorId, ...(audience.eventId ? [audience.eventId, audience.eventId, actorId, actorId] : []), ...stages, ...quality, ...(audience.companyId ? [audience.companyId] : []), ...ids, limit];
   return await db.prepare(sql).all(...args) as Candidate[];
 }
 
@@ -89,7 +102,7 @@ export async function createCampaign(actorId: string, workspaceId: string, input
     for (const person of people) {
       const values = { name: person.name, company: person.company, event: person.event_name ?? '' };
       await db.prepare(`INSERT INTO emails(id,workspace_id,contact_id,encounter_id,recipient,subject,body,status,created_by,sources_json,campaign_id) VALUES (?,?,?,NULL,?,?,?,'draft',?,'[]',?)`)
-        .run(randomUUID(), workspaceId, person.id, person.email, renderTemplate(input.subject, values), renderTemplate(input.body, values), actorId, input.clientCampaignId);
+        .run(randomUUID(), workspaceId, person.id, person.email, oneLine(renderTemplate(input.subject, values)), renderTemplate(input.body, values), actorId, input.clientCampaignId);
     }
     await db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'campaign_created','campaign',?,?)`)
       .run(randomUUID(), workspaceId, actorId, input.clientCampaignId, JSON.stringify({ recipients: people.length }));
@@ -99,8 +112,12 @@ export async function createCampaign(actorId: string, workspaceId: string, input
 
 type CampaignRow = { id: string; name: string; kind: string; status: string; audience_json: string; subject_template: string; body_template: string; send_at: string | null; recipient_count: number; created_by: string; created_at: string; approved_at: string | null };
 
-async function loadCampaign(workspaceId: string, campaignId: string) {
-  return await db.prepare(`SELECT id,name,kind,status,audience_json,subject_template,body_template,send_at,recipient_count,created_by,created_at,approved_at FROM email_campaigns WHERE workspace_id=? AND id=?`).get(workspaceId, campaignId) as CampaignRow | undefined;
+async function loadCampaign(actorId: string, workspaceId: string, campaignId: string) {
+  const workspace = await workspaceForActor(actorId, workspaceId);
+  const found = await db.prepare(`SELECT id,name,kind,status,audience_json,subject_template,body_template,send_at,recipient_count,created_by,created_at,approved_at FROM email_campaigns WHERE workspace_id=? AND id=?`).get(workspaceId, campaignId) as CampaignRow | undefined;
+  // A manager sees and changes only their own group emails; an admin sees all of them.
+  if (found && workspace?.kind === 'company' && workspace.role !== 'admin' && found.created_by !== actorId) return undefined;
+  return found;
 }
 
 async function counts(workspaceId: string, campaignId: string) {
@@ -116,18 +133,18 @@ async function counts(workspaceId: string, campaignId: string) {
 export async function listCampaigns(actorId: string, workspaceId: string) {
   await assertWorkspaceAccess(actorId, workspaceId);
   await assertCanRunCampaigns(actorId, workspaceId);
-  const rows = await db.prepare(`SELECT id,name,status,send_at,recipient_count,created_at,approved_at FROM email_campaigns WHERE workspace_id=? ORDER BY created_at DESC LIMIT 100`).all(workspaceId) as Array<Omit<CampaignRow, 'kind' | 'audience_json' | 'subject_template' | 'body_template' | 'created_by'>>;
+  const rows = await db.prepare(`SELECT id,name,status,send_at,recipient_count,created_at,approved_at FROM email_campaigns WHERE workspace_id=? AND (?=1 OR created_by=?) ORDER BY created_at DESC LIMIT 100`).all(workspaceId, (await workspaceForActor(actorId, workspaceId))?.kind === 'personal' || (await workspaceForActor(actorId, workspaceId))?.role === 'admin' ? 1 : 0, actorId) as Array<Omit<CampaignRow, 'kind' | 'audience_json' | 'subject_template' | 'body_template' | 'created_by'>>;
   return await Promise.all(rows.map(async (row) => ({ ...row, counts: await counts(workspaceId, row.id) })));
 }
 
 export async function getCampaign(actorId: string, workspaceId: string, campaignId: string) {
   await assertWorkspaceAccess(actorId, workspaceId);
   await assertCanRunCampaigns(actorId, workspaceId);
-  const campaign = await loadCampaign(workspaceId, campaignId);
+  const campaign = await loadCampaign(actorId, workspaceId, campaignId);
   if (!campaign) return undefined;
   const recipients = await db.prepare(`SELECT m.id,m.contact_id,m.recipient,m.subject,m.status,m.send_at,m.sent_to_server_at,c.name AS person_name,co.name AS company_name
     FROM emails m JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
-    WHERE m.workspace_id=? AND m.campaign_id=? ORDER BY c.name,m.id LIMIT 500`).all(workspaceId, campaignId);
+    WHERE m.workspace_id=? AND m.campaign_id=? AND ${contactVisibleSql('c')} ORDER BY c.name,m.id LIMIT 500`).all(workspaceId, campaignId, actorId, actorId, actorId);
   return { campaign: { ...campaign, audience: JSON.parse(campaign.audience_json) as Audience }, counts: await counts(workspaceId, campaignId), recipients };
 }
 
@@ -137,17 +154,17 @@ export async function updateCampaignTemplate(actorId: string, workspaceId: strin
   await assertCanRunCampaigns(actorId, workspaceId);
   const unknown = unknownMergeFields(subject, body);
   if (unknown.length) throw new Error(`Unknown placeholder ${unknown.map((name) => `{{${name}}}`).join(', ')}.`);
-  const campaign = await loadCampaign(workspaceId, campaignId);
+  const campaign = await loadCampaign(actorId, workspaceId, campaignId);
   if (!campaign || campaign.status !== 'draft') throw new Error('This campaign can no longer be edited.');
   const audience = JSON.parse(campaign.audience_json) as Audience;
-  const rows = await db.prepare(`SELECT m.id,c.name,co.name AS company,${audience.eventId ? `(SELECT e.name FROM events e WHERE e.workspace_id=c.workspace_id AND e.id=?)` : `(SELECT e.name FROM encounters en JOIN events e ON e.id=en.event_id AND e.workspace_id=en.workspace_id WHERE en.workspace_id=c.workspace_id AND en.contact_id=c.id ORDER BY en.occurred_at DESC LIMIT 1)`} AS event_name
+  const rows = await db.prepare(`SELECT m.id,c.name,co.name AS company,${eventNameSql(Boolean(audience.eventId))} AS event_name
     FROM emails m JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id JOIN companies co ON co.id=c.company_id AND co.workspace_id=c.workspace_id
-    WHERE m.workspace_id=? AND m.campaign_id=? AND m.status='draft'`).all(...(audience.eventId ? [audience.eventId] : []), workspaceId, campaignId) as Array<{ id: string; name: string; company: string; event_name: string | null }>;
+    WHERE m.workspace_id=? AND m.campaign_id=? AND m.status='draft'`).all(...eventNameArgs(actorId, audience.eventId), workspaceId, campaignId) as Array<{ id: string; name: string; company: string; event_name: string | null }>;
   await db.transaction(async () => {
     await db.prepare(`UPDATE email_campaigns SET subject_template=?,body_template=? WHERE workspace_id=? AND id=? AND status='draft'`).run(subject, body, workspaceId, campaignId);
     for (const row of rows) {
       const values = { name: row.name, company: row.company, event: row.event_name ?? '' };
-      await db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft'`).run(renderTemplate(subject, values), renderTemplate(body, values), workspaceId, row.id);
+      await db.prepare(`UPDATE emails SET subject=?,body=? WHERE workspace_id=? AND id=? AND status='draft'`).run(oneLine(renderTemplate(subject, values)), renderTemplate(body, values), workspaceId, row.id);
     }
   })();
   return rows.length;
@@ -156,6 +173,7 @@ export async function updateCampaignTemplate(actorId: string, workspaceId: strin
 export async function removeCampaignRecipient(actorId: string, workspaceId: string, campaignId: string, emailId: string) {
   await assertWorkspaceAccess(actorId, workspaceId);
   await assertCanRunCampaigns(actorId, workspaceId);
+  if (!await loadCampaign(actorId, workspaceId, campaignId)) return false;
   return await db.transaction(async () => {
     const removed = await db.prepare(`DELETE FROM emails WHERE workspace_id=? AND campaign_id=? AND id=? AND status='draft'`).run(workspaceId, campaignId, emailId);
     if (removed.changes) await db.prepare(`UPDATE email_campaigns SET recipient_count=recipient_count-1 WHERE workspace_id=? AND id=? AND status='draft'`).run(workspaceId, campaignId);
@@ -172,10 +190,11 @@ function dailyLimit() {
 export async function approveCampaign(actorId: string, workspaceId: string, campaignId: string, options: { sendAt?: Date; staggerSeconds: number; smtpReady: boolean; publicBaseUrl: string }) {
   await assertWorkspaceAccess(actorId, workspaceId);
   await assertCanRunCampaigns(actorId, workspaceId);
-  const campaign = await loadCampaign(workspaceId, campaignId);
+  const campaign = await loadCampaign(actorId, workspaceId, campaignId);
   if (!campaign || campaign.status !== 'draft') throw new Error('This campaign was already approved or cancelled.');
   const drafts = await db.prepare(`SELECT m.id,c.do_not_contact FROM emails m JOIN contacts c ON c.id=m.contact_id AND c.workspace_id=m.workspace_id
     WHERE m.workspace_id=? AND m.campaign_id=? AND m.status='draft' ORDER BY m.id`).all(workspaceId, campaignId) as Array<{ id: string; do_not_contact: number }>;
+  if ((drafts.length - 1) * options.staggerSeconds > 7 * 86400) throw new Error('That spacing would take more than a week. Choose a shorter spacing.');
   const today = new Date(Date.now() - 86400000).toISOString();
   const used = Number((await db.prepare(`SELECT COUNT(*) AS n FROM emails WHERE workspace_id=? AND campaign_id IS NOT NULL AND approved_at>?`).get(workspaceId, today) as { n: number }).n);
   if (used + drafts.length > dailyLimit()) throw new CampaignLimitError(`Group emails are limited to ${dailyLimit()} a day for each workspace. ${Math.max(0, dailyLimit() - used)} more can be approved today.`);
@@ -202,7 +221,7 @@ export async function cancelCampaign(actorId: string, workspaceId: string, campa
   await assertWorkspaceAccess(actorId, workspaceId);
   await assertCanRunCampaigns(actorId, workspaceId);
   return await db.transaction(async () => {
-    const campaign = await loadCampaign(workspaceId, campaignId);
+    const campaign = await loadCampaign(actorId, workspaceId, campaignId);
     if (!campaign || campaign.status === 'cancelled') return undefined;
     await db.prepare(`DELETE FROM jobs WHERE workspace_id=? AND type='email_send' AND status='queued' AND json_extract(payload_json,'$.emailId') IN (SELECT id FROM emails WHERE workspace_id=? AND campaign_id=? AND status='queued')`).run(workspaceId, workspaceId, campaignId);
     const removed = await db.prepare(`DELETE FROM emails WHERE workspace_id=? AND campaign_id=? AND status IN ('draft','queued','outbox') AND id NOT IN (SELECT json_extract(payload_json,'$.emailId') FROM jobs WHERE workspace_id=? AND type='email_send' AND status IN ('running','succeeded'))`).run(workspaceId, campaignId, workspaceId);

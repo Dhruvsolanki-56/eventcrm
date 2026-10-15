@@ -1002,6 +1002,10 @@ export async function clearPersonalWorkspaceData(actorId: string, workspaceId: s
     await (db.prepare(`DELETE FROM invites WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM notifications WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM digest_runs WHERE workspace_id=?`).run(workspaceId));
+    await (db.prepare(`DELETE FROM email_campaigns WHERE workspace_id=?`).run(workspaceId));
+    // Kept AI answers can hold what was read from a card or written about a person.
+    await (db.prepare(`DELETE FROM ai_cache WHERE workspace_id=?`).run(workspaceId));
+    await (db.prepare(`DELETE FROM ai_usage WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM workspace_settings WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM audit_events WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json)
@@ -1049,6 +1053,10 @@ export async function clearSampleWorkspaceData(actorId: string, workspaceId: str
     await (db.prepare(`DELETE FROM invites WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM notifications WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM digest_runs WHERE workspace_id=?`).run(workspaceId));
+    await (db.prepare(`DELETE FROM email_campaigns WHERE workspace_id=?`).run(workspaceId));
+    // Kept AI answers can hold what was read from a card or written about a person.
+    await (db.prepare(`DELETE FROM ai_cache WHERE workspace_id=?`).run(workspaceId));
+    await (db.prepare(`DELETE FROM ai_usage WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`DELETE FROM workspace_settings WHERE workspace_id=?`).run(workspaceId));
     await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json)
       VALUES (?,?,?,'sample_data_cleared','workspace',?,?)`).run(randomUUID(), workspaceId, actorId, workspaceId, JSON.stringify({ counts: deleted })));
@@ -2041,6 +2049,11 @@ export async function queueAutoSend(workspaceId: string, emailId: string, actorI
   return when;
 }
 
+/** After an automatic send gives up, the draft must stop saying it is about to be sent. */
+export async function clearPlannedSend(workspaceId: string, emailId: string) {
+  await (db.prepare(`UPDATE emails SET send_at=NULL WHERE workspace_id=? AND id=? AND status='draft'`).run(workspaceId, emailId));
+}
+
 /** Removes a planned automatic send. Returns true if one was waiting. */
 export async function cancelAutoSend(workspaceId: string, emailId: string) {
   const removed = await (db.prepare(`DELETE FROM jobs WHERE workspace_id=? AND type='email_auto_send' AND status IN ('queued','running') AND json_extract(payload_json,'$.emailId')=?`).run(workspaceId, emailId));
@@ -2082,12 +2095,13 @@ export async function getEmailForWorker(emailId: string, workspaceId: string, un
 
 export async function recordEmailSent(emailId: string, workspaceId: string, messageId: string | null) {
   await (db.transaction(async () => {
-    const email = await (db.prepare(`SELECT contact_id,created_by,encounter_id FROM emails WHERE workspace_id=? AND id=? AND status='queued'`).get(workspaceId, emailId)) as { contact_id: string; created_by: string | null; encounter_id: string | null } | undefined;
+    const email = await (db.prepare(`SELECT contact_id,created_by,encounter_id,campaign_id FROM emails WHERE workspace_id=? AND id=? AND status='queued'`).get(workspaceId, emailId)) as { contact_id: string; created_by: string | null; encounter_id: string | null; campaign_id: string | null } | undefined;
     if (!email) return;
     const changed = await (db.prepare(`UPDATE emails SET status='sent',provider_message_id=?,sent_to_server_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),error_message=NULL WHERE workspace_id=? AND id=? AND status='queued'`)
       .run(messageId, workspaceId, emailId));
     if (!changed.changes) return;
-    await advanceDeals(workspaceId, email.contact_id, 'contacted', { encounterId: email.encounter_id });
+    // A group email is not a conversation about a deal, so it does not move any deal along.
+    if (!email.campaign_id) await advanceDeals(workspaceId, email.contact_id, 'contacted', { encounterId: email.encounter_id });
     await (db.prepare(`UPDATE contacts SET version=version+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE workspace_id=? AND id=? AND deleted_at IS NULL`)
       .run(workspaceId, email.contact_id));
     if (email.created_by) await (db.prepare(`INSERT INTO audit_events(id,workspace_id,actor_user_id,action,target_type,target_id,details_json) VALUES (?,?,?,'email_sent','contact',?,?)`)
